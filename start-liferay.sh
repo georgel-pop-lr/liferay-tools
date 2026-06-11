@@ -5,23 +5,24 @@
 # stored config matches the running ports — useful for parallel bundles.
 #
 # Usage:
-#   start-liferay.sh                              # uses BUNDLE_DEFAULT from start-liferay.conf
-#   start-liferay.sh /path/to/bundle              # explicit bundle path
-#   start-liferay.sh --debug                      # default bundle, debug mode
+#   start-liferay.sh                              # opens the bundle picker (fzf)
+#   start-liferay.sh /path/to/bundle              # explicit bundle path, skips the picker
+#   start-liferay.sh --debug                      # picker, then debug mode
 #   start-liferay.sh --debug /path/to/bundle      # explicit bundle, debug mode
-#   start-liferay.sh --pick                       # list bundles and pick one
-#   start-liferay.sh --pick --debug               # pick + debug mode
+#   start-liferay.sh --pick                       # force the picker (same as no argument)
 #   start-liferay.sh --jdk /path/to/jdk           # override the JDK
-#   start-liferay.sh --clean                      # wipe state + reset DB, then start
-#   start-liferay.sh --pick --clean --yes         # pick, clean without prompting, start
+#   start-liferay.sh --clean                      # picker, then wipe state + reset DB
+#   start-liferay.sh --clean --yes                # picker, clean without prompting, start
 #   start-liferay.sh --clean --db-docker pg-db    # reset DB via docker exec, then start
+#   start-liferay.sh --clean-cache                # picker, then clear caches only (no DB)
 #
 # DEBUG mode runs Tomcat via 'catalina.sh jpda run' so a remote debugger can
 # attach. The JPDA port defaults to 8000, with the same auto-bump behaviour as
 # the other ports if it's already in use.
 #
-# PICK mode lists every Liferay-looking bundle under BUNDLES_DIR and lets you
-# select one interactively.
+# The picker lists every Liferay-looking bundle under BUNDLES_DIRS and lets you
+# select one interactively (fzf when available, numbered menu otherwise). It
+# runs whenever no bundle path is given on the command line; --pick forces it.
 #
 # CLEAN mode (--clean / -c) wipes the resolved bundle's runtime state before
 # starting: data, work, elasticsearch, logs, osgi/state, and tomcat
@@ -30,6 +31,12 @@
 # confirmation first; pass --yes / -y to skip the prompt. Make sure the bundle
 # is stopped, or the database drop will fail on active connections. The database
 # is reset before any folder is deleted, so a failed reset aborts cleanly.
+#
+# CACHE-CLEAN mode (--clean-cache / -cc) is the light version: it removes only
+# the OSGi state and the work/temp caches (osgi/state, work, tomcat work/temp)
+# so the next boot rebuilds the module cache and recompiles JSPs. It keeps data,
+# logs, the search index, and the database. When both flags are given, --clean
+# (the full wipe) wins.
 #
 # Database location is handled in this order: a Docker DB that publishes its
 # port to the host is reached by the normal host:port path; if that host reset
@@ -78,6 +85,7 @@ BUNDLE_DEFAULT="${BUNDLE_DEFAULT:-${BUNDLES_DIRS[0]}/liferay-bundle-master}"
 DEBUG=0
 PICK=0
 CLEAN=0
+CLEAN_CACHE=0
 ASSUME_YES=0
 BUNDLE=""
 JDK_OVERRIDE=""
@@ -97,6 +105,9 @@ while [ $i -lt ${#args[@]} ]; do
 			;;
 		--clean|-c)
 			CLEAN=1
+			;;
+		--clean-cache|-cc)
+			CLEAN_CACHE=1
 			;;
 		--yes|-y)
 			ASSUME_YES=1
@@ -132,7 +143,13 @@ while [ $i -lt ${#args[@]} ]; do
 	i=$((i + 1))
 done
 
-# --pick: list bundles under every BUNDLES_DIRS entry and prompt for a
+# Open the picker by default: with no bundle named on the command line, there
+# is nothing to launch, so fall into selection rather than a hardcoded default.
+if [ -z "$BUNDLE" ]; then
+	PICK=1
+fi
+
+# Picker: list bundles under every BUNDLES_DIRS entry and prompt for a
 # selection. Missing directories are silently skipped so this still works on
 # machines where only a subset of the configured locations exists.
 if [ "$PICK" = "1" ]; then
@@ -170,23 +187,41 @@ if [ "$PICK" = "1" ]; then
 		exit 1
 	fi
 
-	echo "Available bundles (from ${#scanned[@]} location(s)):"
-	for dir in "${scanned[@]}"; do
-		echo "  $dir"
-	done
-	echo
+	# fzf when available (shows each bundle's parent root so duplicate names
+	# across locations stay distinguishable); numbered menu otherwise.
+	if command -v fzf >/dev/null 2>&1; then
+		choice="$(
+			for entry in "${bundles[@]}"; do
+				printf '%s\t%s  (%s)\n' "$entry" "$(basename "$entry")" "$(dirname "$entry")"
+			done | fzf \
+				--delimiter=$'\t' \
+				--height=40% \
+				--prompt='bundle> ' \
+				--reverse \
+				--select-1 \
+				--with-nth=2..
+		)"
+		[ -z "$choice" ] && exit 1
+		BUNDLE="${choice%%$'\t'*}"
+	else
+		echo "Available bundles (from ${#scanned[@]} location(s)):"
+		for dir in "${scanned[@]}"; do
+			echo "  $dir"
+		done
+		echo
 
-	PS3=$'\nPick a bundle (number, or Ctrl+C to abort): '
+		PS3=$'\nPick a bundle (number, or Ctrl+C to abort): '
 
-	select choice in "${bundles[@]}"; do
-		if [ -n "$choice" ]; then
-			BUNDLE="$choice"
-			break
-		fi
-		echo "Invalid selection — try again." >&2
-	done
+		select choice in "${bundles[@]}"; do
+			if [ -n "$choice" ]; then
+				BUNDLE="$choice"
+				break
+			fi
+			echo "Invalid selection — try again." >&2
+		done
 
-	echo
+		echo
+	fi
 fi
 
 BUNDLE="${BUNDLE:-$BUNDLE_DEFAULT}"
@@ -405,11 +440,23 @@ reset_database() {
 	fi
 }
 
+# Remove each existing path in the argument list, logging what went.
+_remove_paths() {
+	local target
+	for target in "$@"; do
+		if [ -e "$target" ]; then
+			rm -rf "$target"
+			echo "  removed $target"
+		fi
+	done
+}
+
+# Full clean: reset the database and wipe all runtime state.
 clean_bundle() {
 	local liferay_home
 	liferay_home="$(dirname "$TOMCAT_DIR")"
 
-	echo "About to CLEAN this bundle:"
+	echo "About to CLEAN this bundle (full):"
 	echo "  Liferay home : $liferay_home"
 	echo "  Tomcat       : $TOMCAT_DIR"
 	echo "  Removes      : data work elasticsearch logs osgi/state, tomcat logs/work/temp"
@@ -425,8 +472,7 @@ clean_bundle() {
 	reset_database "$liferay_home/portal-ext.properties"
 
 	echo "Cleaning bundle state:"
-	local target
-	for target in \
+	_remove_paths \
 		"$liferay_home/data" \
 		"$liferay_home/work" \
 		"$liferay_home/elasticsearch" \
@@ -434,17 +480,39 @@ clean_bundle() {
 		"$liferay_home/osgi/state" \
 		"$TOMCAT_DIR/logs" \
 		"$TOMCAT_DIR/work" \
-		"$TOMCAT_DIR/temp"; do
-		if [ -e "$target" ]; then
-			rm -rf "$target"
-			echo "  removed $target"
-		fi
-	done
+		"$TOMCAT_DIR/temp"
 	echo
 }
 
+# Cache clean: drop the OSGi state and work/temp caches so the next boot
+# rebuilds the module cache and recompiles JSPs. Keeps data, logs, the search
+# index, and the database.
+clean_cache() {
+	local liferay_home
+	liferay_home="$(dirname "$TOMCAT_DIR")"
+
+	echo "About to CLEAN CACHE for this bundle:"
+	echo "  Liferay home : $liferay_home"
+	echo "  Tomcat       : $TOMCAT_DIR"
+	echo "  Removes      : osgi/state work, tomcat work/temp"
+	echo "  Keeps        : data, logs, search index, database"
+	echo
+	confirm_or_abort "Clear the OSGi state and work/temp caches?"
+
+	echo "Cleaning caches:"
+	_remove_paths \
+		"$liferay_home/osgi/state" \
+		"$liferay_home/work" \
+		"$TOMCAT_DIR/work" \
+		"$TOMCAT_DIR/temp"
+	echo
+}
+
+# --clean (full wipe) takes precedence over --clean-cache when both are given.
 if [ "$CLEAN" = "1" ]; then
 	clean_bundle
+elif [ "$CLEAN_CACHE" = "1" ]; then
+	clean_cache
 fi
 
 # Drop in the Elasticsearch configuration (sidecarHttpPort="AUTO", needed so
