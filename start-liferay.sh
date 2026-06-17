@@ -617,7 +617,16 @@ choose_port() {
 }
 
 HTTP_PORT=$(choose_port "$HTTP_DEFAULT")
-SHUTDOWN_PORT=$(choose_port "$SHUTDOWN_DEFAULT")
+# Tomcat's shutdown port (<Server port="...">) is bound only at the very END of
+# startup, in StandardServer.await() — unlike the connectors, which bind
+# immediately and stay bound. So when a sibling bundle is mid-boot, is_port_free
+# reports 8005 as free even though that sibling will claim it seconds later, once
+# both reach await(); the loser then dies with "Failed to create server shutdown
+# socket ... Address already in use". The HTTP connector binds early and is a
+# reliable per-instance discriminator, so derive the shutdown port's starting
+# candidate from the HTTP offset instead of scanning 8005 independently. (Still
+# run it through choose_port to handle a genuine, already-bound clash.)
+SHUTDOWN_PORT=$(choose_port $((SHUTDOWN_DEFAULT + HTTP_PORT - HTTP_DEFAULT)))
 AJP_PORT=$(choose_port "$AJP_DEFAULT")
 HTTPS_PORT=$(choose_port "$HTTPS_DEFAULT")
 
