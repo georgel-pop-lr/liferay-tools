@@ -26,7 +26,7 @@ and `lfrs` are interchangeable.
 | `lfrGitClean` / `lfrGitCleanDry` | `lfrgc` / `lfrgcd` | Safe `git clean` keeping IDE and per-user props | `LfrGit/` |
 | `lfrGitSync` / `lfrGitSyncEE` | `lfrgs` / `lfrgse` | Sync a fork from upstream (optional `[org]`, defaults to your configured fork) | `LfrGit/` |
 | `lfrGitRebase` | `lfrgr` | Interactive rebase over the last N commits | `LfrGit/` |
-| `lfrRunBundle` | `lfrrb` | Start a Liferay bundle (`start-liferay.sh`) | `LfrRunBundles/` |
+| `lfrBundle` | `lfrb` | Run and stop Liferay bundles (`run` / `stop` / `status`). Bare `lfrBundle` shows each bundle's state and toggles the one you pick (start if stopped, stop if running); `lfrBundle <name>` toggles that bundle directly. `lfrRunBundle` / `lfrrb` still alias `lfrBundle run`. | `LfrRunBundles/` |
 | `lfrShare` | `lfrs` | Point a worktree at a shared, already-built bundle (no rebuild to switch). Bare `lfrShare` shows each repo's state and toggles the one you pick. | `LfrShare/` |
 
 Each folder has its own README with the details.

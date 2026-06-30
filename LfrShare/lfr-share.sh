@@ -17,9 +17,8 @@
 # state, so use it for branches of the same schema; deploying overwrites what
 # is already in the bundle.
 
-if [ -z "${LFR_BUNDLES_DIRS+x}" ]; then
-	LFR_BUNDLES_DIRS=("${HOME}/liferay/bundles" "/media/${USER}/Data/liferay/bundles")
-fi
+# LFR_BUNDLES_DIRS and the bundle list (_lfrBundleEntries) live in the shared
+# module LfrCommon/lfr-bundle-list.sh (also used by lfrBundle).
 
 # Resolve a repo path from an argument, or open the shared repo picker.
 _lfrShareRepo() {
@@ -35,21 +34,6 @@ _lfrShareRepo() {
 	fi
 	sel="$(_lfrRepoPick "${arg}")" || return 1
 	git -C "${sel}" rev-parse --show-toplevel 2>/dev/null || printf '%s\n' "${sel}"
-}
-
-# Emit "<path>\t<name>  (<root>)" for every bundle-looking dir under the roots.
-_lfrBundleEntries() {
-	local root d name
-	for root in "${LFR_BUNDLES_DIRS[@]}"; do
-		[ -d "${root}" ] || continue
-		for d in "${root}"/*/; do
-			[ -d "${d}" ] || continue
-			if compgen -G "${d}tomcat*" >/dev/null 2>&1 || [ -e "${d}.liferay-home" ] || [ -d "${d}liferay-dxp" ]; then
-				name="$(basename "${d}")"
-				printf '%s\t%s  (%s)\n' "${d%/}" "${name}" "${root}"
-			fi
-		done
-	done
 }
 
 # Resolve a bundle to an absolute path: an existing path is used directly, a

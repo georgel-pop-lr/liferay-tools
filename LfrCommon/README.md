@@ -1,13 +1,15 @@
 # LfrCommon
 
 Shared internals for the Liferay tools. Not a command of its own; it is loaded
-by the root `lfrTools.sh` and used by `lfrRepo`, `lfrWorktree`, and `lfrCache`.
+by the root `lfrTools.sh` and used by `lfrRepo`, `lfrWorktree`, `lfrCache`,
+`lfrShare`, and `lfrBundle`.
 
 ## Contents
 
 | File | Purpose |
 |---|---|
-| `lfr-repo-list.sh` | Owns the per-user repo config and the shared helpers `_lfrPick` (generic fzf/numbered picker over `value<TAB>label` lines), `_lfrRepoEntries` (list git repos under the configured roots), and `_lfrRepoPick` (pick a repo). `_lfrPick` is also reused by `lfrShare`'s bundle picker. |
+| `lfr-repo-list.sh` | Owns the per-user repo config and the shared helpers `_lfrPick` (generic fzf/numbered picker over `value<TAB>label` lines), `_lfrRepoEntries` (list git repos under the configured roots), and `_lfrRepoPick` (pick a repo). `_lfrPick` is also reused by `lfrShare` and `lfrBundle`. |
+| `lfr-bundle-list.sh` | Owns `LFR_BUNDLES_DIRS` and `_lfrBundleEntries` (list bundle dirs under those roots), shared by `lfrShare`'s bundle picker and `lfrBundle`'s run/stop toggle. |
 | `repos.local.conf` | Your machine-specific repo roots and worktree settings. Gitignored. |
 | `repos.local.conf.example` | Tracked template; copy it to `repos.local.conf`. |
 
