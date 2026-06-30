@@ -1,6 +1,6 @@
 # Liferay repo per-user config. Copy to repos.local.conf and edit.
 # repos.local.conf is gitignored, so your machine-specific paths stay local.
-# Shared by lfrRepo, lfrWorktree, and lfrCache.
+# Shared by lfrRepo, lfrWorktree, lfrCache, lfrShare, and lfrBundle.
 
 # Roots searched for git repos, in order.
 LFR_REPO_ROOTS=(
@@ -15,3 +15,13 @@ LFR_REPO_PRIORITY=("liferay-portal")
 # Where lfrWorktree creates new worktrees, and the default base ref.
 LFR_WORKTREE_ROOT="${HOME}/liferay/repos"
 LFR_WORKTREE_BASE="upstream/master"
+
+# Bundle config, used by lfrShare and lfrBundle. Roots searched for bundles:
+LFR_BUNDLES_DIRS=(
+	"${HOME}/liferay/bundles"
+	"/media/${USER}/Data/liferay/bundles"
+)
+
+# Bundle-name prefixes floated to the top of the bundle picker, in order (same
+# matching as LFR_REPO_PRIORITY). Defaults float the master bundle first.
+LFR_BUNDLES_PRIORITY=("liferay-bundle-master" "liferay-bundle")

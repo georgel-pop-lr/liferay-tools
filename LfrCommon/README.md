@@ -23,6 +23,8 @@ cp repos.local.conf.example repos.local.conf
 | Variable | Default | Purpose |
 |---|---|---|
 | `LFR_REPO_ROOTS` | `$HOME/liferay/repos` | Directories scanned for repos, in listing order. |
-| `LFR_REPO_PRIORITY` | `liferay-portal` | Name prefixes floated to the top of the picker. |
+| `LFR_REPO_PRIORITY` | `liferay-portal` | Repo-name prefixes floated to the top of the picker. |
 | `LFR_WORKTREE_ROOT` | `$HOME/liferay/repos` | Where `lfrWorktree` creates new worktrees. |
 | `LFR_WORKTREE_BASE` | `upstream/master` | Default base ref for new branches. |
+| `LFR_BUNDLES_DIRS` | `$HOME/liferay/bundles`, `/media/$USER/Data/liferay/bundles` | Directories scanned for bundles (`lfrShare`, `lfrBundle`). |
+| `LFR_BUNDLES_PRIORITY` | `liferay-bundle-master`, `liferay-bundle` | Bundle-name prefixes floated to the top of the bundle picker. |
