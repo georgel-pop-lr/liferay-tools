@@ -10,7 +10,7 @@ one without manually editing `server.xml` or hunting for a free port.
 | File | Purpose |
 |---|---|
 | `start-liferay.sh` | Launches a bundle with auto-port selection. Modifies `tomcat/conf/server.xml` in place if any default port is busy, after backing it up. |
-| `lfr-bundle.sh` | Defines `lfrBundle` (alias `lfrb`): `run` wraps `start-liferay.sh`, `stop` lists running bundles and stops the ones you select, bare toggles a picked bundle. `lfrRunBundle` / `lfrrb` remain as aliases for `lfrBundle run`. |
+| `lfr-bundle.sh` | Defines `lfrBundle` (alias `lfrb`): toggles a bundle (start if stopped, stop if running) via a picker or by name, plus `status` and `stop-all`. `lfrRunBundle` / `lfrrb` remain as back-compat aliases. |
 | `com.liferay.portal.search.elasticsearch7.configuration.ElasticsearchConfiguration.config` | Embedded-Elasticsearch configuration for ES7-era bundles. Copied into the bundle's `osgi/configs/` directory on first run, so search works out of the box without an external Elasticsearch server. |
 | `com.liferay.portal.search.elasticsearch8.configuration.ElasticsearchConfiguration.config` | Same, for ES8-era bundles. The launcher picks the right one based on the bundle's Elasticsearch sidecar version. |
 | `start-liferay.conf` | Machine-specific config (bundle roots and JDK paths). Gitignored — yours alone. |
@@ -191,25 +191,30 @@ Elasticsearch config is still found regardless of where you call it from.
 
 ### Running and stopping: the `lfrBundle` command
 
-`lfrBundle` (alias `lfrb`) is the single entry point. A running bundle is a java
-process started with `catalina.sh run` (so it carries `-Dcatalina.base=`); that
-is how the tool finds running bundles and shows each one's PID, bundle name, and
-the TCP ports it is listening on (read from `ss`, so auto-picked ports show
-their real value).
+`lfrBundle` (alias `lfrb`) is the single entry point, and it toggles: it starts
+a stopped bundle or stops a running one, so you never blindly start a second
+copy (a bundle cannot run twice safely, since a second instance shares the same
+`catalina.base`, database, and OSGi state). A running bundle is a java process
+started with `catalina.sh run` (so it carries `-Dcatalina.base=`); that is how
+the tool finds running bundles and shows each one's PID, bundle name, and the
+TCP ports it is listening on (read from `ss`, so auto-picked ports show their
+real value).
 
 ```bash
-lfrBundle                # picker over every known bundle with its state; selecting one toggles it (start if stopped, stop if running). Esc cancels
-lfrBundle <name>         # toggle that bundle directly, no picker (start if stopped, stop if running)
-lfrBundle run [args]     # start a bundle (same flags as start-liferay.sh below)
-lfrBundle stop           # show running bundles, then pick which to stop (TAB marks several)
-lfrBundle stop all       # stop every running bundle (asks to confirm)
+lfrBundle                # picker over every known bundle with its state; selecting one toggles it. Esc cancels
+lfrBundle <name>         # toggle that bundle directly, no picker
+lfrBundle <name> -c      # start-flags (here --clean) are forwarded to start-liferay.sh, but only when starting
 lfrBundle status         # just list running bundles and their ports
+lfrBundle stop-all       # stop every running bundle (asks to confirm)
 ```
 
-`lfrRunBundle` / `lfrrb` still work as aliases for `lfrBundle run`. Stopping
-sends `SIGTERM` for a clean JVM shutdown, waits up to 10s, then `SIGKILL`s
-anything still alive. The bare toggle lists bundles under `LFR_BUNDLES_DIRS`;
-use `lfrBundle stop` to reach a running bundle outside those roots.
+Start flags (`-c`, `--clean-cache`, `--debug`, `--suspend`, `--jdk`, ...) are
+passed through to `start-liferay.sh` when a stopped bundle is started, and
+ignored when a running bundle is stopped. Stopping sends `SIGTERM` for a clean
+JVM shutdown, waits up to 10s, then `SIGKILL`s anything still alive. The picker
+lists bundles under `LFR_BUNDLES_DIRS`; give a path to toggle a bundle outside
+those roots. `lfrRunBundle` / `lfrrb` remain as back-compat aliases (they now
+toggle, like `lfrBundle`).
 
 ### JDK selection (older bundles need older JDKs)
 
