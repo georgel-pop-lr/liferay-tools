@@ -6,6 +6,7 @@
 #     lfrGitSync       sync a fork's liferay-portal from upstream ([org] optional)
 #     lfrGitSyncEE     sync a fork's liferay-portal-ee master from upstream ([org] optional)
 #     lfrGitRebase     interactive rebase over the last N commits (default 20)
+#     lfrGitUpdateMaster  update master, push it, sync, and with -r rebase your branch ([-r] [remote] [local-branch])
 #
 # Per-user settings (your team fork org) live in lfr-git.local.conf next to this
 # file. It is gitignored. Copy lfr-git.local.conf.example to lfr-git.local.conf.
@@ -68,9 +69,86 @@ lfrGitRebase() {
 	git rebase -i "HEAD~${1:-20}"
 }
 
+# Bring your local master branch current, and optionally rebase your current
+# branch onto it. Steps: fast-forward the local master branch from the source
+# remote's master (no tags), push it to your fork, sync the team fork
+# (lfrGitSync, or lfrGitSyncEE in a liferay-portal-ee checkout), and with -r
+# rebase the current branch onto it. Args: [-r|--rebase] [remote] [local-branch].
+# The source remote defaults to upstream. The local branch defaults to the
+# master* branch that tracks <remote>/master (else plain master), so a
+# non-default remote lands in its own branch automatically, e.g.
+# `lfrGitUpdateMaster brian` updates masterBrian. Rebase is off by default so a
+# plain run just keeps the master branch current and never rebases master onto
+# another branch; pass -r when you want your feature branch rebased onto it.
+lfrGitUpdateMaster() {
+	local src branch cur push_remote push_ref rebase=0 a
+	local -a pos=()
+	for a in "$@"; do
+		case "${a}" in
+		-r | --rebase) rebase=1 ;;
+		*) pos+=("${a}") ;;
+		esac
+	done
+	src="${pos[0]:-upstream}"
+	branch="${pos[1]-}"
+	if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+		echo "lfrGitUpdateMaster: not inside a git repo" >&2
+		return 1
+	fi
+	cur="$(git rev-parse --abbrev-ref HEAD)"
+
+	# When no local branch is given, use the master-like branch that tracks
+	# <src>/master (so a non-default remote lands in its own branch, e.g. brian ->
+	# masterBrian), else plain master. Only master* names qualify, so a feature
+	# branch tracking the same remote is never mistaken for it.
+	if [ -z "${branch}" ]; then
+		branch="$(git for-each-ref --format='%(refname:short) %(upstream:short)' refs/heads |
+			awk -v u="${src}/master" '$2 == u && $1 ~ /^master/ { print $1; exit }')"
+		[ -z "${branch}" ] && branch="master"
+	fi
+
+	echo "Updating ${branch} from ${src}/master (fast-forward, no tags)..."
+	if [ "${cur}" = "${branch}" ]; then
+		git pull --no-tags --ff-only "${src}" master || return 1
+	else
+		git fetch --no-tags "${src}" "master:${branch}" || return 1
+	fi
+
+	# Push it to its configured push remote (your fork), like a bare git push.
+	# A branch with no push config makes rev-parse echo the literal ref (rc 128),
+	# so accept the value only when it resolved to <remote>/<branch>, else origin.
+	push_ref="$(git rev-parse --abbrev-ref "${branch}@{push}" 2>/dev/null)"
+	case "${push_ref}" in
+	*/*) push_remote="${push_ref%%/*}" ;;
+	*) push_remote="origin" ;;
+	esac
+	echo "Pushing ${branch} to ${push_remote}..."
+	git push "${push_remote}" "${branch}" || return 1
+
+	# Sync the team fork; liferay-portal-ee checkouts use lfrGitSyncEE. Detect EE
+	# by the repo's remotes, not the directory name: a worktree may be named
+	# liferay-portal-7.4.x yet track liferay-portal-ee.
+	if git remote -v 2>/dev/null | grep -q 'liferay-portal-ee'; then
+		echo "Syncing EE fork..."
+		lfrGitSyncEE
+	else
+		echo "Syncing fork..."
+		lfrGitSync
+	fi
+
+	# Rebase the current branch onto the updated branch only when asked (-r) and
+	# you are on a different branch. Off by default so a plain run just keeps the
+	# master branch current and never rebases master onto another branch.
+	if [ "${rebase}" = 1 ] && [ "${cur}" != "${branch}" ]; then
+		echo "Rebasing ${cur} onto ${branch}..."
+		git rebase "${branch}"
+	fi
+}
+
 # Short aliases.
 lfrgc() { lfrGitClean "$@"; }
 lfrgcd() { lfrGitCleanDry "$@"; }
 lfrgs() { lfrGitSync "$@"; }
 lfrgse() { lfrGitSyncEE "$@"; }
 lfrgr() { lfrGitRebase "$@"; }
+lfrgum() { lfrGitUpdateMaster "$@"; }
