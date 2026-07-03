@@ -36,14 +36,15 @@ _lfrBundlePorts() {
 		sort -nu | paste -sd' ' -
 }
 
-# Print the status table; sets the global _lfrBundleCount.
+# Print the status table; sets the global _lfrBundleCount. Shows the full bundle
+# path so bundles that share a name across roots stay distinguishable.
 _lfrBundleList() {
-	local pid base name ports n=0
+	local pid base dir ports n=0
 	while IFS=$'\t' read -r pid base; do
 		[ -n "${pid}" ] || continue
-		name="$(basename "$(dirname "${base}")")"
+		dir="$(dirname "${base}")"
 		ports="$(_lfrBundlePorts "${pid}")"
-		printf '  PID %-7s %-28s ports: %s\n' "${pid}" "${name}" "${ports:-?}"
+		printf '  PID %-7s ports: %-22s %s\n' "${pid}" "${ports:-?}" "${dir}"
 		n=$((n + 1))
 	done < <(_lfrBundleProcs)
 	_lfrBundleCount="${n}"
