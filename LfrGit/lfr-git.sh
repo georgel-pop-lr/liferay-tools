@@ -6,7 +6,7 @@
 #     lfrGitSync       sync a fork's liferay-portal from upstream ([org] optional)
 #     lfrGitSyncEE     sync a fork's liferay-portal-ee master from upstream ([org] optional)
 #     lfrGitRebase     interactive rebase over the last N commits (default 20)
-#     lfrGitUpdateMaster  update master, push it, sync, and with -r rebase your branch ([-r] [remote] [local-branch])
+#     lfrGitUpdateMaster  update master, push it, sync, -r rebase your branch, -p force-push it ([-r] [-p] [remote] [local-branch])
 #
 # Per-user settings (your team fork org) live in lfr-git.local.conf next to this
 # file. It is gitignored. Copy lfr-git.local.conf.example to lfr-git.local.conf.
@@ -73,19 +73,21 @@ lfrGitRebase() {
 # branch onto it. Steps: fast-forward the local master branch from the source
 # remote's master (no tags), push it to your fork, sync the team fork
 # (lfrGitSync, or lfrGitSyncEE in a liferay-portal-ee checkout), and with -r
-# rebase the current branch onto it. Args: [-r|--rebase] [remote] [local-branch].
-# The source remote defaults to upstream. The local branch defaults to the
-# master* branch that tracks <remote>/master (else plain master), so a
-# non-default remote lands in its own branch automatically, e.g.
+# rebase the current branch onto it. Args: [-r|--rebase] [-p|--push] [remote]
+# [local-branch]. The source remote defaults to upstream. The local branch
+# defaults to the master* branch that tracks <remote>/master (else plain
+# master), so a non-default remote lands in its own branch automatically, e.g.
 # `lfrGitUpdateMaster brian` updates masterBrian. Rebase is off by default so a
 # plain run just keeps the master branch current and never rebases master onto
-# another branch; pass -r when you want your feature branch rebased onto it.
+# another branch; pass -r to rebase your feature branch onto it, and -p (implies
+# -r) to then force-push the rebased branch to its fork with --force-with-lease.
 lfrGitUpdateMaster() {
-	local src branch cur push_remote push_ref rebase=0 a
+	local src branch cur push_remote push_ref rebase=0 push_branch=0 a
 	local -a pos=()
 	for a in "$@"; do
 		case "${a}" in
 		-r | --rebase) rebase=1 ;;
+		-p | --push) push_branch=1; rebase=1 ;;
 		*) pos+=("${a}") ;;
 		esac
 	done
@@ -141,7 +143,21 @@ lfrGitUpdateMaster() {
 	# master branch current and never rebases master onto another branch.
 	if [ "${rebase}" = 1 ] && [ "${cur}" != "${branch}" ]; then
 		echo "Rebasing ${cur} onto ${branch}..."
-		git rebase "${branch}"
+		if ! git rebase "${branch}"; then
+			echo "lfrGitUpdateMaster: rebase stopped (resolve conflicts, then push yourself); skipping -p." >&2
+			return 1
+		fi
+		# -p: the rebase rewrote history, so force-push the branch to its fork
+		# (--force-with-lease, which refuses if the remote moved unexpectedly).
+		if [ "${push_branch}" = 1 ]; then
+			push_ref="$(git rev-parse --abbrev-ref "${cur}@{push}" 2>/dev/null)"
+			case "${push_ref}" in
+			*/*) push_remote="${push_ref%%/*}" ;;
+			*) push_remote="origin" ;;
+			esac
+			echo "Force-pushing ${cur} to ${push_remote} (--force-with-lease)..."
+			git push --force-with-lease "${push_remote}" "${cur}"
+		fi
 	fi
 }
 

@@ -26,7 +26,7 @@ and `lfrs` are interchangeable.
 | `lfrGitClean` / `lfrGitCleanDry` | `lfrgc` / `lfrgcd` | Safe `git clean` keeping IDE and per-user props | `LfrGit/` |
 | `lfrGitSync` / `lfrGitSyncEE` | `lfrgs` / `lfrgse` | Sync a fork from upstream (optional `[org]`, defaults to your configured fork) | `LfrGit/` |
 | `lfrGitRebase` | `lfrgr` | Interactive rebase over the last N commits | `LfrGit/` |
-| `lfrGitUpdateMaster` | `lfrgum` | Update your local master branch from a remote (default `upstream`), push it to your fork, sync the team fork (`lfrGitSync`/`lfrGitSyncEE`); with `-r` also rebase your current branch onto it. Takes `[-r] [remote] [local-branch]` | `LfrGit/` |
+| `lfrGitUpdateMaster` | `lfrgum` | Update your local master branch from a remote (default `upstream`), push it to your fork, sync the team fork (`lfrGitSync`/`lfrGitSyncEE`); `-r` rebases your current branch onto it, `-p` then force-pushes it. Takes `[-r] [-p] [remote] [local-branch]` | `LfrGit/` |
 | `lfrBundle` | `lfrb` | Toggle Liferay bundles: shows each bundle's state and starts the one you pick/name if stopped (forwarding start-flags like `-c`) or stops it if running. Also `lfrBundle status` and `lfrBundle stop-all`. `lfrRunBundle` / `lfrrb` alias it. | `LfrRunBundles/` |
 | `lfrShare` | `lfrs` | Point a worktree at a shared, already-built bundle (no rebuild to switch). Bare `lfrShare` shows each repo's state and toggles the one you pick. | `LfrShare/` |
 
