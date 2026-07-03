@@ -661,8 +661,15 @@ export LIFERAY_MODULE_PERIOD_FRAMEWORK_PERIOD_PROPERTIES_PERIOD_OSGI_PERIOD_CONS
 # the only way to override them (no framework or env-var equivalent). Rewritten
 # every run so a standalone start falls back to the defaults the test harness
 # expects on the client side (liferay.arquillian.port, default 32763).
-ARQUILLIAN_PORT=$(choose_port "$ARQUILLIAN_DEFAULT")
-DATA_GUARD_PORT=$(choose_port "$DATA_GUARD_DEFAULT")
+#
+# These bind late in OSGi startup (well after the HTTP connector), so scanning
+# from the default races a still-booting sibling exactly like the shutdown port
+# does: it reports 32763/42763 free, both bundles pick them, and the fatal
+# System.exit(-10) fires when the second binds. Seed the candidate from the HTTP
+# offset instead, so a second bundle deterministically lands elsewhere no matter
+# the boot timing. (Still run through choose_port for a genuine already-bound clash.)
+ARQUILLIAN_PORT=$(choose_port $((ARQUILLIAN_DEFAULT + HTTP_PORT - HTTP_DEFAULT)))
+DATA_GUARD_PORT=$(choose_port $((DATA_GUARD_DEFAULT + HTTP_PORT - HTTP_DEFAULT)))
 
 write_port_config() {
 	local pid=$1
