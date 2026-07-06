@@ -82,7 +82,7 @@ lfrGitRebase() {
 # another branch; pass -r to rebase your feature branch onto it, and -p (implies
 # -r) to then force-push the rebased branch to its fork with --force-with-lease.
 lfrGitUpdateMaster() {
-	local src branch cur push_remote push_ref rebase=0 push_branch=0 a
+	local src branch cur push_remote push_ref rebase=0 push_branch=0 a before after
 	local -a pos=()
 	for a in "$@"; do
 		case "${a}" in
@@ -110,11 +110,13 @@ lfrGitUpdateMaster() {
 	fi
 
 	echo "Updating ${branch} from ${src}/master (fast-forward, no tags)..."
+	before="$(git rev-parse --verify -q "${branch}" 2>/dev/null)"
 	if [ "${cur}" = "${branch}" ]; then
 		git pull --no-tags --ff-only "${src}" master || return 1
 	else
 		git fetch --no-tags "${src}" "master:${branch}" || return 1
 	fi
+	after="$(git rev-parse --verify -q "${branch}" 2>/dev/null)"
 
 	# Push it to its configured push remote (your fork), like a bare git push.
 	# A branch with no push config makes rev-parse echo the literal ref (rc 128),
@@ -138,10 +140,12 @@ lfrGitUpdateMaster() {
 		lfrGitSync
 	fi
 
-	# Rebase the current branch onto the updated branch only when asked (-r) and
-	# you are on a different branch. Off by default so a plain run just keeps the
-	# master branch current and never rebases master onto another branch.
-	if [ "${rebase}" = 1 ] && [ "${cur}" != "${branch}" ]; then
+	# Rebase the current branch onto the updated branch only when asked (-r), you
+	# are on a different branch, and master actually moved. Off by default so a
+	# plain run just keeps the master branch current and never rebases master
+	# onto another branch; skipping the no-op rebase when nothing changed avoids
+	# needlessly churning commit dates (and a pointless -p force-push).
+	if [ "${rebase}" = 1 ] && [ "${cur}" != "${branch}" ] && [ "${before}" != "${after}" ]; then
 		echo "Rebasing ${cur} onto ${branch}..."
 		if ! git rebase "${branch}"; then
 			echo "lfrGitUpdateMaster: rebase stopped (resolve conflicts, then push yourself); skipping -p." >&2
@@ -158,6 +162,8 @@ lfrGitUpdateMaster() {
 			echo "Force-pushing ${cur} to ${push_remote} (--force-with-lease)..."
 			git push --force-with-lease "${push_remote}" "${cur}"
 		fi
+	elif [ "${rebase}" = 1 ] && [ "${cur}" != "${branch}" ]; then
+		echo "${branch} already up to date; nothing to rebase ${cur} onto."
 	fi
 }
 
