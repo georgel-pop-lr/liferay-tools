@@ -966,10 +966,37 @@ echo
 print_selected_ports
 echo
 
+# Kill a process and all its descendants (children first) with the given signal.
+# Force-stop uses this so the whole Tomcat tree dies, including the Elasticsearch
+# sidecar child process, not just the top JVM.
+_kill_tree() {
+	local pid="$1" sig="$2" child
+	for child in $(pgrep -P "$pid" 2>/dev/null); do
+		_kill_tree "$child" "$sig"
+	done
+	kill -"$sig" "$pid" 2>/dev/null || true
+}
+
+# Ctrl+C handler, in effect only while the bundle is running in this terminal
+# (installed just before the wait loop, gone when the script exits): the first
+# press stops Tomcat gracefully (SIGTERM); a second press force-kills the whole
+# tree (SIGKILL).
+_SIGINT_COUNT=0
+_on_sigint() {
+	_SIGINT_COUNT=$((_SIGINT_COUNT + 1))
+	if [ "$_SIGINT_COUNT" -ge 2 ]; then
+		echo "Force-stopping (SIGKILL) the Tomcat process tree..." >&2
+		_kill_tree "$_catalina_pid" KILL
+	else
+		echo "Stopping Tomcat (SIGTERM); press Ctrl+C again to force-kill." >&2
+		kill -TERM "$_catalina_pid" 2>/dev/null || true
+	fi
+}
+
 catalina_args=(run)
 [ "$DEBUG" = "1" ] && catalina_args=(jpda run)
 
-# On a TTY, pin the status bar to the bottom row while Tomcat's logs scroll
+# On a TTY, pin the two-row status panel to the bottom while Tomcat's logs scroll
 # above it. Tomcat runs in the background (not exec) so this shell stays alive
 # to (a) redraw the bar on window resize via SIGWINCH and (b) restore the
 # terminal through the EXIT trap, leaving the prompt clean even after Ctrl+C.
@@ -981,10 +1008,14 @@ if [ -t 1 ]; then
 	"$CATALINA" "${catalina_args[@]}" &
 	_catalina_pid=$!
 
-	# Redraw the bar for the new size on resize; forward Ctrl+C to Tomcat rather
-	# than letting it kill this shell, so the EXIT trap still runs.
+	# Redraw the bar on resize. Handle Ctrl+C ourselves: bash makes a background
+	# command started without job control ignore SIGINT, so the terminal's Ctrl+C
+	# never reaches Tomcat; our INT trap (which does fire in this foreground
+	# shell) stops it, escalating SIGTERM -> SIGKILL on a second press. Forwarding
+	# rather than exiting keeps the EXIT trap running so the terminal is restored.
 	trap '_setup_status_bar' WINCH
-	trap 'kill -INT "$_catalina_pid" 2>/dev/null || true' INT TERM
+	trap _on_sigint INT
+	trap 'kill -TERM "$_catalina_pid" 2>/dev/null || true' TERM
 
 	# wait returns >128 when a trap (SIGWINCH) interrupts it; loop until Tomcat
 	# actually exits.
