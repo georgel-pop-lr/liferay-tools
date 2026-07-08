@@ -787,44 +787,63 @@ set_terminal_title() {
 	printf '\033]0;%s\007' "$*"
 }
 
-# One-line status bar text, all ASCII so the field width stays byte-accurate.
-# Most useful info first (URL, HTTP, debug) so a narrow terminal truncates only
-# the less important tail.
-_status_bar_line() {
-	local dbg=""
-	[ -n "$JPDA_PORT" ] && dbg="  DBG $JPDA_PORT"
-	local text=" http://localhost:$HTTP_PORT/  |  HTTP $HTTP_PORT  OSGI $OSGI_CONSOLE_PORT$dbg  |  $(basename "$BUNDLE")  |  HTTPS $HTTPS_PORT  ARQ $ARQUILLIAN_PORT  DG $DATA_GUARD_PORT"
+# The two status-bar rows, all ASCII so the field width stays byte-accurate.
+# Upper row: ports only (trailing ones drop first on a narrow terminal; they are
+# also in the table above).
+_status_bar_ports_line() {
+	local text=" HTTP $HTTP_PORT  HTTPS $HTTPS_PORT  OSGI $OSGI_CONSOLE_PORT  ARQ $ARQUILLIAN_PORT  DG $DATA_GUARD_PORT"
 	[ -n "$ES_TRANSPORT_PORT" ] && text="$text  ES $ES_TRANSPORT_PORT"
 	[ -n "$GLOWROOT_PORT" ] && text="$text  GR $GLOWROOT_PORT"
-	printf '%s  |  Ctrl+C to stop ' "$text"
+	[ -n "$JPDA_PORT" ] && text="$text  DBG $JPDA_PORT"
+	printf '%s' "$text"
+}
+
+# Lower row: editor URL, then the bundle path, then a stop hint. If the line
+# would overflow, the path is left-truncated with a leading "..." so the
+# identifying tail (the bundle folder) stays visible, not the generic leading
+# directories; the hint is dropped first when space is very tight.
+_status_bar_url_line() {
+	local cols="$1"
+	local prefix=" http://localhost:$HTTP_PORT/   |   "
+	local suffix="   |   Ctrl+C to stop "
+	local path="$BUNDLE" budget
+	budget=$((cols - ${#prefix} - ${#suffix}))
+	if [ "$budget" -lt 12 ]; then
+		suffix=""
+		budget=$((cols - ${#prefix}))
+	fi
+	if [ "$budget" -ge 4 ] && [ "${#path}" -gt "$budget" ]; then
+		path="...${path: -$((budget - 3))}"
+	fi
+	printf '%s%s%s' "$prefix" "$path" "$suffix"
 }
 
 _STATUS_BAR_ON=0
 
-# Reserve the bottom row (a DECSTBM scroll region over the rest of the screen)
-# and draw the status bar there in reverse video, so Tomcat's logs scroll above
-# it while the ports stay pinned. No-op on very short terminals.
+# Reserve the bottom two rows (a DECSTBM scroll region over the rest of the
+# screen) and draw the two-row status panel there in reverse video, so Tomcat's
+# logs scroll above it while the ports/URL stay pinned. No-op on short terminals.
 _setup_status_bar() {
-	local rows cols text
+	local rows cols ports url
 	rows=$(tput lines 2>/dev/null || echo 24)
 	cols=$(tput cols 2>/dev/null || echo 80)
-	[ "$rows" -ge 6 ] 2>/dev/null || return 0
-	text="$(_status_bar_line)"
-	text="${text:0:$cols}"
-	printf -v text '%-*s' "$cols" "$text"
-	printf '\033[1;%dr' "$((rows - 1))"                   # scroll region = all but bottom row
-	printf '\033[%d;1H\033[7m%s\033[0m' "$rows" "$text"   # draw reverse-video bar on bottom row
-	printf '\033[%d;1H' "$((rows - 1))"                   # cursor back into the scroll region
+	[ "$rows" -ge 8 ] 2>/dev/null || return 0
+	ports="$(_status_bar_ports_line)"; ports="${ports:0:$cols}"; printf -v ports '%-*s' "$cols" "$ports"
+	url="$(_status_bar_url_line "$cols")"; url="${url:0:$cols}"; printf -v url '%-*s' "$cols" "$url"
+	printf '\033[1;%dr' "$((rows - 2))"                          # scroll region = all but bottom 2 rows
+	printf '\033[%d;1H\033[7m%s\033[0m' "$((rows - 1))" "$ports" # upper row: ports
+	printf '\033[%d;1H\033[7m%s\033[0m' "$rows" "$url"           # lower row: URL + full path
+	printf '\033[%d;1H' "$((rows - 2))"                          # cursor back into the scroll region
 	_STATUS_BAR_ON=1
 }
 
 # Undo _setup_status_bar: restore the full-screen scroll region and clear the
-# bar row so the returning shell prompt sees a clean terminal.
+# two panel rows so the returning shell prompt sees a clean terminal.
 _teardown_status_bar() {
 	[ "$_STATUS_BAR_ON" = 1 ] || return 0
 	local rows
 	rows=$(tput lines 2>/dev/null || echo 24)
-	printf '\033[r\033[%d;1H\033[2K\n' "$rows"
+	printf '\033[r\033[%d;1H\033[J\n' "$((rows - 1))"
 }
 
 # Read current ports out of server.xml so we know whether we need to write.
