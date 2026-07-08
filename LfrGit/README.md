@@ -34,7 +34,10 @@ than the configured `LFR_GIT_FORK_ORG`, e.g. `lfrGitSync my-other-org`.
 `lfrGitUpdateMaster` automates the whole after-master-update routine:
 
 1. Fast-forward the local master branch from the source remote (no tags).
-2. Push it to your fork (its configured push remote, e.g. `origin`).
+2. Push it to your fork (its configured push remote, e.g. `origin`). If the fork
+   rejects it as non-fast-forward and the local branch is exactly `<remote>/master`,
+   force-update the fork with `--force-with-lease` (upstream rewrote master, so the
+   fork's copy is stale); a branch carrying its own commits is never force-pushed.
 3. Sync the team fork: `lfrGitSync`, or `lfrGitSyncEE` when the repo's remotes
    point at `liferay-portal-ee` (detected by remote, not folder name, so an
    EE worktree named `liferay-portal-7.4.x` is still handled).

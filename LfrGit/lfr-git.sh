@@ -84,6 +84,69 @@ lfrGitRebase() {
 # (implies -r) to force that plain rebase even when master did not move. Pass -p
 # (implies -r) to then force-push the rebased branch to its fork with
 # --force-with-lease.
+# Explain the usual cause of a failed master update: the local mirror branch has
+# diverged from <src>/master (commits <src> later rewrote out of master, not your
+# own work), so the fast-forward is refused and git prints only a terse
+# "non-fast-forward". Show the ahead/behind counts, the offending commits, and
+# the one-line reset. No-op (leaving git's own error to stand) when the branch is
+# not actually ahead, e.g. a network or auth failure.
+_lfrGitUpdateMasterExplain() {
+	local branch="${1}" src="${2}"
+	local counts ahead behind head
+
+	counts="$(git rev-list --left-right --count "${branch}...${src}/master" 2>/dev/null)" || return 0
+
+	ahead="${counts%%[[:space:]]*}"
+	behind="${counts##*[[:space:]]}"
+
+	[ "${ahead:-0}" -gt 0 ] 2>/dev/null || return 0
+
+	echo >&2
+	echo "lfrGitUpdateMaster: cannot fast-forward ${branch} to ${src}/master." >&2
+	echo "  ${branch} has ${ahead} commit(s) not on ${src}/master (and is ${behind} behind)," >&2
+	echo "  so this is not a fast-forward. These are usually commits ${src} rewrote" >&2
+	echo "  out of master, not your own work:" >&2
+	git log --oneline --no-decorate "${branch}" "^${src}/master" 2>/dev/null | sed 's/^/    /' >&2
+	echo >&2
+
+	head="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+	echo "  If you keep no work on ${branch}, reset it to ${src}/master:" >&2
+	if [ "${head}" = "${branch}" ]; then
+		echo "    git reset --hard ${src}/master" >&2
+	else
+		echo "    git branch -f ${branch} ${src}/master" >&2
+	fi
+	echo "  then re-run lfrGitUpdateMaster." >&2
+}
+
+# The plain push of the master mirror was refused (non-fast-forward). When the
+# local branch is exactly <src>/master (a clean mirror with no local work of its
+# own), the fork just holds history <src> rewrote away, so force-update it with
+# --force-with-lease (safe: overwrites only if the fork is still where the
+# tracking ref last saw it). Otherwise the branch carries local commits, so
+# refuse to force and explain.
+_lfrGitUpdateMasterPush() {
+	local push_remote="${1}" branch="${2}" src="${3}"
+	local local_tip src_tip
+
+	local_tip="$(git rev-parse "${branch}" 2>/dev/null)"
+	src_tip="$(git rev-parse "${src}/master" 2>/dev/null)"
+
+	if [ -n "${src_tip}" ] && [ "${local_tip}" = "${src_tip}" ]; then
+		echo "  ${branch} matches ${src}/master exactly; ${push_remote} holds history" >&2
+		echo "  ${src} rewrote away. Force-updating with --force-with-lease..." >&2
+		git push --force-with-lease "${push_remote}" "${branch}"
+		return
+	fi
+
+	echo >&2
+	echo "lfrGitUpdateMaster: cannot push ${branch} to ${push_remote} (non-fast-forward)," >&2
+	echo "  and ${branch} does not match ${src}/master, so it carries local commits." >&2
+	echo "  Not force-pushing. Reconcile with ${push_remote} yourself" >&2
+	echo "  (e.g. git pull --rebase ${push_remote} ${branch}), then re-run." >&2
+	return 1
+}
+
 lfrGitUpdateMaster() {
 	local src branch cur push_remote push_ref rebase=0 force_rebase=0 push_branch=0 a before after
 	local -a pos=()
@@ -116,9 +179,11 @@ lfrGitUpdateMaster() {
 	echo "Updating ${branch} from ${src}/master (fast-forward, no tags)..."
 	before="$(git rev-parse --verify -q "${branch}" 2>/dev/null)"
 	if [ "${cur}" = "${branch}" ]; then
-		git pull --no-tags --ff-only "${src}" master || return 1
+		git pull --no-tags --ff-only "${src}" master ||
+			{ _lfrGitUpdateMasterExplain "${branch}" "${src}"; return 1; }
 	else
-		git fetch --no-tags "${src}" "master:${branch}" || return 1
+		git fetch --no-tags "${src}" "master:${branch}" ||
+			{ _lfrGitUpdateMasterExplain "${branch}" "${src}"; return 1; }
 	fi
 	after="$(git rev-parse --verify -q "${branch}" 2>/dev/null)"
 
@@ -131,7 +196,8 @@ lfrGitUpdateMaster() {
 	*) push_remote="origin" ;;
 	esac
 	echo "Pushing ${branch} to ${push_remote}..."
-	git push "${push_remote}" "${branch}" || return 1
+	git push "${push_remote}" "${branch}" ||
+		_lfrGitUpdateMasterPush "${push_remote}" "${branch}" "${src}" || return 1
 
 	# Sync the team fork; liferay-portal-ee checkouts use lfrGitSyncEE. Detect EE
 	# by the repo's remotes, not the directory name: a worktree may be named
