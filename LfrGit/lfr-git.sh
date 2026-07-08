@@ -73,20 +73,24 @@ lfrGitRebase() {
 # branch onto it. Steps: fast-forward the local master branch from the source
 # remote's master (no tags), push it to your fork, sync the team fork
 # (lfrGitSync, or lfrGitSyncEE in a liferay-portal-ee checkout), and with -r
-# rebase the current branch onto it. Args: [-r|--rebase] [-p|--push] [remote]
-# [local-branch]. The source remote defaults to upstream. The local branch
-# defaults to the master* branch that tracks <remote>/master (else plain
-# master), so a non-default remote lands in its own branch automatically, e.g.
-# `lfrGitUpdateMaster brian` updates masterBrian. Rebase is off by default so a
-# plain run just keeps the master branch current and never rebases master onto
-# another branch; pass -r to rebase your feature branch onto it, and -p (implies
-# -r) to then force-push the rebased branch to its fork with --force-with-lease.
+# rebase the current branch onto it. Args: [-r|--rebase] [-f|--force-rebase]
+# [-p|--push] [remote] [local-branch]. The source remote defaults to upstream.
+# The local branch defaults to the master* branch that tracks <remote>/master
+# (else plain master), so a non-default remote lands in its own branch
+# automatically, e.g. `lfrGitUpdateMaster brian` updates masterBrian. Rebase is
+# off by default so a plain run just keeps the master branch current and never
+# rebases master onto another branch. Pass -r to rebase your feature branch onto
+# it, but only when master actually moved (a no-op rebase is skipped). Pass -f
+# (implies -r) to force that plain rebase even when master did not move. Pass -p
+# (implies -r) to then force-push the rebased branch to its fork with
+# --force-with-lease.
 lfrGitUpdateMaster() {
-	local src branch cur push_remote push_ref rebase=0 push_branch=0 a before after
+	local src branch cur push_remote push_ref rebase=0 force_rebase=0 push_branch=0 a before after
 	local -a pos=()
 	for a in "$@"; do
 		case "${a}" in
 		-r | --rebase) rebase=1 ;;
+		-f | --force-rebase) force_rebase=1; rebase=1 ;;
 		-p | --push) push_branch=1; rebase=1 ;;
 		*) pos+=("${a}") ;;
 		esac
@@ -140,12 +144,12 @@ lfrGitUpdateMaster() {
 		lfrGitSync
 	fi
 
-	# Rebase the current branch onto the updated branch only when asked (-r), you
-	# are on a different branch, and master actually moved. Off by default so a
-	# plain run just keeps the master branch current and never rebases master
-	# onto another branch; skipping the no-op rebase when nothing changed avoids
-	# needlessly churning commit dates (and a pointless -p force-push).
-	if [ "${rebase}" = 1 ] && [ "${cur}" != "${branch}" ] && [ "${before}" != "${after}" ]; then
+	# Rebase the current branch onto the updated branch when asked (-r) and you
+	# are on a different branch. By default skip it when master did not move, so a
+	# no-op rebase never churns commit dates or triggers a pointless -p force-push;
+	# -f (force_rebase) runs the same plain rebase anyway.
+	if [ "${rebase}" = 1 ] && [ "${cur}" != "${branch}" ] &&
+		{ [ "${before}" != "${after}" ] || [ "${force_rebase}" = 1 ]; }; then
 		echo "Rebasing ${cur} onto ${branch}..."
 		if ! git rebase "${branch}"; then
 			echo "lfrGitUpdateMaster: rebase stopped (resolve conflicts, then push yourself); skipping -p." >&2
