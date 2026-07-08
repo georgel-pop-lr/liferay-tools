@@ -758,24 +758,74 @@ print_port() {
 	fi
 }
 
-echo "Selected ports:"
-print_port "HTTP" "$HTTP_PORT" "$HTTP_DEFAULT"
-print_port "SHUTDOWN" "$SHUTDOWN_PORT" "$SHUTDOWN_DEFAULT"
-print_port "AJP" "$AJP_PORT" "$AJP_DEFAULT"
-print_port "HTTPS" "$HTTPS_PORT" "$HTTPS_DEFAULT"
-print_port "OSGI" "$OSGI_CONSOLE_PORT" "$OSGI_CONSOLE_DEFAULT"
-print_port "ARQUILLIAN" "$ARQUILLIAN_PORT" "$ARQUILLIAN_DEFAULT"
-print_port "DATAGUARD" "$DATA_GUARD_PORT" "$DATA_GUARD_DEFAULT"
-if [ -n "$ES_TRANSPORT_PORT" ]; then
-	print_port "ES-TRANS" "$ES_TRANSPORT_PORT" "$ES_TRANSPORT_DEFAULT"
-fi
-if [ -n "$GLOWROOT_PORT" ]; then
-	print_port "GLOWROOT" "$GLOWROOT_PORT" "$GLOWROOT_DEFAULT"
-fi
-if [ -n "$JPDA_PORT" ]; then
-	print_port "JPDA" "$JPDA_PORT" "$JPDA_DEFAULT"
-fi
-echo
+# Print the resolved ports. Called at the very end, right before Tomcat's log
+# stream starts, so the table stays on screen as the last thing the user sees.
+print_selected_ports() {
+	echo "Selected ports:"
+	print_port "HTTP" "$HTTP_PORT" "$HTTP_DEFAULT"
+	print_port "SHUTDOWN" "$SHUTDOWN_PORT" "$SHUTDOWN_DEFAULT"
+	print_port "AJP" "$AJP_PORT" "$AJP_DEFAULT"
+	print_port "HTTPS" "$HTTPS_PORT" "$HTTPS_DEFAULT"
+	print_port "OSGI" "$OSGI_CONSOLE_PORT" "$OSGI_CONSOLE_DEFAULT"
+	print_port "ARQUILLIAN" "$ARQUILLIAN_PORT" "$ARQUILLIAN_DEFAULT"
+	print_port "DATAGUARD" "$DATA_GUARD_PORT" "$DATA_GUARD_DEFAULT"
+	if [ -n "$ES_TRANSPORT_PORT" ]; then
+		print_port "ES-TRANS" "$ES_TRANSPORT_PORT" "$ES_TRANSPORT_DEFAULT"
+	fi
+	if [ -n "$GLOWROOT_PORT" ]; then
+		print_port "GLOWROOT" "$GLOWROOT_PORT" "$GLOWROOT_DEFAULT"
+	fi
+	if [ -n "$JPDA_PORT" ]; then
+		print_port "JPDA" "$JPDA_PORT" "$JPDA_DEFAULT"
+	fi
+}
+
+# Pin a compact port summary to the terminal title/tab (OSC) so it stays visible
+# while Tomcat's log stream scrolls. TTY-only, so no escapes leak into a pipe.
+set_terminal_title() {
+	[ -t 1 ] || return 0
+	printf '\033]0;%s\007' "$*"
+}
+
+# One-line status bar text, all ASCII so the field width stays byte-accurate.
+# Most useful info first (URL, HTTP, debug) so a narrow terminal truncates only
+# the less important tail.
+_status_bar_line() {
+	local dbg=""
+	[ -n "$JPDA_PORT" ] && dbg="  DBG $JPDA_PORT"
+	local text=" http://localhost:$HTTP_PORT/  |  HTTP $HTTP_PORT  OSGI $OSGI_CONSOLE_PORT$dbg  |  $(basename "$BUNDLE")  |  HTTPS $HTTPS_PORT  ARQ $ARQUILLIAN_PORT  DG $DATA_GUARD_PORT"
+	[ -n "$ES_TRANSPORT_PORT" ] && text="$text  ES $ES_TRANSPORT_PORT"
+	[ -n "$GLOWROOT_PORT" ] && text="$text  GR $GLOWROOT_PORT"
+	printf '%s  |  Ctrl+C to stop ' "$text"
+}
+
+_STATUS_BAR_ON=0
+
+# Reserve the bottom row (a DECSTBM scroll region over the rest of the screen)
+# and draw the status bar there in reverse video, so Tomcat's logs scroll above
+# it while the ports stay pinned. No-op on very short terminals.
+_setup_status_bar() {
+	local rows cols text
+	rows=$(tput lines 2>/dev/null || echo 24)
+	cols=$(tput cols 2>/dev/null || echo 80)
+	[ "$rows" -ge 6 ] 2>/dev/null || return 0
+	text="$(_status_bar_line)"
+	text="${text:0:$cols}"
+	printf -v text '%-*s' "$cols" "$text"
+	printf '\033[1;%dr' "$((rows - 1))"                   # scroll region = all but bottom row
+	printf '\033[%d;1H\033[7m%s\033[0m' "$rows" "$text"   # draw reverse-video bar on bottom row
+	printf '\033[%d;1H' "$((rows - 1))"                   # cursor back into the scroll region
+	_STATUS_BAR_ON=1
+}
+
+# Undo _setup_status_bar: restore the full-screen scroll region and clear the
+# bar row so the returning shell prompt sees a clean terminal.
+_teardown_status_bar() {
+	[ "$_STATUS_BAR_ON" = 1 ] || return 0
+	local rows
+	rows=$(tput lines 2>/dev/null || echo 24)
+	printf '\033[r\033[%d;1H\033[2K\n' "$rows"
+}
 
 # Read current ports out of server.xml so we know whether we need to write.
 read_port() {
@@ -904,11 +954,43 @@ if [ "$DEBUG" = "1" ]; then
 	export JPDA_OPTS="-agentlib:jdwp=transport=dt_socket,address=*:$JPDA_PORT,server=y,suspend=$JPDA_SUSPEND"
 
 	echo "  Debug attach   : localhost:$JPDA_PORT (transport=dt_socket, suspend=$JPDA_SUSPEND)"
-	echo
-
-	exec "$CATALINA" jpda run
 fi
 
+# Pin the key ports to the terminal title, and print the full table as the last
+# thing before Tomcat's log stream buries the earlier output.
+term_title="Liferay $(basename "$BUNDLE") http:$HTTP_PORT"
+[ -n "$JPDA_PORT" ] && term_title="$term_title dbg:$JPDA_PORT"
+set_terminal_title "$term_title"
+
+echo
+print_selected_ports
 echo
 
-exec "$CATALINA" run
+catalina_args=(run)
+[ "$DEBUG" = "1" ] && catalina_args=(jpda run)
+
+# On a TTY, pin the status bar to the bottom row while Tomcat's logs scroll
+# above it. Tomcat runs in the background (not exec) so this shell stays alive
+# to (a) redraw the bar on window resize via SIGWINCH and (b) restore the
+# terminal through the EXIT trap, leaving the prompt clean even after Ctrl+C.
+# A foreground/exec'd Tomcat would block both. On a pipe/redirect, just exec.
+if [ -t 1 ]; then
+	trap _teardown_status_bar EXIT
+	_setup_status_bar
+
+	"$CATALINA" "${catalina_args[@]}" &
+	_catalina_pid=$!
+
+	# Redraw the bar for the new size on resize; forward Ctrl+C to Tomcat rather
+	# than letting it kill this shell, so the EXIT trap still runs.
+	trap '_setup_status_bar' WINCH
+	trap 'kill -INT "$_catalina_pid" 2>/dev/null || true' INT TERM
+
+	# wait returns >128 when a trap (SIGWINCH) interrupts it; loop until Tomcat
+	# actually exits.
+	while kill -0 "$_catalina_pid" 2>/dev/null; do
+		wait "$_catalina_pid" && break
+	done
+else
+	exec "$CATALINA" "${catalina_args[@]}"
+fi
