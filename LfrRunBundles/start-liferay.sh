@@ -299,8 +299,10 @@ echo
 # wipe, and prompts for confirmation unless --yes was passed.
 confirm_or_abort() {
 	[ "$ASSUME_YES" = "1" ] && return 0
-	local reply
-	read -r -p "$1 [y/N] " reply
+	local reply default="${2:-n}" hint="[y/N]"
+	[ "$default" = "y" ] && hint="[Y/n]"
+	read -r -p "$1 $hint " reply
+	[ -z "$reply" ] && reply="$default"
 	case "$reply" in
 		y|Y|yes|YES) return 0 ;;
 		*) echo "Aborted." >&2; exit 1 ;;
@@ -505,7 +507,7 @@ clean_cache() {
 	echo "  Removes      : osgi/state work, tomcat work/temp"
 	echo "  Keeps        : data, logs, search index, database"
 	echo
-	confirm_or_abort "Clear the OSGi state and work/temp caches?"
+	confirm_or_abort "Clear the OSGi state and work/temp caches?" y
 
 	echo "Cleaning caches:"
 	_remove_paths \
