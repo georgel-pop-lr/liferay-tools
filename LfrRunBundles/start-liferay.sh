@@ -297,15 +297,25 @@ echo
 # tomcat logs/work/temp) and reset the database read from portal-ext.properties.
 # Runs only after the bundle and tomcat are resolved so we know exactly what to
 # wipe, and prompts for confirmation unless --yes was passed.
-confirm_or_abort() {
+confirm() {
 	[ "$ASSUME_YES" = "1" ] && return 0
 	local reply default="${2:-n}" hint="[y/N]"
 	[ "$default" = "y" ] && hint="[Y/n]"
-	read -r -p "$1 $hint " reply
+	# Pre-fill the answer only when the default is "y" (readline -i), so it shows
+	# after the prompt and Enter accepts it; for a "n" default we leave the line
+	# empty so typing "y" is not appended after a pre-filled "n". Approve only on
+	# an exact yes, so a leftover "y" plus a typed "n" ("yn") reads as no. Return
+	# non-zero (never exit) on anything else, so the caller can skip its step and
+	# keep the run going instead of aborting.
+	if [ -t 0 ] && [ "$default" = "y" ]; then
+		read -r -e -i "$default" -p "$1 $hint " reply
+	else
+		read -r -p "$1 $hint " reply
+	fi
 	[ -z "$reply" ] && reply="$default"
 	case "$reply" in
 		y|Y|yes|YES) return 0 ;;
-		*) echo "Aborted." >&2; exit 1 ;;
+		*) return 1 ;;
 	esac
 }
 
@@ -472,7 +482,11 @@ clean_bundle() {
 	echo "  Removes      : data work elasticsearch logs osgi/state, tomcat logs/work/temp"
 	echo "  Database     : reset from $liferay_home/portal-ext.properties"
 	echo
-	confirm_or_abort "This deletes data and DROPs the database. Proceed?"
+	confirm "This deletes data and DROPs the database. Proceed?" y || {
+		echo "Not confirmed; skipping the clean and starting the bundle as-is."
+		echo
+		return 0
+	}
 
 	# Reset the database first: it is the step most likely to fail (bad
 	# credentials, server down, Docker-only network), and it exits on failure.
@@ -507,7 +521,11 @@ clean_cache() {
 	echo "  Removes      : osgi/state work, tomcat work/temp"
 	echo "  Keeps        : data, logs, search index, database"
 	echo
-	confirm_or_abort "Clear the OSGi state and work/temp caches?" y
+	confirm "Clear the OSGi state and work/temp caches?" y || {
+		echo "Not confirmed; skipping the cache clean and starting the bundle as-is."
+		echo
+		return 0
+	}
 
 	echo "Cleaning caches:"
 	_remove_paths \
