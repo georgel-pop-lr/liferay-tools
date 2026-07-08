@@ -523,11 +523,14 @@ elif [ "$CLEAN_CACHE" = "1" ]; then
 	clean_cache
 fi
 
-# Drop in the Elasticsearch configuration (sidecarHttpPort="AUTO", needed so
-# parallel bundles don't fight over the sidecar port) if the bundle's
-# osgi/configs directory exists and doesn't already have one. The source files
-# are expected to live next to this script; if they're missing we just skip
-# silently.
+# Write the Elasticsearch sidecar configuration into the bundle's osgi/configs
+# so parallel bundles don't fight over its ports. The HTTP port stays
+# sidecarHttpPort="AUTO" (Liferay finds a free one on boot); the transport port
+# is a fixed default that ES itself will auto-increment, so it is pinned below
+# to a free, per-instance value (like the shutdown/arquillian ports) and bound
+# to loopback. The file is rewritten every run, so a reused bundle always gets
+# current ports. The source file names next to this script only supply the PID
+# (config filename).
 #
 # The PID must match the Elasticsearch module the bundle ships. Older bundles
 # carry com.liferay.portal.search.elasticsearch7.impl.jar; newer ones (master,
@@ -538,19 +541,17 @@ fi
 # previously injected ES7 copy and install the ES8 file instead.
 ELASTIC_SOURCE_ES7="$SCRIPT_DIR/com.liferay.portal.search.elasticsearch7.configuration.ElasticsearchConfiguration.config"
 ELASTIC_SOURCE_ES8="$SCRIPT_DIR/com.liferay.portal.search.elasticsearch8.configuration.ElasticsearchConfiguration.config"
-ELASTIC_TARGET_DIR=""
-LIFERAY_OSGI_DIR=""
-for candidate in "$BUNDLE/osgi" "$BUNDLE/liferay-dxp/osgi"; do
-	# The configs subdirectory may not exist yet on a fresh bundle — the
-	# portal only creates it on first boot. Create it ourselves so the config
-	# lands before that first boot instead of being skipped.
-	if [ -d "$candidate" ]; then
-		LIFERAY_OSGI_DIR="$candidate"
-		ELASTIC_TARGET_DIR="$candidate/configs"
-		mkdir -p "$ELASTIC_TARGET_DIR"
-		break
-	fi
-done
+
+# osgi/ lives directly under the Liferay home (the tomcat's parent), whichever
+# bundle layout we resolved. Neither osgi/ nor its configs/ subdir is guaranteed
+# to exist yet on a fresh bundle — the portal only creates configs/ on first
+# boot — so create the path ourselves. Skipping it would silently drop the
+# connector configs (Arquillian, DataGuard, Elasticsearch) and let the
+# fixed-port clash they guard against fire.
+LIFERAY_HOME="$(dirname "$TOMCAT_DIR")"
+LIFERAY_OSGI_DIR="$LIFERAY_HOME/osgi"
+ELASTIC_TARGET_DIR="$LIFERAY_OSGI_DIR/configs"
+mkdir -p "$ELASTIC_TARGET_DIR"
 
 bundle_has_elasticsearch7() {
 	compgen -G "$LIFERAY_OSGI_DIR/portal/com.liferay.portal.search.elasticsearch7.impl.jar" >/dev/null 2>&1 ||
@@ -572,17 +573,9 @@ if [ -n "$ELASTIC_TARGET_DIR" ]; then
 		fi
 	fi
 
-	if [ -f "$ELASTIC_SOURCE" ]; then
-		ELASTIC_TARGET="$ELASTIC_TARGET_DIR/$(basename "$ELASTIC_SOURCE")"
-
-		if [ ! -f "$ELASTIC_TARGET" ]; then
-			cp "$ELASTIC_SOURCE" "$ELASTIC_TARGET"
-			echo "Elasticsearch config installed: $ELASTIC_TARGET"
-		else
-			echo "Elasticsearch config already present at $ELASTIC_TARGET — leaving as-is."
-		fi
-	fi
-	echo
+	# Only the filename (the PID) is taken from the source path; the contents
+	# are generated after the ports are chosen (see write_elasticsearch_config).
+	ELASTIC_TARGET="$ELASTIC_TARGET_DIR/$(basename "$ELASTIC_SOURCE")"
 fi
 
 HTTP_DEFAULT=8080
@@ -593,6 +586,8 @@ JPDA_DEFAULT=8000
 OSGI_CONSOLE_DEFAULT=11311
 ARQUILLIAN_DEFAULT=32763
 DATA_GUARD_DEFAULT=42763
+ES_TRANSPORT_DEFAULT=9301
+GLOWROOT_DEFAULT=4000
 
 is_port_free() {
 	local port=$1
@@ -671,6 +666,24 @@ export LIFERAY_MODULE_PERIOD_FRAMEWORK_PERIOD_PROPERTIES_PERIOD_OSGI_PERIOD_CONS
 ARQUILLIAN_PORT=$(choose_port $((ARQUILLIAN_DEFAULT + HTTP_PORT - HTTP_DEFAULT)))
 DATA_GUARD_PORT=$(choose_port $((DATA_GUARD_DEFAULT + HTTP_PORT - HTTP_DEFAULT)))
 
+# The embedded Elasticsearch sidecar binds a transport port (default 9300) late
+# in OSGi startup, so — like the shutdown/arquillian ports — scanning it
+# independently races a still-booting sibling. Seed from the HTTP offset only
+# when we have an osgi/configs dir to write the value into.
+ES_TRANSPORT_PORT=""
+if [ -n "${ELASTIC_TARGET:-}" ]; then
+	ES_TRANSPORT_PORT=$(choose_port $((ES_TRANSPORT_DEFAULT + HTTP_PORT - HTTP_DEFAULT)))
+fi
+
+# Glowroot's embedded UI binds its web port (default 4000) when the agent is
+# present. Only bundles that actually ship glowroot/admin.json need remapping;
+# skip the rest so we don't reserve a port for nothing.
+GLOWROOT_ADMIN="$LIFERAY_HOME/glowroot/admin.json"
+GLOWROOT_PORT=""
+if [ -f "$GLOWROOT_ADMIN" ]; then
+	GLOWROOT_PORT=$(choose_port $((GLOWROOT_DEFAULT + HTTP_PORT - HTTP_DEFAULT)))
+fi
+
 write_port_config() {
 	local pid=$1
 	local port=$2
@@ -683,6 +696,54 @@ write_port_config \
 	"$ARQUILLIAN_PORT"
 write_port_config \
 	"com.liferay.data.guard.connector.DataGuardConnector" "$DATA_GUARD_PORT"
+
+# (Re)write the Elasticsearch sidecar config with the chosen transport port,
+# every run, so a reused bundle never keeps a stale or colliding value.
+if [ -n "$ES_TRANSPORT_PORT" ]; then
+	cat >"$ELASTIC_TARGET" <<EOF
+sidecarHttpPort="AUTO"
+transportTcpPort="$ES_TRANSPORT_PORT"
+networkBindHost="127.0.0.1"
+networkPublishHost="127.0.0.1"
+EOF
+	echo "Elasticsearch config written: $ELASTIC_TARGET (http AUTO, transport $ES_TRANSPORT_PORT)"
+	echo
+fi
+
+# Remap the Glowroot web port in place (jq only; skip with a note otherwise).
+if [ -n "$GLOWROOT_PORT" ]; then
+	if command -v jq >/dev/null 2>&1; then
+		_gr_tmp="$GLOWROOT_ADMIN.tmp"
+		if jq ".web.port = $GLOWROOT_PORT" "$GLOWROOT_ADMIN" >"$_gr_tmp"; then
+			mv "$_gr_tmp" "$GLOWROOT_ADMIN"
+			echo "Glowroot web port set to $GLOWROOT_PORT in $GLOWROOT_ADMIN"
+			echo
+		else
+			rm -f "$_gr_tmp"
+			echo "Could not rewrite $GLOWROOT_ADMIN — leaving Glowroot port unchanged." >&2
+		fi
+	else
+		echo "glowroot/admin.json present but jq is not installed — leaving Glowroot port unchanged." >&2
+	fi
+fi
+
+# The portal's own inet socket address defaults to :8080; on a non-default HTTP
+# port that mismatch breaks features that resolve the instance's web address.
+# Pin it to the resolved port every run — always, not just when non-default —
+# so a run that lands back on 8080 overwrites a stale value from an earlier run.
+set_portal_ext_prop() {
+	local file=$1 key=$2 value=$3
+	touch "$file"
+	local escaped="${key//./\\.}"
+	sed -i -E "/^[[:space:]]*${escaped}=/d" "$file"
+	[ -s "$file" ] && [ -n "$(tail -c1 "$file")" ] && echo "" >>"$file"
+	echo "${key}=${value}" >>"$file"
+}
+
+set_portal_ext_prop "$LIFERAY_HOME/portal-ext.properties" \
+	portal.instance.inet.socket.address "localhost:$HTTP_PORT"
+echo "portal.instance.inet.socket.address set to localhost:$HTTP_PORT"
+echo
 
 print_port() {
 	local label=$1
@@ -703,6 +764,12 @@ print_port "HTTPS" "$HTTPS_PORT" "$HTTPS_DEFAULT"
 print_port "OSGI" "$OSGI_CONSOLE_PORT" "$OSGI_CONSOLE_DEFAULT"
 print_port "ARQUILLIAN" "$ARQUILLIAN_PORT" "$ARQUILLIAN_DEFAULT"
 print_port "DATAGUARD" "$DATA_GUARD_PORT" "$DATA_GUARD_DEFAULT"
+if [ -n "$ES_TRANSPORT_PORT" ]; then
+	print_port "ES-TRANS" "$ES_TRANSPORT_PORT" "$ES_TRANSPORT_DEFAULT"
+fi
+if [ -n "$GLOWROOT_PORT" ]; then
+	print_port "GLOWROOT" "$GLOWROOT_PORT" "$GLOWROOT_DEFAULT"
+fi
 if [ -n "$JPDA_PORT" ]; then
 	print_port "JPDA" "$JPDA_PORT" "$JPDA_DEFAULT"
 fi
