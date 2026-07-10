@@ -1,7 +1,8 @@
 # LfrGit
 
-Liferay git helpers: a safe `git clean`, fork sync from upstream, and a quick
-interactive rebase. Loaded as shell functions via the root `lfrTools.sh`.
+Liferay git helpers: a safe `git clean`, fork sync from upstream, keeping your
+master mirror current, and a quick interactive rebase. Loaded as shell functions
+via the root `lfrTools.sh`.
 
 ## Per-user config
 
@@ -54,10 +55,15 @@ than the configured `LFR_GIT_FORK_ORG`, e.g. `lfrGitSync my-other-org`.
    with `--force-with-lease`, to update your PR. Skipped if the rebase stops on
    a conflict.
 
-Rebase is off by default, so a plain run just keeps master current. The source
-remote defaults to `upstream`; pass another, e.g. `lfrGitUpdateMaster brian`, to
-mirror `brian/master` instead (into whichever `master*` branch tracks it). The
-remote-side branch is always `master`.
+Rebase is off by default, so a plain run just keeps your master mirror current.
+The local branch it updates is the `master*` branch that tracks `<remote>/master`
+(plain `master` for the default `upstream`). To mirror a different remote, e.g.
+`lfrGitUpdateMaster brian`, a local `master*` branch must already track
+`brian/master`; set one up first with `git branch --set-upstream-to=brian/master
+masterBrian`. Without such a branch the tool falls back to plain `master` and
+would overwrite it, so do not run it against a non-default remote until the
+mirror branch is tracking that remote. The remote-side branch is always
+`master`.
 
 `lfrGitClean` and `lfrGitCleanDry` accept extra `git clean` arguments, e.g.
 `lfrGitClean modules/apps/some-app`.

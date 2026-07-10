@@ -1,4 +1,4 @@
-# lfr-git.sh — Liferay git helpers: safe clean, fork sync, rebase.
+# lfr-git.sh — Liferay git helpers: safe clean, fork sync, master update, rebase.
 #
 # Source this from your shell rc (normally via the root lfrTools.sh). It defines:
 #     lfrGitCleanDry   preview what `git clean` would remove (safe, no deletion)
@@ -6,7 +6,7 @@
 #     lfrGitSync       sync a fork's liferay-portal from upstream ([org] optional)
 #     lfrGitSyncEE     sync a fork's liferay-portal-ee master from upstream ([org] optional)
 #     lfrGitRebase     interactive rebase over the last N commits (default 20)
-#     lfrGitUpdateMaster  update master, push it, sync, -r rebase your branch, -p force-push it ([-r] [-p] [remote] [local-branch])
+#     lfrGitUpdateMaster  update fork + local master from <remote>/master, sync; -r rebase your branch, -f force it, -p force-push it ([-r] [-f] [-p] [remote])
 #
 # Per-user settings (your team fork org) live in lfr-git.local.conf next to this
 # file. It is gitignored. Copy lfr-git.local.conf.example to lfr-git.local.conf.
