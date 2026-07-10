@@ -9,4 +9,4 @@
 LfrCommon/repos.local.conf
 LfrCache/enabled-repos.txt
 LfrGit/lfr-git.local.conf
-LfrRunBundles/start-liferay.conf
+LfrBundle/start-liferay.conf

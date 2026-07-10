@@ -8,7 +8,7 @@
 # forwarded to `ant all`.
 #
 # Bundle detection (_lfrBundleProcs / _lfrBundleList / _lfrBundlePidForDir) comes
-# from LfrRunBundles.
+# from LfrBundle.
 
 # Echo the app-server bundle dir that `ant all` in the current repo deploys into:
 # read app.server.parent.dir from app.server.${USER}.properties (falling back to

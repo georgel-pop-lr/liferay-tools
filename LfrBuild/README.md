@@ -19,5 +19,5 @@ it cannot resolve this repo's bundle it falls back to blocking on any running
 bundle. Stop the bundle with `lfrBundle` first, or pass `--force` / `-f` to
 build anyway. Extra arguments are forwarded to `ant all`.
 
-Bundle detection is shared with `LfrRunBundles` (`_lfrBundleProcs`,
+Bundle detection is shared with `LfrBundle` (`_lfrBundleProcs`,
 `_lfrBundlePidForDir`).

@@ -27,7 +27,7 @@ and `lfrs` are interchangeable.
 | `lfrGitSync` / `lfrGitSyncEE` | `lfrgs` / `lfrgse` | Sync a fork from upstream (optional `[org]`, defaults to your configured fork) | `LfrGit/` |
 | `lfrGitRebase` | `lfrgr` | Interactive rebase over the last N commits | `LfrGit/` |
 | `lfrGitUpdateMaster` | `lfrgum` | Update every local `master*` branch from the `<remote>/master` it tracks (`master` from upstream, `masterBrian` from brian) and sync the team fork (`lfrGitSync`/`lfrGitSyncEE`); `-r` rebases the current branch onto a target (default `upstream/master`, or pass a remote/branch), `-f` forces it, `-p` force-pushes it. Takes `[-r] [-f] [-p] [rebase-target]` | `LfrGit/` |
-| `lfrBundle` | `lfrb` | Toggle Liferay bundles: shows each bundle's state and starts the one you pick/name if stopped (forwarding start-flags like `-c`) or stops it if running. Also `lfrBundle status` and `lfrBundle stop-all`. `lfrRunBundle` / `lfrrb` alias it. | `LfrRunBundles/` |
+| `lfrBundle` | `lfrb` | Toggle Liferay bundles: shows each bundle's state and starts the one you pick/name if stopped (forwarding start-flags like `-c`) or stops it if running. Also `lfrBundle status` and `lfrBundle stop-all`. `lfrRunBundle` / `lfrrb` alias it. | `LfrBundle/` |
 | `lfrShare` | `lfrs` | Point a worktree at a shared, already-built bundle (no rebuild to switch). Bare `lfrShare` shows each repo's state and toggles the one you pick. | `LfrShare/` |
 | `lfrAntAll` | `lfraa` | Run `ant all`, but refuse if this repo's Liferay bundle is running (stop it first, or `--force`) | `LfrBuild/` |
 
@@ -44,4 +44,4 @@ updates without clobbering anyone's local paths.
 | `LfrCommon/repos.local.conf.example` | `LfrCommon/repos.local.conf` (shared by lfrRepo, lfrWorktree, lfrCache) |
 | `LfrCache/enabled-repos.txt.example` | `LfrCache/enabled-repos.txt` (or use `lfrCache on`) |
 | `LfrGit/lfr-git.local.conf.example` | `LfrGit/lfr-git.local.conf` |
-| `LfrRunBundles/start-liferay.conf.example` | `LfrRunBundles/start-liferay.conf` |
+| `LfrBundle/start-liferay.conf.example` | `LfrBundle/start-liferay.conf` |

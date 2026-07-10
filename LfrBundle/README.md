@@ -24,7 +24,7 @@ together you can move the folder freely.
 
    ```bash
    git clone https://github.com/georgel-pop-lr/liferay-tools.git
-   cd liferay-tools/LfrRunBundles
+   cd liferay-tools/LfrBundle
    ```
 
 2. Create your machine config by copying the tracked example, then edit it
