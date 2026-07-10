@@ -17,6 +17,7 @@ cp lfr-git.local.conf.example lfr-git.local.conf
 | --- | --- | --- |
 | `LFR_GIT_FORK_ORG` | Your team's fork org on GitHub | (required for sync) |
 | `LFR_GIT_UPSTREAM_ORG` | Upstream org to sync from | `liferay` |
+| `LFR_GIT_MASTER_MIRRORS` | Master mirrors `lfrGitUpdateMaster` keeps current, as `branch:remote` pairs | `("master:upstream")` |
 
 ## Commands
 
@@ -27,43 +28,35 @@ cp lfr-git.local.conf.example lfr-git.local.conf
 | `lfrGitSync [org]` | `lfrgs` | `gh repo sync <org>/liferay-portal --source <upstream>/liferay-portal`. `org` defaults to `LFR_GIT_FORK_ORG`. |
 | `lfrGitSyncEE [org]` | `lfrgse` | Same for `liferay-portal-ee` master. |
 | `lfrGitRebase [N]` | `lfrgr` | `git rebase -i HEAD~N` (N defaults to 20). |
-| `lfrGitUpdateMaster [-r] [-f] [-p] [remote]` | `lfrgum` | Update your fork's master from `<remote>/master`, keep your local master current (without checking it out), and sync the team fork; `-r` rebases your current branch onto the fresh master (only when it moved), `-f` forces that rebase, `-p` then force-pushes that branch. |
+| `lfrGitUpdateMaster [-r] [-f] [-p] [rebase-target]` | `lfrgum` | Update every local `master*` branch from the `<remote>/master` it tracks (`master` from upstream, `masterBrian` from brian) and sync the team fork; `-r` rebases the current branch onto a target (default `upstream/master`, or pass a remote/branch), `-f` forces it, `-p` force-pushes it. |
 
 `lfrGitSync`/`lfrGitSyncEE` take an optional fork org to sync a different fork
 than the configured `LFR_GIT_FORK_ORG`, e.g. `lfrGitSync my-other-org`.
 
-`lfrGitUpdateMaster` automates the whole after-master-update routine:
+`lfrGitUpdateMaster` keeps your master mirrors current in one run. The mirrors
+are the `branch:remote` pairs in `LFR_GIT_MASTER_MIRRORS` (default
+`("master:upstream")`), so `("master:upstream" "masterBrian:brian")` maintains
+both `master` and `masterBrian`.
 
-1. Fetch `<remote>/master` (the tracking ref only, no tags). It never fetches
-   into the local `master` branch, so it works even when `master` is checked out
-   in a worktree.
-2. Push that commit to your fork's master (its configured push remote, e.g.
-   `origin`). If the fork rejects it as non-fast-forward, force-update it with
-   `--force-with-lease` (upstream rewrote master, so the fork's copy is stale).
-3. Sync the team fork: `lfrGitSync`, or `lfrGitSyncEE` when the repo's remotes
-   point at `liferay-portal-ee` (detected by remote, not folder name, so an
-   EE worktree named `liferay-portal-7.4.x` is still handled).
-4. Update your local `master` to `<remote>/master` too — creating or resetting
-   it as needed, which heals a mirror stranded by an upstream master rewrite —
-   unless `master` is checked out in a worktree, in which case it says so and
-   leaves it (never checking it out).
-5. With `-r`/`--rebase`, rebase your current branch onto `<remote>/master` (run
-   last, so a rebase conflict does not block the sync). The rebase is skipped
-   when master did not move, so a no-op rebase never churns commit dates;
-   `-f`/`--force-rebase` (implies `-r`) runs that rebase anyway.
-6. With `-p`/`--push` (implies `-r`), force-push the rebased branch to its fork
-   with `--force-with-lease`, to update your PR. Skipped if the rebase stops on
-   a conflict.
+1. For each configured `branch:remote` pair (e.g. `master:upstream`,
+   `masterBrian:brian`): fetch `<remote>/master` (no tags), push it to your fork
+   under `<branch>` (creating the branch on the fork if missing, and forcing with
+   `--force-with-lease` if the fork diverged because the source rewrote master),
+   and create or reset the local `<branch>` to it. A mirror checked out in a
+   worktree is left alone with a note.
+2. Sync the team fork: `lfrGitSync`, or `lfrGitSyncEE` when the repo's remotes
+   point at `liferay-portal-ee` (detected by remote, not folder name).
+3. With `-r`/`--rebase`, rebase the current branch onto a target, skipped when you
+   are on a `master*` mirror. The target defaults to `upstream/master`; pass a
+   remote (e.g. `lfrGitUpdateMaster -r brian` -> `brian/master`) or a branch (e.g.
+   `lfrGitUpdateMaster -r masterBrian`) to rebase onto Brian's line instead. The
+   rebase is skipped when the branch already sits on the latest target;
+   `-f`/`--force-rebase` forces it, and `-p`/`--push` (implies `-r`) then
+   force-pushes the rebased branch with `--force-with-lease`.
 
-Rebase is off by default, so a plain run just keeps your master mirror current.
-The local branch it updates is the `master*` branch that tracks `<remote>/master`
-(plain `master` for the default `upstream`). To mirror a different remote, e.g.
-`lfrGitUpdateMaster brian`, a local `master*` branch must already track
-`brian/master`; set one up first with `git branch --set-upstream-to=brian/master
-masterBrian`. Without such a branch the tool falls back to plain `master` and
-would overwrite it, so do not run it against a non-default remote until the
-mirror branch is tracking that remote. The remote-side branch is always
-`master`.
+List your mirrors in `LFR_GIT_MASTER_MIRRORS`; each is created if missing (locally,
+tracking `<remote>/master`, and on your fork), so a fresh clone just needs the
+config. A pair whose remote does not exist is skipped with a note.
 
 `lfrGitClean` and `lfrGitCleanDry` accept extra `git clean` arguments, e.g.
 `lfrGitClean modules/apps/some-app`.

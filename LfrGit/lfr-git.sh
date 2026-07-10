@@ -6,7 +6,7 @@
 #     lfrGitSync       sync a fork's liferay-portal from upstream ([org] optional)
 #     lfrGitSyncEE     sync a fork's liferay-portal-ee master from upstream ([org] optional)
 #     lfrGitRebase     interactive rebase over the last N commits (default 20)
-#     lfrGitUpdateMaster  update fork + local master from <remote>/master, sync; -r rebase your branch, -f force it, -p force-push it ([-r] [-f] [-p] [remote])
+#     lfrGitUpdateMaster  update each master* mirror from the <remote>/master it tracks + sync; -r rebase current branch onto a target (default upstream), -f force, -p force-push ([-r] [-f] [-p] [rebase-target])
 #
 # Per-user settings (your team fork org) live in lfr-git.local.conf next to this
 # file. It is gitignored. Copy lfr-git.local.conf.example to lfr-git.local.conf.
@@ -69,124 +69,123 @@ lfrGitRebase() {
 	git rebase -i "HEAD~${1:-20}"
 }
 
-# The mirror push to the fork was refused (non-fast-forward). We push
-# <src>/master (the canonical upstream tip), so this just means the fork's
-# ${branch} holds history <src> rewrote away. Force it with --force-with-lease
-# (safe: only overwrites if the fork is still where our tracking ref last saw it).
-_lfrGitUpdateMasterPush() {
-	local push_remote="${1}" branch="${2}" src="${3}"
-
-	echo "  ${push_remote} ${branch} is non-fast-forward from ${src}/master" >&2
-	echo "  (it holds history ${src} rewrote away). Force-updating with --force-with-lease..." >&2
-	git push --force-with-lease "${push_remote}" "${src}/master:refs/heads/${branch}"
+# Push the mirror commit <up> (a <remote>/master tracking ref) to the fork under
+# refs/heads/<branch>. On a non-fast-forward the fork just holds history the
+# source rewrote away, so force it with --force-with-lease (safe: only overwrites
+# if the fork is still where our tracking ref last saw it).
+_lfrGitPushMirror() {
+	local branch="${1}" up="${2}" push_ref push_remote
+	push_ref="$(git rev-parse --abbrev-ref "${branch}@{push}" 2>/dev/null)"
+	case "${push_ref}" in
+	*/*) push_remote="${push_ref%%/*}" ;;
+	*) push_remote="origin" ;;
+	esac
+	echo "  pushing ${up} to ${push_remote} ${branch}..."
+	git push "${push_remote}" "${up}:refs/heads/${branch}" 2>/dev/null && return 0
+	echo "  ${push_remote} ${branch} was non-fast-forward; force-updating with --force-with-lease..." >&2
+	git push --force-with-lease "${push_remote}" "${up}:refs/heads/${branch}"
 }
 
-# Bring your fork's master up to date with <src>/master, and with -r rebase the
-# current branch onto it. Fetches only the <src>/master tracking ref (never the
-# local master branch, so it works even when master is checked out in a
-# worktree), pushes that commit to your fork's master (force-updating with
-# --force-with-lease if the fork diverged because <src> rewrote master), syncs
-# the team fork (lfrGitSync, or lfrGitSyncEE in a liferay-portal-ee checkout),
-# and rebases the current branch onto <src>/master. Args: [-r|--rebase]
-# [-f|--force-rebase] [-p|--push] [remote]; the source remote defaults to
-# upstream. Rebase is off by default; -r rebases only when master moved (a no-op
-# is skipped), -f forces it anyway, and -p (implies -r) then force-pushes the
-# rebased branch with --force-with-lease. Also points your local master at
-# <src>/master each run (creating or resetting it, which heals a mirror stranded
-# by an upstream master rewrite), unless master is checked out in a worktree, in
-# which case it says so and leaves it. Never checks master out.
-
-# Point the local <branch> at <src>/master so it always mirrors the latest
-# upstream: create it if missing, fast-forward it, or reset it when it diverged
-# (which heals a mirror stranded by an upstream master rewrite). Since this
-# branch is a pure mirror, a divergence is upstream's own rewritten history, not
-# your work, so resetting is safe. The one case we cannot handle is <branch>
-# being checked out in a worktree (git refuses to move a checked-out branch, and
-# moving it behind its working tree would desync that worktree): then say so and
-# leave it, without ever checking it out.
+# Point the local <branch> at <up> (its <remote>/master tracking ref): create it
+# if missing, fast-forward it, or reset it when it diverged (which heals a mirror
+# stranded by a rewritten source master). A mirror is a pure copy, so a
+# divergence is the source's own rewritten history, not your work, and resetting
+# is safe. If <branch> is checked out in a worktree, git will not move it (and
+# moving it behind its working tree would desync that worktree), so say so and
+# leave it, never checking it out.
 _lfrGitUpdateLocalMaster() {
-	local branch="${1}" src="${2}"
-	local tip wt src_tip
-
-	src_tip="$(git rev-parse "${src}/master")"
+	local branch="${1}" up="${2}" tip wt target
+	target="$(git rev-parse "${up}")"
 	tip="$(git rev-parse --verify -q "refs/heads/${branch}" 2>/dev/null || true)"
 
-	[ "${tip}" = "${src_tip}" ] && return 0
+	if [ "${tip}" = "${target}" ]; then
+		echo "  ${branch} already up to date with ${up}."
+		return 0
+	fi
 
 	wt="$(git worktree list --porcelain |
 		awk -v b="branch refs/heads/${branch}" '/^worktree /{w=substr($0,10)} $0==b{print w; exit}')"
 	if [ -n "${wt}" ]; then
-		echo "Local ${branch} is checked out at ${wt}; cannot update it from here" >&2
-		echo "  (run 'git -C \"${wt}\" reset --hard ${src}/master' there)." >&2
+		echo "  ${branch} is checked out at ${wt}; leaving it (reset it there: git -C \"${wt}\" reset --hard ${up})." >&2
 		return 0
 	fi
 
 	if [ -z "${tip}" ]; then
-		git branch "${branch}" "${src_tip}" && echo "Created local ${branch} at ${src}/master."
-	elif git merge-base --is-ancestor "${branch}" "${src_tip}" 2>/dev/null; then
-		git update-ref "refs/heads/${branch}" "${src_tip}" && echo "Fast-forwarded local ${branch} to ${src}/master."
+		git branch "${branch}" "${target}" &&
+			git branch --set-upstream-to="${up}" "${branch}" >/dev/null 2>&1 &&
+			echo "  created local ${branch} tracking ${up}."
+	elif git merge-base --is-ancestor "${branch}" "${target}" 2>/dev/null; then
+		git update-ref "refs/heads/${branch}" "${target}" && echo "  fast-forwarded ${branch} to ${up}."
 	else
-		git update-ref "refs/heads/${branch}" "${src_tip}" && echo "Reset local ${branch} to ${src}/master (upstream rewrote master)."
+		git update-ref "refs/heads/${branch}" "${target}" && echo "  reset ${branch} to ${up} (source rewrote master)."
 	fi
 }
 
+# Keep your master mirrors current in one run. The mirrors to maintain are a list
+# of "branch:remote" pairs in LFR_GIT_MASTER_MIRRORS (lfr-git.local.conf),
+# defaulting to "master:upstream". For each pair: fetch <remote>/master, push it
+# to your fork under <branch> (creating the branch on the fork if missing, and
+# force-updating with --force-with-lease if the fork diverged), and create or
+# reset the local <branch> to it (a mirror checked out in a worktree is left
+# alone, with a note). So "master:upstream" "masterBrian:brian" keeps master and
+# masterBrian current together. Then sync the team fork.
+#
+# With -r, rebase the current branch onto a target once the mirrors are fresh
+# (skipped when you are on a master* mirror). The target defaults to
+# upstream/master; pass a remote (e.g. `brian` -> brian/master) or a branch (e.g.
+# `masterBrian`) to rebase onto Brian's line instead. The rebase is skipped when
+# the branch already sits on the latest target; -f forces it, and -p (implies -r)
+# then force-pushes the rebased branch with --force-with-lease.
+# Args: [-r|--rebase] [-f|--force-rebase] [-p|--push] [rebase-target].
 lfrGitUpdateMaster() {
-	local src branch cur push_remote push_ref rebase=0 force_rebase=0 push_branch=0 a before after
+	local cur a rebase=0 force_rebase=0 push_branch=0
 	local -a pos=()
 	for a in "$@"; do
 		case "${a}" in
 		-r | --rebase) rebase=1 ;;
 		-f | --force-rebase) force_rebase=1; rebase=1 ;;
 		-p | --push) push_branch=1; rebase=1 ;;
+		-*) echo "lfrGitUpdateMaster: unknown flag '${a}'." >&2; return 1 ;;
 		*) pos+=("${a}") ;;
 		esac
 	done
-	src="${pos[0]:-upstream}"
-	branch="${pos[1]-}"
 	if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
 		echo "lfrGitUpdateMaster: not inside a git repo" >&2
 		return 1
 	fi
 	cur="$(git rev-parse --abbrev-ref HEAD)"
 
-	# When no local branch is given, use the master-like branch that tracks
-	# <src>/master (so a non-default remote lands in its own branch, e.g. brian ->
-	# masterBrian), else plain master. Only master* names qualify, so a feature
-	# branch tracking the same remote is never mistaken for it.
-	if [ -z "${branch}" ]; then
-		branch="$(git for-each-ref --format='%(refname:short) %(upstream:short)' refs/heads |
-			awk -v u="${src}/master" '$2 == u && $1 ~ /^master/ { print $1; exit }')"
-		[ -z "${branch}" ] && branch="master"
+	# Which mirrors to maintain, as "branch:remote" pairs, each updated from
+	# <remote>/master and created if missing. Set LFR_GIT_MASTER_MIRRORS in
+	# lfr-git.local.conf (e.g. "master:upstream" "masterBrian:brian"); defaults to
+	# just the upstream master mirror.
+	local -a mirrors
+	if [ "${LFR_GIT_MASTER_MIRRORS+x}" = x ] && [ "${#LFR_GIT_MASTER_MIRRORS[@]}" -gt 0 ]; then
+		mirrors=("${LFR_GIT_MASTER_MIRRORS[@]}")
+	else
+		mirrors=("master:upstream")
 	fi
 
-	echo "Fetching ${src}/master (no tags)..."
-	before="$(git rev-parse --verify -q "${src}/master" 2>/dev/null || true)"
-	# Fetch only the remote-tracking ref, never into the local master branch:
-	# git refuses "master:master" when master is checked out in any worktree, and
-	# we do not need a local master branch anyway.
-	git fetch --no-tags "${src}" master || return 1
-	after="$(git rev-parse --verify -q "${src}/master" 2>/dev/null || true)"
+	local pair branch remote up
+	for pair in "${mirrors[@]}"; do
+		branch="${pair%%:*}"
+		remote="${pair##*:}"
+		if [ -z "${branch}" ] || [ -z "${remote}" ] || [ "${branch}" = "${pair}" ]; then
+			echo "lfrGitUpdateMaster: bad mirror spec '${pair}' (want branch:remote); skipping." >&2
+			continue
+		fi
+		up="${remote}/master"
+		echo "Updating ${branch} from ${up} (no tags)..."
+		if ! git fetch --no-tags "${remote}" master; then
+			echo "  fetch from ${remote} failed; skipping ${branch}." >&2
+			continue
+		fi
+		_lfrGitPushMirror "${branch}" "${up}"
+		_lfrGitUpdateLocalMaster "${branch}" "${up}"
+	done
 
-	if [ -z "${after}" ]; then
-		echo "lfrGitUpdateMaster: ${src}/master did not resolve after fetch." >&2
-		return 1
-	fi
-
-	# Push it to its configured push remote (your fork), like a bare git push.
-	# A branch with no push config makes rev-parse echo the literal ref (rc 128),
-	# so accept the value only when it resolved to <remote>/<branch>, else origin.
-	push_ref="$(git rev-parse --abbrev-ref "${branch}@{push}" 2>/dev/null)"
-	case "${push_ref}" in
-	*/*) push_remote="${push_ref%%/*}" ;;
-	*) push_remote="origin" ;;
-	esac
-	echo "Pushing ${src}/master to ${push_remote} ${branch}..."
-	git push "${push_remote}" "${src}/master:refs/heads/${branch}" ||
-		_lfrGitUpdateMasterPush "${push_remote}" "${branch}" "${src}" || return 1
-
-	# Sync the team fork; liferay-portal-ee checkouts use lfrGitSyncEE. Detect EE
-	# by the repo's remotes, not the directory name: a worktree may be named
-	# liferay-portal-7.4.x yet track liferay-portal-ee.
+	# Sync the team fork; liferay-portal-ee checkouts use lfrGitSyncEE (detected by
+	# the repo's remotes, not the folder name).
 	if git remote -v 2>/dev/null | grep -q 'liferay-portal-ee'; then
 		echo "Syncing EE fork..."
 		lfrGitSyncEE
@@ -195,36 +194,58 @@ lfrGitUpdateMaster() {
 		lfrGitSync
 	fi
 
-	# Point the local master mirror at the fresh upstream tip so it is always
-	# current (create/reset as needed), unless it is checked out in a worktree
-	# (then say so and skip it, never checking it out or hitting git's
-	# checked-out-branch refusal).
-	_lfrGitUpdateLocalMaster "${branch}" "${src}"
+	# Never rebase a mirror branch itself.
+	case "${cur}" in
+	master*)
+		[ "${rebase}" = 1 ] && echo "On ${cur} (a master mirror); not rebasing it."
+		return 0
+		;;
+	esac
 
-	# Rebase the current branch onto the updated branch when asked (-r) and you
-	# are on a different branch. By default skip it when master did not move, so a
-	# no-op rebase never churns commit dates or triggers a pointless -p force-push;
-	# -f (force_rebase) runs the same plain rebase anyway.
-	if [ "${rebase}" = 1 ] && [ "${cur}" != "${branch}" ] &&
-		{ [ "${before}" != "${after}" ] || [ "${force_rebase}" = 1 ]; }; then
-		echo "Rebasing ${cur} onto ${src}/master..."
-		if ! git rebase "${src}/master"; then
-			echo "lfrGitUpdateMaster: rebase stopped (resolve conflicts, then push yourself); skipping -p." >&2
+	if [ "${rebase}" != 1 ]; then
+		if [ "${#pos[@]}" -gt 0 ]; then
+			echo "lfrGitUpdateMaster: rebase target '${pos[0]}' needs -r." >&2
 			return 1
 		fi
-		# -p: the rebase rewrote history, so force-push the branch to its fork
-		# (--force-with-lease, which refuses if the remote moved unexpectedly).
-		if [ "${push_branch}" = 1 ]; then
-			push_ref="$(git rev-parse --abbrev-ref "${cur}@{push}" 2>/dev/null)"
-			case "${push_ref}" in
-			*/*) push_remote="${push_ref%%/*}" ;;
-			*) push_remote="origin" ;;
-			esac
-			echo "Force-pushing ${cur} to ${push_remote} (--force-with-lease)..."
-			git push --force-with-lease "${push_remote}" "${cur}"
-		fi
-	elif [ "${rebase}" = 1 ] && [ "${cur}" != "${branch}" ]; then
-		echo "${src}/master already up to date; nothing to rebase ${cur} onto."
+		return 0
+	fi
+
+	# Resolve the rebase target: default upstream/master; a remote name -> its
+	# master; anything else -> a branch or ref (e.g. masterBrian, brian/master).
+	local target="${pos[0]-}"
+	if [ -z "${target}" ]; then
+		target="upstream/master"
+	elif git remote get-url "${target}" >/dev/null 2>&1; then
+		target="${target}/master"
+	fi
+	if ! git rev-parse --verify -q "${target}" >/dev/null 2>&1; then
+		echo "lfrGitUpdateMaster: rebase target '${target}' not found." >&2
+		return 1
+	fi
+
+	# Skip a no-op rebase (the branch already sits on the latest target) unless -f.
+	if [ "${force_rebase}" != 1 ] && git merge-base --is-ancestor "${target}" HEAD 2>/dev/null; then
+		echo "${cur} already on latest ${target}; nothing to rebase."
+		return 0
+	fi
+
+	echo "Rebasing ${cur} onto ${target}..."
+	if ! git rebase "${target}"; then
+		echo "lfrGitUpdateMaster: rebase stopped (resolve conflicts, then push yourself); skipping -p." >&2
+		return 1
+	fi
+
+	# -p: the rebase rewrote history, so force-push the branch to its fork
+	# (--force-with-lease, which refuses if the remote moved unexpectedly).
+	if [ "${push_branch}" = 1 ]; then
+		local push_ref push_remote
+		push_ref="$(git rev-parse --abbrev-ref "${cur}@{push}" 2>/dev/null)"
+		case "${push_ref}" in
+		*/*) push_remote="${push_ref%%/*}" ;;
+		*) push_remote="origin" ;;
+		esac
+		echo "Force-pushing ${cur} to ${push_remote} (--force-with-lease)..."
+		git push --force-with-lease "${push_remote}" "${cur}"
 	fi
 }
 
