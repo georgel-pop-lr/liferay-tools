@@ -299,24 +299,22 @@ echo
 # wipe, and prompts for confirmation unless --yes was passed.
 confirm() {
 	[ "$ASSUME_YES" = "1" ] && return 0
-	local reply default="${2:-n}" hint="[y/N]"
-	[ "$default" = "y" ] && hint="[Y/n]"
-	# Pre-fill the answer only when the default is "y" (readline -i), so it shows
-	# after the prompt and Enter accepts it; for a "n" default we leave the line
-	# empty so typing "y" is not appended after a pre-filled "n". Approve only on
-	# an exact yes, so a leftover "y" plus a typed "n" ("yn") reads as no. Return
-	# non-zero (never exit) on anything else, so the caller can skip its step and
-	# keep the run going instead of aborting.
-	if [ -t 0 ] && [ "$default" = "y" ]; then
-		read -r -e -i "$default" -p "$1 $hint " reply
-	else
-		read -r -p "$1 $hint " reply
-	fi
-	[ -z "$reply" ] && reply="$default"
-	case "$reply" in
-		y|Y|yes|YES) return 0 ;;
-		*) return 1 ;;
-	esac
+	# Accept only an explicit y/yes or n/no; anything else (including a bare
+	# Enter) re-asks, so we never act on an ambiguous answer. Returns 0 for yes,
+	# 1 for no. --yes/-y answers yes; a non-interactive run with no input answers
+	# no rather than looping forever.
+	local reply
+	while true; do
+		if ! read -r -p "$1 [y/n] " reply; then
+			echo "No input; skipping." >&2
+			return 1
+		fi
+		case "$reply" in
+		y | Y | yes | YES) return 0 ;;
+		n | N | no | NO) return 1 ;;
+		*) echo "Please answer y or n." >&2 ;;
+		esac
+	done
 }
 
 # Give up: print likely causes and abort. $1 is an optional context line.
@@ -482,7 +480,7 @@ clean_bundle() {
 	echo "  Removes      : data work elasticsearch logs osgi/state, tomcat logs/work/temp"
 	echo "  Database     : reset from $liferay_home/portal-ext.properties"
 	echo
-	confirm "This deletes data and DROPs the database. Proceed?" y || {
+	confirm "This deletes data and DROPs the database. Proceed?" || {
 		echo "Not confirmed; skipping the clean and starting the bundle as-is."
 		echo
 		return 0
@@ -521,7 +519,7 @@ clean_cache() {
 	echo "  Removes      : osgi/state work, tomcat work/temp"
 	echo "  Keeps        : data, logs, search index, database"
 	echo
-	confirm "Clear the OSGi state and work/temp caches?" y || {
+	confirm "Clear the OSGi state and work/temp caches?" || {
 		echo "Not confirmed; skipping the cache clean and starting the bundle as-is."
 		echo
 		return 0
