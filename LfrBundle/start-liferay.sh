@@ -1014,20 +1014,27 @@ _kill_tree() {
 	kill -"$sig" "$pid" 2>/dev/null || true
 }
 
-# Ctrl+C handler, in effect only while the bundle is running in this terminal
+# Ctrl+C handler, in effect only while the bundle runs in this terminal
 # (installed just before the wait loop, gone when the script exits): the first
-# press stops Tomcat gracefully (SIGTERM); a second press force-kills the whole
-# tree (SIGKILL).
-_SIGINT_COUNT=0
+# press stops Tomcat gracefully (SIGTERM). A later press force-kills the whole
+# tree (SIGKILL), but only after a short grace window, so an accidental
+# double-tap does nothing and you must deliberately press again once it's clear
+# Tomcat is hung.
+_SIGINT_FORCE_GRACE=3
+_SIGINT_AT=-1
 _on_sigint() {
-	_SIGINT_COUNT=$((_SIGINT_COUNT + 1))
-	if [ "$_SIGINT_COUNT" -ge 2 ]; then
-		echo "Force-stopping (SIGKILL) the Tomcat process tree..." >&2
-		_kill_tree "$_catalina_pid" KILL
-	else
-		echo "Stopping Tomcat (SIGTERM); press Ctrl+C again to force-kill." >&2
+	if [ "$_SIGINT_AT" -lt 0 ]; then
+		_SIGINT_AT=$SECONDS
+		echo "Stopping Tomcat (SIGTERM). If it hangs, press Ctrl+C again after a few seconds to force-kill." >&2
 		kill -TERM "$_catalina_pid" 2>/dev/null || true
+		return
 	fi
+	if [ $((SECONDS - _SIGINT_AT)) -lt "$_SIGINT_FORCE_GRACE" ]; then
+		echo "Still stopping... (wait a moment, then press Ctrl+C again to force-kill)." >&2
+		return
+	fi
+	echo "Force-stopping (SIGKILL) the Tomcat process tree..." >&2
+	_kill_tree "$_catalina_pid" KILL
 }
 
 catalina_args=(run)
@@ -1048,8 +1055,9 @@ if [ -t 1 ]; then
 	# Redraw the bar on resize. Handle Ctrl+C ourselves: bash makes a background
 	# command started without job control ignore SIGINT, so the terminal's Ctrl+C
 	# never reaches Tomcat; our INT trap (which does fire in this foreground
-	# shell) stops it, escalating SIGTERM -> SIGKILL on a second press. Forwarding
-	# rather than exiting keeps the EXIT trap running so the terminal is restored.
+	# shell) stops it with SIGTERM, escalating to a SIGKILL of the tree only on a
+	# deliberate later press (see _on_sigint). Forwarding rather than exiting keeps
+	# the EXIT trap running so the terminal is restored.
 	trap '_setup_status_bar' WINCH
 	trap _on_sigint INT
 	trap 'kill -TERM "$_catalina_pid" 2>/dev/null || true' TERM
