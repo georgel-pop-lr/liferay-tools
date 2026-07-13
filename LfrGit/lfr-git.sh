@@ -86,15 +86,15 @@ _lfrGitPushMirror() {
 	git push --force-with-lease "${push_remote}" "${up}:refs/heads/${branch}"
 }
 
-# Point the local <branch> at <up> (its <remote>/master tracking ref): create it
-# if missing, fast-forward it, or reset it when it diverged (which heals a mirror
-# stranded by a rewritten source master). A mirror is a pure copy, so a
-# divergence is the source's own rewritten history, not your work, and resetting
-# is safe. If <branch> is checked out in a worktree, git will not move it (and
-# moving it behind its working tree would desync that worktree), so say so and
-# leave it, never checking it out.
+# Bring the local <branch> to <up> (its <remote>/master tracking ref): create it
+# if missing, fast-forward it, or reset it when the source rewrote master (a
+# mirror is a pure copy, so a divergence is the source's own rewritten history,
+# not your work). If <branch> is the branch checked out HERE, update it in place
+# with a fast-forward merge (you are standing on it, so its working tree moves
+# safely). If it is checked out in ANOTHER worktree, leave it with a note, since
+# git will not move a branch checked out elsewhere without desyncing that tree.
 _lfrGitUpdateLocalMaster() {
-	local branch="${1}" up="${2}" tip wt target
+	local branch="${1}" up="${2}" tip wt target head
 	target="$(git rev-parse "${up}")"
 	tip="$(git rev-parse --verify -q "refs/heads/${branch}" 2>/dev/null || true)"
 
@@ -103,6 +103,20 @@ _lfrGitUpdateLocalMaster() {
 		return 0
 	fi
 
+	# Checked out in THIS worktree: update in place rather than refusing.
+	head="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+	if [ "${head}" = "${branch}" ]; then
+		if ! git merge-base --is-ancestor "${branch}" "${target}" 2>/dev/null; then
+			echo "  ${branch} is checked out here and has diverged from ${up}; reset it yourself: git reset --hard ${up}." >&2
+		elif git merge --ff-only "${target}" >/dev/null 2>&1; then
+			echo "  fast-forwarded ${branch} (checked out here) to ${up}."
+		else
+			echo "  ${branch} is checked out here with local changes; commit or stash, then re-run (or: git merge --ff-only ${up})." >&2
+		fi
+		return 0
+	fi
+
+	# Checked out in another worktree: cannot move it from here.
 	wt="$(git worktree list --porcelain |
 		awk -v b="branch refs/heads/${branch}" '/^worktree /{w=substr($0,10)} $0==b{print w; exit}')"
 	if [ -n "${wt}" ]; then

@@ -42,8 +42,9 @@ both `master` and `masterBrian`.
    `masterBrian:brian`): fetch `<remote>/master` (no tags), push it to your fork
    under `<branch>` (creating the branch on the fork if missing, and forcing with
    `--force-with-lease` if the fork diverged because the source rewrote master),
-   and create or reset the local `<branch>` to it. A mirror checked out in a
-   worktree is left alone with a note.
+   and update the local `<branch>` to it (fast-forwarded in place if it is the
+   branch you have checked out; a mirror checked out in another worktree is left
+   alone with a note).
 2. Sync the team fork: `lfrGitSync`, or `lfrGitSyncEE` when the repo's remotes
    point at `liferay-portal-ee` (detected by remote, not folder name).
 3. With `-r`/`--rebase`, rebase the current branch onto a target, skipped when you
