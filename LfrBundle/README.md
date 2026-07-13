@@ -142,6 +142,12 @@ script bumps to the next free port — same behaviour as the other ports — and
 prints the resolved value:
 
 ```
+Starting Liferay (Ctrl+C to stop).
+  Editor / portal: http://localhost:8080/
+  Logs           : .../tomcat/logs/catalina.out
+  JDK            : .../zulu17...
+  Debug attach   : localhost:8000 (transport=dt_socket, suspend=n)
+
 Selected ports:
   HTTP       8080
   SHUTDOWN   8005
@@ -150,12 +156,8 @@ Selected ports:
   OSGI       11311
   ARQUILLIAN 32763
   DATAGUARD  42763
+  ES-TRANS   9301
   JPDA       8000
-
-Starting Liferay (Ctrl+C to stop).
-  Editor / portal: http://localhost:8080/
-  Logs           : .../tomcat/logs/catalina.out
-  Debug attach   : localhost:8000 (transport=dt_socket, suspend=n)
 ```
 
 By default the JVM does **not** suspend on startup (`suspend=n`), so the portal
@@ -259,8 +261,10 @@ Starting Liferay (Ctrl+C to stop).
 
 ### Clean start
 
-There are two levels of clean, both prompting for confirmation (skip with
-`--yes` / `-y`):
+There are two levels of clean, both prompting for confirmation. The prompt takes
+only `y` or `n` (anything else, including a bare Enter, re-asks, so a stray key
+never triggers a wipe): `y` cleans, `n` skips just the clean and still starts the
+bundle. Pass `--yes` / `-y` to skip the prompt and clean:
 
 | Flag | What it does |
 |---|---|
@@ -312,33 +316,45 @@ lfrRunBundle --clean --db-docker pg-db
 
 ### Stopping the server
 
-The script runs `catalina.sh run` (or `catalina.sh jpda run` in debug mode)
-in the foreground, so `Ctrl+C` shuts the server down cleanly. No background
-processes are left behind.
+`Ctrl+C` stops the server. The first press sends `SIGTERM` for a clean shutdown;
+if Tomcat hangs, pressing `Ctrl+C` again after a few seconds force-kills the
+whole process tree (the JVM plus the Elasticsearch sidecar). An accidental
+double-tap within that grace window only sends `SIGTERM`, so you can't force-kill
+by reflex. No background processes are left behind.
+
+(On a TTY the script runs `catalina.sh run` in the background and waits, so it
+can pin the status bar, redraw on resize, and handle `Ctrl+C` as above; piped or
+redirected, it just `exec`s Tomcat.)
 
 ## What happens on launch
 
 1. **Locates the Tomcat directory** inside the bundle. Handles all common
    layouts (`<bundle>/tomcat/`, `<bundle>/tomcat-9.x.y/`,
    `<bundle>/liferay-dxp/tomcat/`, …).
-2. **Copies the Elasticsearch config** into `<bundle>/.../osgi/configs/`,
-   but only if a file with the same name doesn't already exist there. So
-   you can edit the deployed config and re-run without losing your changes.
-3. **Probes the service ports** — HTTP `8080`, shutdown `8005`, AJP `8009`,
-   HTTPS `8443`, the OSGi console `11311`, and the Arquillian `32763` /
-   DataGuard `42763` test connectors (plus JPDA `8000` in debug mode) — using
-   `ss`, `lsof` or `netstat` (whichever is available on the system). Picks the
-   next free port if any default is busy. Avoids self-collisions when bumping
-   (e.g. won't pick `8081` for HTTP and again for shutdown). The Arquillian and
-   DataGuard connectors bind fixed ports and `System.exit` the whole JVM on a
-   clash, so their resolved ports are pinned through `osgi/configs/*.config`
-   files (rewritten each run) — this is what lets two bundles run at once.
+2. **Writes the Elasticsearch sidecar config** into `<bundle>/.../osgi/configs/`
+   every run: `sidecarHttpPort="AUTO"` plus a per-instance `transportTcpPort`
+   (seeded from the HTTP offset) bound to loopback, so parallel bundles don't
+   fight over the Elasticsearch ports. Picks the ES7 or ES8 PID to match the
+   module the bundle ships.
+3. **Resolves the service ports** — HTTP `8080`, shutdown `8005`, AJP `8009`,
+   HTTPS `8443`, the OSGi console `11311`, the Arquillian `32763` / DataGuard
+   `42763` test connectors, the Elasticsearch transport port `9301`, and Glowroot
+   `4000` when the bundle ships it (plus JPDA `8000` in debug mode) — using `ss`,
+   `lsof` or `netstat`. Picks the next free port if a default is busy, avoiding
+   self-collisions. The Arquillian, DataGuard and ES connectors bind their ports
+   late and `System.exit` the JVM on a clash, so their candidates are seeded from
+   the HTTP offset (deterministic) rather than scanned, and pinned through
+   `osgi/configs/*.config` (rewritten each run) — this is what lets two bundles
+   run at once. Also sets `portal.instance.inet.socket.address` to the resolved
+   HTTP port, and remaps Glowroot's web port in `glowroot/admin.json` if present.
 4. **Backs up `tomcat/conf/server.xml`** to
    `server.xml.bak.<yyyymmdd-hhmmss>` and rewrites the connector ports —
    only when at least one port differs from what's already in the file.
    Re-running on the same setup leaves `server.xml` untouched.
-5. **Starts Tomcat** in the foreground, prints the resolved HTTP URL and
-   the path to `catalina.out`.
+5. **Starts Tomcat**, prints the resolved HTTP URL and the `catalina.out` path,
+   and on a TTY pins a two-row status panel to the bottom (ports on the upper
+   row, the editor URL and full bundle path on the lower row) that stays put
+   while the logs scroll.
 
 ### Sample output (defaults free)
 
@@ -346,7 +362,13 @@ processes are left behind.
 Bundle : ${HOME}/liferay/bundles/liferay-dxp-tomcat-2025.q1.14-lts-1748919610
 Tomcat : .../liferay-dxp/tomcat
 
-Elasticsearch config installed: .../osgi/configs/com.liferay.portal.search.elasticsearch7.configuration.ElasticsearchConfiguration.config
+Elasticsearch config written: .../osgi/configs/...elasticsearch8...config (http AUTO, transport 9301)
+portal.instance.inet.socket.address set to localhost:8080
+
+Starting Liferay (Ctrl+C to stop).
+  Editor / portal: http://localhost:8080/
+  Logs           : .../tomcat/logs/catalina.out
+  JDK            : .../zulu17...
 
 Selected ports:
   HTTP       8080
@@ -356,10 +378,7 @@ Selected ports:
   OSGI       11311
   ARQUILLIAN 32763
   DATAGUARD  42763
-
-Starting Liferay (Ctrl+C to stop).
-  Editor / portal: http://localhost:8080/
-  Logs           : .../tomcat/logs/catalina.out
+  ES-TRANS   9301
 ```
 
 ### Sample output (8080 + 8005 already taken)
@@ -370,9 +389,10 @@ Selected ports:
   SHUTDOWN   8006   (default 8005 was busy)
   AJP        8009
   HTTPS      8443
-  OSGI       11311
-  ARQUILLIAN 32763
-  DATAGUARD  42763
+  OSGI       11312   (default 11311 was busy)
+  ARQUILLIAN 32764   (default 32763 was busy)
+  DATAGUARD  42764   (default 42763 was busy)
+  ES-TRANS   9302   (default 9301 was busy)
 
 server.xml backed up to .../server.xml.bak.20260505-113412
 server.xml updated.
