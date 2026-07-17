@@ -314,11 +314,12 @@ lfrRunBundle --clean --db-docker pg-db
 
 ### Stopping the server
 
-`Ctrl+C` stops the server. The first press sends `SIGTERM` for a clean shutdown;
-if Tomcat hangs, pressing `Ctrl+C` again after a few seconds force-kills the
-whole process tree (the JVM plus the Elasticsearch sidecar). An accidental
-double-tap within that grace window only sends `SIGTERM`, so you can't force-kill
-by reflex. No background processes are left behind.
+`Ctrl+C` stops the server: it sends `SIGTERM` for a clean shutdown and waits for
+Tomcat to exit. That is all `Ctrl+C` ever does (pressing it again just re-shows
+the hint), so an accidental double-tap can never hard-kill a still-shutting-down
+JVM. If Tomcat genuinely hangs, press the `f` key to force-kill the whole process
+tree (the JVM plus the Elasticsearch sidecar) with `SIGKILL`. No background
+processes are left behind.
 
 (On a TTY the script runs `catalina.sh run` in the background and waits, so it
 can pin the status bar, redraw on resize, and handle `Ctrl+C` as above; piped or

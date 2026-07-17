@@ -799,7 +799,7 @@ _status_bar_ports_line() {
 _status_bar_url_line() {
 	local cols="$1"
 	local prefix=" http://localhost:$HTTP_PORT/   |   "
-	local suffix="   |   Ctrl+C to stop "
+	local suffix="   |   Ctrl+C stop, +f force "
 	local path="$BUNDLE" budget
 	budget=$((cols - ${#prefix} - ${#suffix}))
 	if [ "$budget" -lt 12 ]; then
@@ -949,7 +949,7 @@ export JRE_HOME="$JDK_PATH"
 export PATH="$JDK_PATH/bin:$PATH"
 
 echo
-echo "Starting Liferay (Ctrl+C to stop)."
+echo "Starting Liferay (Ctrl+C to stop; then press f to force-kill if it hangs)."
 echo "  Editor / portal: http://localhost:$HTTP_PORT/"
 echo "  Logs           : $TOMCAT_DIR/logs/catalina.out"
 echo "  JDK            : $JDK_PATH $JDK_SOURCE"
@@ -991,26 +991,20 @@ _kill_tree() {
 }
 
 # Ctrl+C handler, in effect only while the bundle runs in this terminal
-# (installed just before the wait loop, gone when the script exits): the first
-# press stops Tomcat gracefully (SIGTERM). A later press force-kills the whole
-# tree (SIGKILL), but only after a short grace window, so an accidental
-# double-tap does nothing and you must deliberately press again once it's clear
-# Tomcat is hung.
-_SIGINT_FORCE_GRACE=3
-_SIGINT_AT=-1
+# (installed just before the wait loop, gone when the script exits): it stops
+# Tomcat gracefully with SIGTERM. This is the normal Ctrl+C behavior; repeated
+# presses just re-send SIGTERM and never force-kill, so an accidental double-tap
+# can't hard-kill a still-shutting-down JVM. To force-kill a hung Tomcat, press
+# the "f" key (handled in the wait loop below), a deliberate separate action.
+_stopping=0
 _on_sigint() {
-	if [ "$_SIGINT_AT" -lt 0 ]; then
-		_SIGINT_AT=$SECONDS
-		echo "Stopping Tomcat (SIGTERM). If it hangs, press Ctrl+C again after a few seconds to force-kill." >&2
-		kill -TERM "$_catalina_pid" 2>/dev/null || true
+	if [ "$_stopping" = 1 ]; then
+		echo "Still stopping (SIGTERM already sent). Press f to force-kill if it hangs." >&2
 		return
 	fi
-	if [ $((SECONDS - _SIGINT_AT)) -lt "$_SIGINT_FORCE_GRACE" ]; then
-		echo "Still stopping... (wait a moment, then press Ctrl+C again to force-kill)." >&2
-		return
-	fi
-	echo "Force-stopping (SIGKILL) the Tomcat process tree..." >&2
-	_kill_tree "$_catalina_pid" KILL
+	_stopping=1
+	echo "Stopping Tomcat (SIGTERM). If it hangs, press f to force-kill." >&2
+	kill -TERM "$_catalina_pid" 2>/dev/null || true
 }
 
 catalina_args=(run)
@@ -1031,17 +1025,26 @@ if [ -t 1 ]; then
 	# Redraw the bar on resize. Handle Ctrl+C ourselves: bash makes a background
 	# command started without job control ignore SIGINT, so the terminal's Ctrl+C
 	# never reaches Tomcat; our INT trap (which does fire in this foreground
-	# shell) stops it with SIGTERM, escalating to a SIGKILL of the tree only on a
-	# deliberate later press (see _on_sigint). Forwarding rather than exiting keeps
+	# shell) stops it gracefully with SIGTERM. Forwarding rather than exiting keeps
 	# the EXIT trap running so the terminal is restored.
 	trap '_setup_status_bar' WINCH
 	trap _on_sigint INT
 	trap 'kill -TERM "$_catalina_pid" 2>/dev/null || true' TERM
 
-	# wait returns >128 when a trap (SIGWINCH) interrupts it; loop until Tomcat
-	# actually exits.
+	# Wait for Tomcat to exit. While it runs normally, block in wait (a SIGWINCH or
+	# SIGINT trap makes wait return >128, so loop until Tomcat actually exits).
+	# Once Ctrl+C has asked it to stop, poll stdin instead so pressing "f"
+	# force-kills a hung JVM (a deliberate key, never a double Ctrl+C).
 	while kill -0 "$_catalina_pid" 2>/dev/null; do
-		wait "$_catalina_pid" && break
+		if [ "$_stopping" = 1 ] && [ -t 0 ]; then
+			if read -rsn1 -t 1 _key 2>/dev/null && [ "$_key" = "f" ]; then
+				echo "Force-stopping (SIGKILL) the Tomcat process tree..." >&2
+				_kill_tree "$_catalina_pid" KILL
+				break
+			fi
+		else
+			wait "$_catalina_pid" && break
+		fi
 	done
 else
 	exec "$CATALINA" "${catalina_args[@]}"
