@@ -329,23 +329,29 @@ redirected, it just `exec`s Tomcat.)
 
 1. **Locates the Tomcat directory** inside the bundle. Handles all common
    layouts (`<bundle>/tomcat/`, `<bundle>/tomcat-9.x.y/`,
-   `<bundle>/liferay-dxp/tomcat/`, …).
+   `<bundle>/liferay-dxp/tomcat/`, …). If a bundle has more than one Tomcat
+   version (e.g. an upgrade left `tomcat-10.1.55` next to `tomcat-10.1.57`), it
+   prompts you to pick one, then offers to delete the version(s) you did not
+   pick and any matching `tomcat-*.zip`. The delete offer is interactive only,
+   defaults to keeping them, and is skipped under `--yes`.
 2. **Writes the Elasticsearch sidecar config** into `<bundle>/.../osgi/configs/`
    every run: `sidecarHttpPort="AUTO"` plus a per-instance `transportTcpPort`
    (seeded from the HTTP offset) bound to loopback, so parallel bundles don't
    fight over the Elasticsearch ports. Picks the ES7 or ES8 PID to match the
    module the bundle ships.
 3. **Resolves the service ports** — HTTP `8080`, shutdown `8005`, AJP `8009`,
-   HTTPS `8443`, the OSGi console `11311`, the Arquillian `32763` / DataGuard
-   `42763` test connectors, the Elasticsearch transport port `9301`, and Glowroot
-   `4000` when the bundle ships it (plus JPDA `8000` in debug mode) — using `ss`,
-   `lsof` or `netstat`. Picks the next free port if a default is busy, avoiding
-   self-collisions. The Arquillian, DataGuard and ES connectors bind their ports
-   late and `System.exit` the JVM on a clash, so their candidates are seeded from
-   the HTTP offset (deterministic) rather than scanned, and pinned through
-   `osgi/configs/*.config` (rewritten each run) — this is what lets two bundles
+   HTTPS `8443`, the OSGi console `11311`, the Elasticsearch transport port
+   `9301`, and Glowroot `4000` when the bundle ships it (plus JPDA `8000` in
+   debug mode) — using `ss`, `lsof` or `netstat`. Picks the next free port if a
+   default is busy, avoiding self-collisions. The shutdown and ES ports bind late
+   and can take the JVM down on a clash, so their candidates are seeded from the
+   HTTP offset (deterministic) rather than scanned — this is what lets two bundles
    run at once. Also sets `portal.instance.inet.socket.address` to the resolved
    HTTP port, and remaps Glowroot's web port in `glowroot/admin.json` if present.
+   The Arquillian/DataGuard test connectors are **not** touched: they ship in
+   `osgi/test`, which a normal launch never scans, so they never start or bind,
+   and seeding their configs would only desync a later managed `testIntegration`
+   run (leaving a non-default port the test client can't reach).
 4. **Backs up `tomcat/conf/server.xml`** to
    `server.xml.bak.<yyyymmdd-hhmmss>` and rewrites the connector ports —
    only when at least one port differs from what's already in the file.

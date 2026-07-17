@@ -279,6 +279,48 @@ else
 	echo
 fi
 
+# When a bundle carries more than one tomcat (an upgrade often leaves the old
+# version beside the new one), offer to delete the version(s) you did not pick,
+# plus any matching tomcat zip, since the old ones are usually dead weight. Only
+# asks interactively and defaults to keeping them; skipped under --yes, because
+# removing a whole tomcat install should be a deliberate choice, not automatic.
+TOMCAT_REMOVE=()
+for _t in "${TOMCAT_CANDIDATES[@]}"; do
+	[ "$_t" = "$TOMCAT_DIR" ] || TOMCAT_REMOVE+=("$_t")
+done
+if [ "${#TOMCAT_REMOVE[@]}" -gt 0 ] && [ -t 0 ] && [ "$ASSUME_YES" != "1" ]; then
+	echo "Keeping $TOMCAT_DIR"
+	echo "Other tomcat version(s) still in this bundle:"
+	for _t in "${TOMCAT_REMOVE[@]}"; do
+		echo "  $_t  ($(du -sh "$_t" 2>/dev/null | cut -f1))"
+		for _z in "$_t".zip "$_t"-*.zip; do
+			if [ -f "$_z" ]; then echo "  $_z  ($(du -h "$_z" 2>/dev/null | cut -f1))"; fi
+		done
+	done
+	_del_reply=""
+	while true; do
+		if ! read -r -p "Delete the tomcat version(s) you did not pick (and their zips)? [y/n] " _del_reply; then
+			_del_reply=n; echo; break
+		fi
+		case "$_del_reply" in
+		y | Y | yes | YES) _del_reply=y; break ;;
+		n | N | no | NO) _del_reply=n; break ;;
+		*) echo "Please answer y or n." >&2 ;;
+		esac
+	done
+	if [ "$_del_reply" = y ]; then
+		for _t in "${TOMCAT_REMOVE[@]}"; do
+			if rm -rf "$_t"; then echo "  removed $_t"; else echo "  could not remove $_t" >&2; fi
+			for _z in "$_t".zip "$_t"-*.zip; do
+				if [ -f "$_z" ] && rm -f "$_z"; then echo "  removed $_z"; fi
+			done
+		done
+	else
+		echo "  Keeping the other tomcat version(s)."
+	fi
+	echo
+fi
+
 SERVER_XML="$TOMCAT_DIR/conf/server.xml"
 CATALINA="$TOMCAT_DIR/bin/catalina.sh"
 
