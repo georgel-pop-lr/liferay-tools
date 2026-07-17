@@ -602,8 +602,6 @@ AJP_DEFAULT=8009
 HTTPS_DEFAULT=8443
 JPDA_DEFAULT=8000
 OSGI_CONSOLE_DEFAULT=11311
-ARQUILLIAN_DEFAULT=32763
-DATA_GUARD_DEFAULT=42763
 ES_TRANSPORT_DEFAULT=9301
 GLOWROOT_DEFAULT=4000
 
@@ -664,25 +662,20 @@ fi
 OSGI_CONSOLE_PORT=$(choose_port "$OSGI_CONSOLE_DEFAULT")
 export LIFERAY_MODULE_PERIOD_FRAMEWORK_PERIOD_PROPERTIES_PERIOD_OSGI_PERIOD_CONSOLE="localhost:$OSGI_CONSOLE_PORT"
 
-# The Arquillian and DataGuard test connectors ship in osgi/modules, so they
-# start on every boot — not only under test — and each binds a FIXED port
-# (32763 and 42763). Unlike a Tomcat port clash, a bind failure here is fatal:
-# the connector logs "Shutting down now." and calls System.exit(-10), taking the
-# whole portal JVM down — so a second bundle on the same host kills itself (or
-# its neighbor) on startup. Pick free ports and pin each through its component's
-# OSGi config; these are ConfigAdmin component properties, so a .config file is
-# the only way to override them (no framework or env-var equivalent). Rewritten
-# every run so a standalone start falls back to the defaults the test harness
-# expects on the client side (liferay.arquillian.port, default 32763).
+# The Arquillian and DataGuard test connectors now ship in osgi/test, which a
+# plain launcher bundle never scans (osgi/test is not in
+# module.framework.auto.deploy.dirs), so they do not start on a normal boot and
+# never bind their ports (32763/42763). There is nothing to remap here, and two
+# bundles cannot clash on them. We also do NOT write their .config files: seeding
+# a non-default port (e.g. 32764 from an 8081 launch) does nothing for the running
+# bundle and desyncs a later managed testIntegration run against the same dir,
+# which then hits "Connection refused" on the default 32763. Leave the bundle's
+# test configs at Liferay's defaults.
 #
-# These bind late in OSGi startup (well after the HTTP connector), so scanning
-# from the default races a still-booting sibling exactly like the shutdown port
-# does: it reports 32763/42763 free, both bundles pick them, and the fatal
-# System.exit(-10) fires when the second binds. Seed the candidate from the HTTP
-# offset instead, so a second bundle deterministically lands elsewhere no matter
-# the boot timing. (Still run through choose_port for a genuine already-bound clash.)
-ARQUILLIAN_PORT=$(choose_port $((ARQUILLIAN_DEFAULT + HTTP_PORT - HTTP_DEFAULT)))
-DATA_GUARD_PORT=$(choose_port $((DATA_GUARD_DEFAULT + HTTP_PORT - HTTP_DEFAULT)))
+# (Historically these shipped in osgi/modules and started every boot, so a second
+# bundle died with System.exit(-10) on the fixed port; per-offset seeding fixed
+# that. If a future bundle ever ships them in osgi/modules again, restore the
+# seeding. Verify with: find <bundle>/osgi -iname '*arquillian*connector*.jar'.)
 
 # The embedded Elasticsearch sidecar binds a transport port (default 9300) late
 # in OSGi startup, so — like the shutdown/arquillian ports — scanning it
@@ -701,19 +694,6 @@ GLOWROOT_PORT=""
 if [ -f "$GLOWROOT_ADMIN" ]; then
 	GLOWROOT_PORT=$(choose_port $((GLOWROOT_DEFAULT + HTTP_PORT - HTTP_DEFAULT)))
 fi
-
-write_port_config() {
-	local pid=$1
-	local port=$2
-	[ -n "$ELASTIC_TARGET_DIR" ] || return 0
-	printf 'port="%s"\n' "$port" >"$ELASTIC_TARGET_DIR/$pid.config"
-}
-
-write_port_config \
-	"com.liferay.arquillian.extension.junit.bridge.connector.ArquillianConnector" \
-	"$ARQUILLIAN_PORT"
-write_port_config \
-	"com.liferay.data.guard.connector.DataGuardConnector" "$DATA_GUARD_PORT"
 
 # (Re)write the Elasticsearch sidecar config with the chosen transport port,
 # every run, so a reused bundle never keeps a stale or colliding value.
@@ -783,8 +763,6 @@ print_selected_ports() {
 	print_port "AJP" "$AJP_PORT" "$AJP_DEFAULT"
 	print_port "HTTPS" "$HTTPS_PORT" "$HTTPS_DEFAULT"
 	print_port "OSGI" "$OSGI_CONSOLE_PORT" "$OSGI_CONSOLE_DEFAULT"
-	print_port "ARQUILLIAN" "$ARQUILLIAN_PORT" "$ARQUILLIAN_DEFAULT"
-	print_port "DATAGUARD" "$DATA_GUARD_PORT" "$DATA_GUARD_DEFAULT"
 	if [ -n "$ES_TRANSPORT_PORT" ]; then
 		print_port "ES-TRANS" "$ES_TRANSPORT_PORT" "$ES_TRANSPORT_DEFAULT"
 	fi
@@ -807,7 +785,7 @@ set_terminal_title() {
 # Upper row: ports only (trailing ones drop first on a narrow terminal; they are
 # also in the table above).
 _status_bar_ports_line() {
-	local text=" HTTP $HTTP_PORT  HTTPS $HTTPS_PORT  OSGI $OSGI_CONSOLE_PORT  ARQ $ARQUILLIAN_PORT  DG $DATA_GUARD_PORT"
+	local text=" HTTP $HTTP_PORT  HTTPS $HTTPS_PORT  OSGI $OSGI_CONSOLE_PORT"
 	[ -n "$ES_TRANSPORT_PORT" ] && text="$text  ES $ES_TRANSPORT_PORT"
 	[ -n "$GLOWROOT_PORT" ] && text="$text  GR $GLOWROOT_PORT"
 	[ -n "$JPDA_PORT" ] && text="$text  DBG $JPDA_PORT"

@@ -154,8 +154,6 @@ Selected ports:
   AJP        8009
   HTTPS      8443
   OSGI       11311
-  ARQUILLIAN 32763
-  DATAGUARD  42763
   ES-TRANS   9301
   JPDA       8000
 ```
@@ -376,8 +374,6 @@ Selected ports:
   AJP        8009
   HTTPS      8443
   OSGI       11311
-  ARQUILLIAN 32763
-  DATAGUARD  42763
   ES-TRANS   9301
 ```
 
@@ -390,8 +386,6 @@ Selected ports:
   AJP        8009
   HTTPS      8443
   OSGI       11312   (default 11311 was busy)
-  ARQUILLIAN 32764   (default 32763 was busy)
-  DATAGUARD  42764   (default 42763 was busy)
   ES-TRANS   9302   (default 9301 was busy)
 
 server.xml backed up to .../server.xml.bak.20260505-113412
