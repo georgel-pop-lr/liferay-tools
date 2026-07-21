@@ -298,6 +298,14 @@ Without `--test` the launch is lean: an auto-provisioned connector (still presen
 in `osgi/test`, so nothing is lost) is removed from `osgi/modules` along with its
 seeded config, so a plain boot never runs the test infra.
 
+The **DataGuard** connector is only provisioned when its provider,
+`com.liferay.portal.test.jar` (which exports `com.liferay.portal.kernel.test`), is
+already deployed in a scanned dir (`osgi/portal` or `osgi/modules`). On a stock
+bundle that jar lives only in `osgi/test`, so DataGuard would fail to resolve on a
+launcher boot; there it is skipped instead. Arquillian has no such dependency, so
+it is always provisioned. This keeps DataGuard on test-enabled bundles without a
+boot error on stock ones.
+
 ### Clean start
 
 There are two levels of clean, both prompting for confirmation. The prompt takes

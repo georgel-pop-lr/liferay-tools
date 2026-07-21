@@ -739,14 +739,31 @@ bundle_has_module() {
 
 # Provision (with --test) or de-provision (without) one connector, then seed its
 # port when it is in osgi/modules. $1 label, $2 jar name, $3 config PID
-# (filename), $4 default port, $5 name of the out variable (empty when off).
+# (filename), $4 default port, $5 name of the out variable (empty when off),
+# $6 optional guard jar that must be deployed in a scanned dir for the connector
+# to be provisioned (its dependency provider).
 setup_test_connector() {
-	local label="$1" jar="$2" pid="$3" default="$4" outvar="$5" port
+	local label="$1" jar="$2" pid="$3" default="$4" outvar="$5" guard="${6:-}" port
 	local src="$LIFERAY_OSGI_DIR/test/$jar"
 	local dst="$LIFERAY_OSGI_DIR/modules/$jar"
 	local config="$LIFERAY_OSGI_DIR/configs/$pid.config"
 
 	if [ "$TEST" = 1 ]; then
+		# A connector with a guard jar only resolves when that provider is already
+		# deployed in a scanned dir. DataGuard imports com.liferay.portal.kernel.test
+		# from com.liferay.portal.test, which on a stock bundle lives only in
+		# osgi/test (never scanned on a launcher boot), so provisioning DataGuard
+		# there just yields an unresolved-import error. Provision it only when the
+		# guard is present (a test-enabled bundle that keeps it in osgi/portal), and
+		# otherwise skip it (dropping any stale copy) rather than boot with the error.
+		if [ -n "$guard" ] &&
+		   [ ! -f "$LIFERAY_OSGI_DIR/portal/$guard" ] &&
+		   [ ! -f "$LIFERAY_OSGI_DIR/modules/$guard" ]; then
+			rm -f "$dst" "$config"
+			echo "$label connector skipped: provider $guard not deployed (only in osgi/test); needs a managed testIntegration boot"
+			return 0
+		fi
+
 		# Copy fresh from osgi/test so an updated connector jar is not left stale.
 		if [ -f "$src" ]; then
 			cp -f "$src" "$dst"
@@ -783,7 +800,8 @@ setup_test_connector "Arquillian" \
 setup_test_connector "DataGuard" \
 	"com.liferay.data.guard.connector.jar" \
 	"com.liferay.data.guard.connector.DataGuardConnector" \
-	"$DATA_GUARD_DEFAULT" DATA_GUARD_PORT
+	"$DATA_GUARD_DEFAULT" DATA_GUARD_PORT \
+	"com.liferay.portal.test.jar"
 [ -n "$ARQUILLIAN_PORT$DATA_GUARD_PORT" ] && echo
 
 # The embedded Elasticsearch sidecar binds a transport port (default 9300) late
