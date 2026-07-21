@@ -7,15 +7,16 @@
 # Usage:
 #   start-liferay.sh                              # opens the bundle picker (fzf)
 #   start-liferay.sh /path/to/bundle              # explicit bundle path, skips the picker
-#   start-liferay.sh --debug                      # picker, then debug mode
+#   start-liferay.sh --debug (-d)                 # picker, then debug mode
 #   start-liferay.sh --debug /path/to/bundle      # explicit bundle, debug mode
-#   start-liferay.sh --suspend                    # debug mode, wait for the debugger to attach
-#   start-liferay.sh --pick                       # force the picker (same as no argument)
-#   start-liferay.sh --jdk /path/to/jdk           # override the JDK
-#   start-liferay.sh --clean                      # picker, then wipe state + reset DB
-#   start-liferay.sh --clean --yes                # picker, clean without prompting, start
-#   start-liferay.sh --clean --db-docker pg-db    # reset DB via docker exec, then start
-#   start-liferay.sh --clean-cache                # picker, then clear caches only (no DB)
+#   start-liferay.sh --suspend (-s)               # debug mode, wait for the debugger to attach
+#   start-liferay.sh --pick (-p)                  # force the picker (same as no argument)
+#   start-liferay.sh --jdk (-j) /path/to/jdk      # override the JDK
+#   start-liferay.sh --clean (-c)                 # picker, then wipe state + reset DB
+#   start-liferay.sh --clean --yes (-y)           # picker, clean without prompting, start
+#   start-liferay.sh --clean --db-docker (-dbd) pg-db  # reset DB via docker exec, then start
+#   start-liferay.sh --clean-cache (-cc)          # picker, then clear caches only (no DB)
+#   start-liferay.sh --test (-t)                  # expose the Arquillian/DataGuard test connectors (testIntegration against a live bundle)
 #
 # DEBUG mode runs Tomcat via 'catalina.sh jpda run' so a remote debugger can
 # attach. The JPDA port defaults to 8000, with the same auto-bump behaviour as
@@ -40,6 +41,13 @@
 # so the next boot rebuilds the module cache and recompiles JSPs. It keeps data,
 # logs, the search index, and the database. When both flags are given, --clean
 # (the full wipe) wins.
+#
+# TEST mode (--test / -t) makes the bundle a target for testIntegration against a
+# live server: it copies the Arquillian and DataGuard connectors from osgi/test
+# into osgi/modules so they start on boot, and seeds each a per-instance port from
+# the HTTP offset (8080 -> 32763, 8081 -> 32764, ...), so parallel test bundles
+# never clash. Without it the bundle stays lean and any previously provisioned
+# connector is removed. Run tests with -Dliferay.arquillian.port=<the printed port>.
 #
 # Database location is handled in this order: a Docker DB that publishes its
 # port to the host is reached by the normal host:port path; if that host reset
@@ -91,6 +99,7 @@ PICK=0
 CLEAN=0
 CLEAN_CACHE=0
 ASSUME_YES=0
+TEST=0
 BUNDLE=""
 JDK_OVERRIDE=""
 DB_DOCKER=""
@@ -101,14 +110,14 @@ i=0
 while [ $i -lt ${#args[@]} ]; do
 	arg="${args[$i]}"
 	case "$arg" in
-		--debug)
+		--debug|-d)
 			DEBUG=1
 			;;
-		--suspend)
+		--suspend|-s)
 			DEBUG=1
 			JPDA_SUSPEND=y
 			;;
-		--pick|--list)
+		--pick|--list|-p)
 			PICK=1
 			;;
 		--clean|-c)
@@ -117,10 +126,13 @@ while [ $i -lt ${#args[@]} ]; do
 		--clean-cache|-cc)
 			CLEAN_CACHE=1
 			;;
+		--test|-t)
+			TEST=1
+			;;
 		--yes|-y)
 			ASSUME_YES=1
 			;;
-		--db-docker)
+		--db-docker|-dbd)
 			i=$((i + 1))
 			DB_DOCKER="${args[$i]:-}"
 			if [ -z "$DB_DOCKER" ]; then
@@ -128,10 +140,10 @@ while [ $i -lt ${#args[@]} ]; do
 				exit 1
 			fi
 			;;
-		--db-docker=*)
-			DB_DOCKER="${arg#--db-docker=}"
+		--db-docker=*|-dbd=*)
+			DB_DOCKER="${arg#*=}"
 			;;
-		--jdk)
+		--jdk|-j)
 			i=$((i + 1))
 			JDK_OVERRIDE="${args[$i]:-}"
 			if [ -z "$JDK_OVERRIDE" ]; then
@@ -139,8 +151,8 @@ while [ $i -lt ${#args[@]} ]; do
 				exit 1
 			fi
 			;;
-		--jdk=*)
-			JDK_OVERRIDE="${arg#--jdk=}"
+		--jdk=*|-j=*)
+			JDK_OVERRIDE="${arg#*=}"
 			;;
 		*)
 			if [ -z "$BUNDLE" ]; then
@@ -646,6 +658,8 @@ JPDA_DEFAULT=8000
 OSGI_CONSOLE_DEFAULT=11311
 ES_TRANSPORT_DEFAULT=9301
 GLOWROOT_DEFAULT=4000
+ARQUILLIAN_DEFAULT=32763
+DATA_GUARD_DEFAULT=42763
 
 is_port_free() {
 	local port=$1
@@ -704,20 +718,73 @@ fi
 OSGI_CONSOLE_PORT=$(choose_port "$OSGI_CONSOLE_DEFAULT")
 export LIFERAY_MODULE_PERIOD_FRAMEWORK_PERIOD_PROPERTIES_PERIOD_OSGI_PERIOD_CONSOLE="localhost:$OSGI_CONSOLE_PORT"
 
-# The Arquillian and DataGuard test connectors now ship in osgi/test, which a
-# plain launcher bundle never scans (osgi/test is not in
-# module.framework.auto.deploy.dirs), so they do not start on a normal boot and
-# never bind their ports (32763/42763). There is nothing to remap here, and two
-# bundles cannot clash on them. We also do NOT write their .config files: seeding
-# a non-default port (e.g. 32764 from an 8081 launch) does nothing for the running
-# bundle and desyncs a later managed testIntegration run against the same dir,
-# which then hits "Connection refused" on the default 32763. Leave the bundle's
-# test configs at Liferay's defaults.
+# The Arquillian and DataGuard test connectors let a testIntegration run connect
+# to a LIVE launcher bundle instead of a managed one. They ship in osgi/test,
+# which a launcher boot never scans (osgi/test is not in
+# module.framework.auto.deploy.dirs), so they are off by default and dev bundles
+# stay lean. Pass --test/-t to make a bundle a test target: the connector jar is
+# copied from osgi/test into osgi/modules (a scanned dir) so it starts on boot,
+# and its .config is seeded with a per-instance port from the HTTP offset.
 #
-# (Historically these shipped in osgi/modules and started every boot, so a second
-# bundle died with System.exit(-10) on the fixed port; per-offset seeding fixed
-# that. If a future bundle ever ships them in osgi/modules again, restore the
-# seeding. Verify with: find <bundle>/osgi -iname '*arquillian*connector*.jar'.)
+# The offset keeps the default 8080 bundle on the default 32763 (so a managed
+# testIntegration, which targets 32763 unless -Dliferay.arquillian.port is passed,
+# still connects) while a parallel 8081 bundle lands on 32764, etc., so two live
+# test bundles never clash on the fixed ports (the old System.exit(-10) failure).
+# Without --test we go lean: an auto-provisioned connector (still present in
+# osgi/test, so nothing is lost) is removed from osgi/modules along with its
+# seeded .config, so a plain launch never runs the test infra.
+bundle_has_module() {
+	compgen -G "$LIFERAY_OSGI_DIR/modules/$1" >/dev/null 2>&1
+}
+
+# Provision (with --test) or de-provision (without) one connector, then seed its
+# port when it is in osgi/modules. $1 label, $2 jar name, $3 config PID
+# (filename), $4 default port, $5 name of the out variable (empty when off).
+setup_test_connector() {
+	local label="$1" jar="$2" pid="$3" default="$4" outvar="$5" port
+	local src="$LIFERAY_OSGI_DIR/test/$jar"
+	local dst="$LIFERAY_OSGI_DIR/modules/$jar"
+	local config="$LIFERAY_OSGI_DIR/configs/$pid.config"
+
+	if [ "$TEST" = 1 ]; then
+		# Copy fresh from osgi/test so an updated connector jar is not left stale.
+		if [ -f "$src" ]; then
+			cp -f "$src" "$dst"
+			echo "$label connector provisioned from osgi/test (--test)"
+		fi
+	elif [ -f "$dst" ] && [ -f "$src" ]; then
+		# Lean launch: drop the auto-provisioned duplicate and its seeded config.
+		# Only when it also lives in osgi/test, so a connector that genuinely
+		# ships in osgi/modules is left untouched.
+		rm -f "$dst" "$config"
+		echo "$label connector removed for a non-test launch (kept in osgi/test)"
+	fi
+
+	bundle_has_module "$jar" || return 0
+
+	# Deterministic offset from the (already de-conflicted) HTTP port, NOT
+	# choose_port: distinct HTTP ports already give distinct connector ports, and
+	# a fixed mapping keeps the default 8080 bundle on the default 32763 so a
+	# managed testIntegration (which targets 32763 unless -Dliferay.arquillian.port
+	# is passed) still connects. choose_port would bump it whenever a sibling
+	# transiently holds the port, desyncing exactly that case.
+	port=$((default + HTTP_PORT - HTTP_DEFAULT))
+	printf 'port="%s"\n' "$port" >"$config"
+	printf -v "$outvar" '%s' "$port"
+	echo "$label connector ready: port $port (default $default)"
+}
+
+ARQUILLIAN_PORT=""
+DATA_GUARD_PORT=""
+setup_test_connector "Arquillian" \
+	"com.liferay.arquillian.extension.junit.bridge.connector.jar" \
+	"com.liferay.arquillian.extension.junit.bridge.connector.ArquillianConnector" \
+	"$ARQUILLIAN_DEFAULT" ARQUILLIAN_PORT
+setup_test_connector "DataGuard" \
+	"com.liferay.data.guard.connector.jar" \
+	"com.liferay.data.guard.connector.DataGuardConnector" \
+	"$DATA_GUARD_DEFAULT" DATA_GUARD_PORT
+[ -n "$ARQUILLIAN_PORT$DATA_GUARD_PORT" ] && echo
 
 # The embedded Elasticsearch sidecar binds a transport port (default 9300) late
 # in OSGi startup, so — like the shutdown/arquillian ports — scanning it
@@ -811,6 +878,12 @@ print_selected_ports() {
 	if [ -n "$GLOWROOT_PORT" ]; then
 		print_port "GLOWROOT" "$GLOWROOT_PORT" "$GLOWROOT_DEFAULT"
 	fi
+	if [ -n "$ARQUILLIAN_PORT" ]; then
+		print_port "ARQUILLIAN" "$ARQUILLIAN_PORT" "$ARQUILLIAN_DEFAULT"
+	fi
+	if [ -n "$DATA_GUARD_PORT" ]; then
+		print_port "DATAGUARD" "$DATA_GUARD_PORT" "$DATA_GUARD_DEFAULT"
+	fi
 	if [ -n "$JPDA_PORT" ]; then
 		print_port "JPDA" "$JPDA_PORT" "$JPDA_DEFAULT"
 	fi
@@ -830,6 +903,7 @@ _status_bar_ports_line() {
 	local text=" HTTP $HTTP_PORT  HTTPS $HTTPS_PORT  OSGI $OSGI_CONSOLE_PORT"
 	[ -n "$ES_TRANSPORT_PORT" ] && text="$text  ES $ES_TRANSPORT_PORT"
 	[ -n "$GLOWROOT_PORT" ] && text="$text  GR $GLOWROOT_PORT"
+	[ -n "$ARQUILLIAN_PORT" ] && text="$text  ARQ $ARQUILLIAN_PORT"
 	[ -n "$JPDA_PORT" ] && text="$text  DBG $JPDA_PORT"
 	printf '%s' "$text"
 }
@@ -995,6 +1069,9 @@ echo "Starting Liferay (Ctrl+C to stop; then press f to force-kill if it hangs).
 echo "  Editor / portal: http://localhost:$HTTP_PORT/"
 echo "  Logs           : $TOMCAT_DIR/logs/catalina.out"
 echo "  JDK            : $JDK_PATH $JDK_SOURCE"
+if [ -n "$ARQUILLIAN_PORT" ]; then
+	echo "  Arquillian     : port $ARQUILLIAN_PORT (binds late in boot; run testIntegration with -Dliferay.arquillian.port=$ARQUILLIAN_PORT)"
+fi
 
 if [ "$DEBUG" = "1" ]; then
 	# Bind the JPDA listener to all interfaces (the asterisk) so a remote
@@ -1049,6 +1126,25 @@ _on_sigint() {
 	kill -TERM "$_catalina_pid" 2>/dev/null || true
 }
 
+# Announce when the Arquillian connector's socket is actually up. It binds late
+# in OSGi startup (long after the HTTP port), with no other ready signal, so a
+# testIntegration run started too early hits "connection refused". Poll in the
+# background and print one plain line when it is listening; the line scrolls with
+# Tomcat's logs and never moves the cursor, so it is safe under the status bar.
+# It stops on its own when Tomcat exits, when the port comes up, or after a
+# boot-length cap, so it never lingers.
+_watch_connector_ready() {
+	local port="$1" i
+	for i in $(seq 1 900); do
+		kill -0 "$_catalina_pid" 2>/dev/null || return 0
+		if ! is_port_free "$port"; then
+			echo ">>> Arquillian connector listening on port $port (testIntegration can connect now)"
+			return 0
+		fi
+		sleep 1
+	done
+}
+
 catalina_args=(run)
 [ "$DEBUG" = "1" ] && catalina_args=(jpda run)
 
@@ -1063,6 +1159,12 @@ if [ -t 1 ]; then
 
 	"$CATALINA" "${catalina_args[@]}" &
 	_catalina_pid=$!
+
+	# When we seeded the Arquillian connector it will come up; announce readiness
+	# in the background (self-terminates when Tomcat exits, so no cleanup needed).
+	if [ -n "$ARQUILLIAN_PORT" ]; then
+		_watch_connector_ready "$ARQUILLIAN_PORT" &
+	fi
 
 	# Redraw the bar on resize. Handle Ctrl+C ourselves: bash makes a background
 	# command started without job control ignore SIGINT, so the terminal's Ctrl+C

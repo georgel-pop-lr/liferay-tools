@@ -186,8 +186,10 @@ lfrBundle() {
 	help | -h | --help)
 		echo "usage: lfrBundle [<bundle>] [start-flags] | status | stop-all"
 		echo "  Shows each bundle's state and toggles the one you pick or name:"
-		echo "  a stopped bundle is started (start-flags like -c are forwarded),"
-		echo "  a running one is stopped. Esc cancels. stop-all stops every bundle."
+		echo "  a stopped bundle is started (start-flags like -c or -t are"
+		echo "  forwarded), a running one is stopped. Esc cancels. stop-all stops"
+		echo "  every bundle. Use -t to expose the test connectors for"
+		echo "  testIntegration against the live bundle."
 		return 0
 		;;
 	esac

@@ -105,7 +105,7 @@ The launcher only lists directories that actually contain a Tomcat folder
 half-extracted or non-Liferay folders are skipped. The selected bundle goes
 through the same port-resolution and launch path as a manually-passed argument.
 
-`--list` is accepted as an alias for `--pick`.
+`--list` and `-p` are accepted as aliases for `--pick`.
 
 ### Run a specific bundle
 
@@ -204,13 +204,16 @@ real value).
 lfrBundle                # picker over every known bundle with its state; selecting one toggles it. Esc cancels
 lfrBundle <name>         # toggle that bundle directly, no picker
 lfrBundle <name> -c      # start-flags (here --clean) are forwarded to start-liferay.sh, but only when starting
+lfrBundle <name> -t      # start as a testIntegration target (exposes the test connectors)
 lfrBundle status         # just list running bundles and their ports
 lfrBundle stop-all       # stop every running bundle (asks to confirm)
 ```
 
-Start flags (`-c`, `--clean-cache`, `--debug`, `--suspend`, `--jdk`, ...) are
-passed through to `start-liferay.sh` when a stopped bundle is started, and
-ignored when a running bundle is stopped. Stopping sends `SIGTERM` for a clean
+Start flags are passed through to `start-liferay.sh` when a stopped bundle is
+started, and ignored when a running bundle is stopped. Each has a short alias:
+`-c` (`--clean`), `-cc` (`--clean-cache`), `-d` (`--debug`), `-s` (`--suspend`),
+`-p` (`--pick`), `-t` (`--test`), `-y` (`--yes`), `-j` (`--jdk <path>`), and `-dbd`
+(`--db-docker <container>`). Stopping sends `SIGTERM` for a clean
 JVM shutdown, waits up to 10s, then `SIGKILL`s anything still alive. The picker
 lists bundles under `LFR_BUNDLES_DIRS`; give a path to toggle a bundle outside
 those roots. `lfrRunBundle` / `lfrrb` remain as back-compat aliases (they now
@@ -256,6 +259,44 @@ Starting Liferay (Ctrl+C to stop).
   Logs           : .../tomcat/logs/catalina.out
   JDK            : /home/.../jdk-11.0.22 (auto-detected for liferay-dxp-7.3.10.u27)
 ```
+
+### Test mode (`--test`): testIntegration against a live bundle
+
+Pass `--test` / `-t` to turn a bundle into a target for `testIntegration` against
+the running server (instead of a managed one the test boots itself):
+
+```bash
+lfrBundle <name> -t
+```
+
+The Arquillian and DataGuard connectors ship in `osgi/test`, which a normal
+launcher boot never scans, so by default they never start. With `--test` the
+launcher copies each connector jar from `osgi/test` into `osgi/modules` (a scanned
+dir) so it starts on boot, and seeds its `.config` with a **per-instance port
+derived from the HTTP offset**:
+
+| HTTP | Arquillian | DataGuard |
+|---|---|---|
+| 8080 | 32763 | 42763 |
+| 8081 | 32764 | 42764 |
+| 8090 | 32773 | 42773 |
+
+Because the default 8080 bundle stays on the default `32763`, a managed
+`testIntegration` (which targets `32763` unless told otherwise) still works, while
+a parallel 8081 bundle lands on `32764` — so **two live test bundles never clash**
+on the fixed connector ports. The resolved port is shown in the startup banner and
+the ports table, and a `>>> Arquillian connector listening on port <port>` line is
+printed once the socket binds (it binds late in boot).
+
+Run the tests against the printed port:
+
+```bash
+gradlew testIntegration --tests <Class> -Dliferay.arquillian.port=32764
+```
+
+Without `--test` the launch is lean: an auto-provisioned connector (still present
+in `osgi/test`, so nothing is lost) is removed from `osgi/modules` along with its
+seeded config, so a plain boot never runs the test infra.
 
 ### Clean start
 
@@ -348,10 +389,12 @@ redirected, it just `exec`s Tomcat.)
    HTTP offset (deterministic) rather than scanned — this is what lets two bundles
    run at once. Also sets `portal.instance.inet.socket.address` to the resolved
    HTTP port, and remaps Glowroot's web port in `glowroot/admin.json` if present.
-   The Arquillian/DataGuard test connectors are **not** touched: they ship in
-   `osgi/test`, which a normal launch never scans, so they never start or bind,
-   and seeding their configs would only desync a later managed `testIntegration`
-   run (leaving a non-default port the test client can't reach).
+   The Arquillian/DataGuard test connectors are handled only under `--test` (see
+   [Test mode](#test-mode---test-testintegration-against-a-live-bundle)): with the
+   flag they are copied from `osgi/test` into `osgi/modules` and seeded a
+   per-instance port from the HTTP offset (`32763`/`42763` at 8080, `32764`/`42764`
+   at 8081); without it a launch is lean and any previously provisioned connector
+   is removed, so a normal boot never starts the test infra.
 4. **Backs up `tomcat/conf/server.xml`** to
    `server.xml.bak.<yyyymmdd-hhmmss>` and rewrites the connector ports —
    only when at least one port differs from what's already in the file.
