@@ -135,7 +135,7 @@ _lfrBundleResolve() {
 _lfrBundleToggle() {
 	local name="${1-}"
 	shift 2>/dev/null
-	local path running pid base entries epath ename pidfor state
+	local path running pid base entries epath ename pidfor state shared repos
 	if [ -n "${name}" ]; then
 		path="$(_lfrBundleResolve "${name}")" || return 1
 		_lfrBundleToggleOne "${path}" "$@"
@@ -160,7 +160,14 @@ _lfrBundleToggle() {
 		else
 			state="stopped"
 		fi
-		entries+="${epath}"$'\t'"${ename}  [${state}]"$'\n'
+		# Flag a bundle some repo shares via lfrShare, so it is clear this is a
+		# deploy target before you stop it. Skipped if lfrShare is not loaded.
+		shared=""
+		if declare -F _lfrShareReposForBundle >/dev/null 2>&1; then
+			repos="$(_lfrShareReposForBundle "${epath}")"
+			[ -n "${repos}" ] && shared=", shared <- ${repos}"
+		fi
+		entries+="${epath}"$'\t'"${ename}  [${state}${shared}]"$'\n'
 	done < <(_lfrBundleEntries)
 	[ -z "${entries}" ] && { echo "lfrBundle: no bundles found under: ${LFR_BUNDLES_DIRS[*]}" >&2; return 1; }
 	path="$(printf '%s' "${entries}" | _lfrPick 'toggle bundle> ')" || return 1

@@ -82,6 +82,27 @@ _lfrShareShow() {
 	printf '  %s\n      -> %s%s\n' "${r}" "${val}" "${tag}"
 }
 
+# Echo the names of repos currently sharing <bundle> via lfrShare (those with an
+# lfrShare backup whose app.server.parent.dir resolves to <bundle>), comma
+# separated, or nothing if none. lfrBundle calls this to flag a shared bundle in
+# its picker, so a bundle that is a deploy target is visible before you stop it.
+_lfrShareReposForBundle() {
+	local bundle="${1}" target path pf val names=""
+	declare -F _lfrRepoEntries >/dev/null 2>&1 || return 0
+	target="$(readlink -m "${bundle}" 2>/dev/null)"
+	while IFS=$'\t' read -r path _; do
+		[ -n "${path}" ] || continue
+		[ -f "${path}/app.server.${USER}.lfrshare-bak.properties" ] || continue
+		pf="${path}/app.server.${USER}.properties"
+		val="$(grep -m1 '^app.server.parent.dir=' "${pf}" 2>/dev/null)"
+		val="${val#app.server.parent.dir=}"
+		val="${val//\$\{project.dir\}/${path}}"
+		[ "$(readlink -m "${val}" 2>/dev/null)" = "${target}" ] &&
+			names="${names:+${names}, }$(basename "${path}")"
+	done < <(_lfrRepoEntries)
+	[ -n "${names}" ] && printf '%s\n' "${names}"
+}
+
 # app.server.parent.dir (the Ant side) is what the running server uses, but a
 # gradlew deploy targets liferay.home, which lives in the generated (git-ignored)
 # .gradle/gradle.properties. Repointing only the Ant side leaves gradle deploying

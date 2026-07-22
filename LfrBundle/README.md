@@ -219,6 +219,10 @@ lists bundles under `LFR_BUNDLES_DIRS`; give a path to toggle a bundle outside
 those roots. `lfrRunBundle` / `lfrrb` remain as back-compat aliases (they now
 toggle, like `lfrBundle`).
 
+A picker entry a repo shares via [lfrShare](../LfrShare/README.md) is tagged
+`shared <- <repo>`, so you can see a bundle is a deploy target before you stop
+it. The tag needs lfrShare loaded; without it the entry just shows its run state.
+
 ### JDK selection (older bundles need older JDKs)
 
 Liferay needs the right JDK for its version. If the wrong one is used the
