@@ -69,7 +69,7 @@ _lfrCacheToggle() {
 lfrCache() {
 	local registry="${_lfrCacheDir}/enabled-repos.txt"
 	local cmd="${1-}"
-	cmd="${cmd#-}"
+	while [ "${cmd}" != "${cmd#-}" ]; do cmd="${cmd#-}"; done
 	local repo init
 
 	mkdir -p "${_lfrCacheDir}"
@@ -187,9 +187,23 @@ EOF
 		done
 		if [ "${found}" -eq 0 ]; then echo "  (none found)"; fi
 		;;
-	help | --help | -h)
-		echo "usage: lfrCache [toggle] | on|off|status|list|seed|prune [repo]"
-		echo "  bare lfrCache opens a picker showing each repo's cache state; selecting one toggles it."
+	help | h)
+		cat <<-'EOF'
+			lfrCache — share ONE Gradle build cache across repos/worktrees, so a
+			build in one reuses the artifacts another already built.
+
+			Usage:
+			  lfrCache               picker of each repo's share state; select to toggle
+			  lfrCache on [repo]     start sharing the cache for a repo/worktree
+			  lfrCache off [repo]    stop sharing (remove the init script)
+			  lfrCache status [repo] show which repos share, and the shared cache size
+			  lfrCache list          list the cache folders on disk (shared + per-repo)
+			  lfrCache seed [repo]   copy a repo's existing cache into the shared dir
+			  lfrCache prune [repo]  delete a sharing repo's orphaned per-repo cache
+
+			Omit [repo] to use the current repo (or a picker). A hard `git clean`
+			wipes the init script, so re-run `lfrCache on` after one.
+		EOF
 		;;
 	*)
 		echo "lfrCache: unknown command '${cmd}'" >&2

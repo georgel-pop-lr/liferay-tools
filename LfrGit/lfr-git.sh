@@ -25,13 +25,37 @@ _lfrGitCleanExcludes=(
 	-e "test.${USER}.properties"
 )
 
+# Shared help for the lfrGit* commands.
+_lfrGitHelp() {
+	cat <<-'EOF'
+		lfrGit* — Liferay git helpers.
+
+		Commands:
+		  lfrGitClean          delete untracked and ignored files, but keep IDE
+		                       files and your per-user *.properties
+		  lfrGitCleanDry       preview what lfrGitClean would delete (deletes
+		                       nothing)
+		  lfrGitSync [org]     sync your team fork's liferay-portal master from
+		                       upstream (org defaults to LFR_GIT_FORK_ORG)
+		  lfrGitSyncEE [org]   same, for liferay-portal-ee
+		  lfrGitRebase [N]     interactive rebase over the last N commits (default 20)
+		  lfrGitUpdateMaster [-r] [-f] [-p] [target]
+		                       refresh your master mirror branches from their
+		                       remotes and sync your fork; with -r also rebase the
+		                       current branch onto <target> (default upstream/master),
+		                       -f forces the rebase, -p then force-pushes it
+	EOF
+}
+
 # Preview what would be removed. Run this before lfrGitClean.
 lfrGitCleanDry() {
+	case "${1-}" in -h | --help) _lfrGitHelp; return 0 ;; esac
 	git clean -xdn "${_lfrGitCleanExcludes[@]}" "$@"
 }
 
 # Actually remove untracked and ignored files (keeps the excludes above).
 lfrGitClean() {
+	case "${1-}" in -h | --help) _lfrGitHelp; return 0 ;; esac
 	git clean -xdf "${_lfrGitCleanExcludes[@]}" "$@"
 }
 
@@ -49,6 +73,7 @@ _lfrGitForkOrg() {
 # Sync a team fork's liferay-portal from upstream. Pass a fork org to override
 # the configured LFR_GIT_FORK_ORG: lfrGitSync [org]
 lfrGitSync() {
+	case "${1-}" in -h | --help) _lfrGitHelp; return 0 ;; esac
 	local org
 	org="$(_lfrGitForkOrg "${1-}")" || return 1
 	gh repo sync "${org}/liferay-portal" \
@@ -58,6 +83,7 @@ lfrGitSync() {
 # Sync a team fork's liferay-portal-ee master from upstream. Pass a fork org to
 # override the configured LFR_GIT_FORK_ORG: lfrGitSyncEE [org]
 lfrGitSyncEE() {
+	case "${1-}" in -h | --help) _lfrGitHelp; return 0 ;; esac
 	local org
 	org="$(_lfrGitForkOrg "${1-}")" || return 1
 	gh repo sync "${org}/liferay-portal-ee" --branch master \
@@ -66,6 +92,7 @@ lfrGitSyncEE() {
 
 # Interactive rebase over the last N commits (default 20).
 lfrGitRebase() {
+	case "${1-}" in -h | --help) _lfrGitHelp; return 0 ;; esac
 	git rebase -i "HEAD~${1:-20}"
 }
 
@@ -156,6 +183,7 @@ lfrGitUpdateMaster() {
 	local -a pos=()
 	for a in "$@"; do
 		case "${a}" in
+		-h | --help) _lfrGitHelp; return 0 ;;
 		-r | --rebase) rebase=1 ;;
 		-f | --force-rebase) force_rebase=1; rebase=1 ;;
 		-p | --push) push_branch=1; rebase=1 ;;

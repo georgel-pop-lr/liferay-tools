@@ -184,12 +184,29 @@ lfrBundle() {
 		return 0
 		;;
 	help | -h | --help)
-		echo "usage: lfrBundle [<bundle>] [start-flags] | status | stop-all"
-		echo "  Shows each bundle's state and toggles the one you pick or name:"
-		echo "  a stopped bundle is started (start-flags like -c or -t are"
-		echo "  forwarded), a running one is stopped. Esc cancels. stop-all stops"
-		echo "  every bundle. Use -t to expose the test connectors for"
-		echo "  testIntegration against the live bundle."
+		cat <<-'EOF'
+			lfrBundle — start or stop a Liferay server bundle (a toggle).
+
+			Usage:
+			  lfrBundle               pick a bundle from a list, then toggle it
+			  lfrBundle <bundle>      toggle the named bundle (by name or path)
+			  lfrBundle <bundle> -d   start it in the mode set by the flags below
+			  lfrBundle status        show every bundle and whether it is running
+			  lfrBundle stop-all       stop every running bundle
+
+			Toggle means a stopped bundle is started and a running one is stopped.
+			Press Esc to cancel the picker.
+
+			Start flags (forwarded to start-liferay.sh, and only when starting):
+			  -d,  --debug        run so a remote debugger can attach
+			  -s,  --suspend      debug, but wait for the debugger before starting
+			  -c,  --clean        wipe the bundle's runtime state AND reset its DB
+			  -cc, --clean-cache  clear only the OSGi/work caches (keeps the DB)
+			  -y,  --yes          with --clean, skip the confirmation prompt
+			  -dbd,--db-docker N  with --clean, reset the DB in docker container N
+			  -t,  --test         expose the Arquillian/DataGuard test connectors,
+			                      so testIntegration can run against the live bundle
+		EOF
 		return 0
 		;;
 	esac

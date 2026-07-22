@@ -11,6 +11,22 @@
 # LFR_WORKTREE_ROOT as a sibling named liferay-portal-<branch>.
 
 lfrWorktree() {
+	case "${1-}" in
+	-h | --help)
+		cat <<-'EOF'
+			lfrWorktree — create a git worktree with a new branch for a ticket.
+
+			Usage:
+			  lfrWorktree <branch>          new worktree + branch off upstream/master
+			  lfrWorktree <branch> <base>   branch off the given base ref instead
+
+			The worktree is created next to your repos as liferay-portal-<branch>
+			and you are moved into it. Run it from inside any liferay-portal clone.
+		EOF
+		return 0
+		;;
+	esac
+
 	local branch="$1"
 	local base="${2:-${LFR_WORKTREE_BASE:-upstream/master}}"
 

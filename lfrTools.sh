@@ -19,9 +19,36 @@ done
 
 unset _lfr_root _lfr_script
 
-# lfrTools — list the tool commands loaded by this entry point.
+# lfrTools — explain the tool commands loaded by this entry point.
 lfrTools() {
-	echo "Liferay tools loaded. Commands:"
-	compgen -A function | grep -E '^lfr[A-Z]' | sort | sed 's/^/  /'
-	echo "Run any with --help (e.g. lfrCache help)."
+	cat <<-'EOF'
+		Liferay helper commands. Run any with -h (or --help) for details.
+
+		Repos and worktrees
+		  lfrRepo       jump to a Liferay repo (picker, or by name)
+		  lfrWorktree   create a git worktree + branch for a ticket
+		  lfrShare      point a repo at an already-built bundle (no rebuild)
+
+		Server bundle
+		  lfrBundle     start or stop a Liferay server (toggle); show status
+		  lfrRunBundle  same as lfrBundle
+
+		Build
+		  lfrAntAll     run `ant all`, refusing if this repo's server is running
+		  lfrCache      share one Gradle build cache across repos/worktrees
+
+		Git
+		  lfrGitClean       delete untracked/ignored files (keep IDE + your props)
+		  lfrGitCleanDry    preview what lfrGitClean would delete
+		  lfrGitSync        sync your team fork's master from upstream
+		  lfrGitSyncEE      same, for liferay-portal-ee
+		  lfrGitRebase      interactive rebase over the last N commits
+		  lfrGitUpdateMaster  refresh master mirrors, optionally rebase your branch
+
+		Pull requests
+		  lfrPulls      list open PRs on the Brian mirror; per-month stats
+
+		Most commands have a short alias (lfrr, lfrw, lfrs, lfrb, lfraa, lfrgc,
+		lfrgcd, lfrgs, lfrgse, lfrgr, lfrgum, lfrp).
+	EOF
 }

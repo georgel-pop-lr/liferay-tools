@@ -9,6 +9,20 @@
 #     lfrRepo -l         # list all repos and their roots, no cd
 
 lfrRepo() {
+	case "${1-}" in
+	-h | --help)
+		cat <<-'EOF'
+			lfrRepo — jump (cd) to a Liferay repo.
+
+			Usage:
+			  lfrRepo          open a picker over every repo under your roots
+			  lfrRepo <name>   jump to the match (picker if more than one matches)
+			  lfrRepo -l       list all repos and their roots, without changing dir
+		EOF
+		return 0
+		;;
+	esac
+
 	if [ "$1" = "-l" ] || [ "$1" = "--list" ]; then
 		_lfrRepoEntries | cut -f2-
 		return 0

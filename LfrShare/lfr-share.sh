@@ -172,8 +172,19 @@ lfrShare() {
 		_lfrShareApply "${repo}" "${bundle}"
 		;;
 	help | --help | -h)
-		echo "usage: lfrShare [toggle] | share [bundle] [repo] | <bundle> [repo] | status [repo] | reset [repo]"
-		echo "  bare lfrShare opens a picker showing each repo's share state; selecting one toggles it."
+		cat <<-'EOF'
+			lfrShare — point a repo/worktree at an already-built bundle, so it runs
+			that bundle without rebuilding (deploy only your changed modules).
+
+			Usage:
+			  lfrShare                    picker of each repo's share state; select to toggle
+			  lfrShare share [bundle] [repo]  pick a bundle and a repo (pickers if omitted)
+			  lfrShare <bundle> [repo]    shorthand: bundle by path/name, repo picker
+			  lfrShare status [repo]      show which bundle the repo(s) point at
+			  lfrShare reset [repo]       restore the repo's original bundle config
+
+			Omit [repo] to use the current repo (or a picker).
+		EOF
 		;;
 	*)
 		# Shorthand: $1 is the bundle (path/name), $2 the optional repo.

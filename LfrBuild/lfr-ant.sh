@@ -38,6 +38,21 @@ _lfrRepoBundleDir() {
 }
 
 lfrAntAll() {
+	case "${1-}" in
+	-h | --help)
+		cat <<-'EOF'
+			lfrAntAll — run `ant all` in this repo, but refuse if this repo's
+			Liferay server is running (a full build while it is up can corrupt the
+			runtime).
+
+			Usage:
+			  lfrAntAll [ant-args]  run `ant all`; extra args are forwarded to ant
+			  lfrAntAll -f          build even if the server is running (--force)
+		EOF
+		return 0
+		;;
+	esac
+
 	local force=0 a
 	local -a antargs=()
 	for a in "$@"; do
