@@ -765,7 +765,11 @@ setup_test_connector() {
 		fi
 
 		# Copy fresh from osgi/test so an updated connector jar is not left stale.
+		# osgi/modules is a scanned dir Liferay creates on boot, but this runs
+		# before boot, so on a never-booted bundle (e.g. a shared bundle, whose
+		# modules come from the shared repo) it may not exist yet: create it.
 		if [ -f "$src" ]; then
+			mkdir -p "$LIFERAY_OSGI_DIR/modules"
 			cp -f "$src" "$dst"
 			echo "$label connector provisioned from osgi/test (--test)"
 		fi
