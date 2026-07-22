@@ -43,6 +43,18 @@ match the portal repo's `app.server.*.properties` ignore rule, so it stays out
 of `git status` and Liferay does not read it (it only reads
 `app.server.$USER.properties`).
 
+It also repoints the **Gradle** deploy target. The running server uses
+`app.server.parent.dir`, but `gradlew deploy` copies into `liferay.home`, which
+lives in the generated (git-ignored) `.gradle/gradle.properties`. Setting only
+the Ant side leaves that stale, so the server runs the shared bundle while
+`gradlew deploy` silently writes into the checkout's own `../../bundles`. So
+`share` also rewrites `liferay.home` (saving the original to
+`.gradle/gradle.properties.lfrshare-bak`) and `reset` restores it. `ant
+setup-sdk` regenerates `.gradle/gradle.properties` and would revert the line;
+re-run `lfrShare share` after a setup-sdk. If the file does not exist yet,
+nothing is written: a later setup-sdk derives `liferay.home` from the
+already-repointed `app.server.parent.dir`.
+
 ## Caveats
 
 A shared bundle runs **one server at a time** (same ports) and holds **one**
