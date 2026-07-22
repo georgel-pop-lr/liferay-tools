@@ -10,3 +10,4 @@ LfrCommon/repos.local.conf
 LfrCache/enabled-repos.txt
 LfrGit/lfr-git.local.conf
 LfrBundle/start-liferay.conf
+LfrPulls/lfr-pulls.local.conf

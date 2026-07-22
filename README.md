@@ -30,6 +30,7 @@ and `lfrs` are interchangeable.
 | `lfrBundle` | `lfrb` | Toggle Liferay bundles: shows each bundle's state and starts the one you pick/name if stopped (forwarding start-flags like `-c`) or stops it if running. Also `lfrBundle status` and `lfrBundle stop-all`. `lfrRunBundle` / `lfrrb` alias it. | `LfrBundle/` |
 | `lfrShare` | `lfrs` | Point a worktree at a shared, already-built bundle (no rebuild to switch). Bare `lfrShare` shows each repo's state and toggles the one you pick. | `LfrShare/` |
 | `lfrAntAll` | `lfraa` | Run `ant all`, but refuse if this repo's Liferay bundle is running (stop it first, or `--force`) | `LfrBuild/` |
+| `lfrPulls` | `lfrp` | List open pull requests on the Brian mirror (yours or all), with an `AHEAD` merge-queue position. Also `lfrPulls week` (`lfrpw`) for your pulls closed in the last days with merged/rejected status, and `lfrPulls stats` (`lfrps`) for per-month counts. | `LfrPulls/` |
 
 Each folder has its own README with the details.
 
@@ -45,3 +46,4 @@ updates without clobbering anyone's local paths.
 | `LfrCache/enabled-repos.txt.example` | `LfrCache/enabled-repos.txt` (or use `lfrCache on`) |
 | `LfrGit/lfr-git.local.conf.example` | `LfrGit/lfr-git.local.conf` |
 | `LfrBundle/start-liferay.conf.example` | `LfrBundle/start-liferay.conf` |
+| `LfrPulls/lfr-pulls.local.conf.example` | `LfrPulls/lfr-pulls.local.conf` |

@@ -1,0 +1,17 @@
+# LfrPulls per-user config. Copy to lfr-pulls.local.conf and set your values.
+# lfr-pulls.local.conf is gitignored, so your settings stay local.
+
+# The repo whose open pull requests to list (owner/name). Defaults to the Brian
+# CI mirror.
+LFR_PULLS_REPO="brianchandotcom/liferay-portal"
+
+# Your fork owner, marking which forwarded PRs are "yours". It is matched against
+# the sender-<owner> in the forwarded head branch. Defaults to LFR_GIT_FORK_ORG
+# if that is set. Use your team fork org, or your GitHub login if you forward
+# from a personal fork.
+LFR_PULLS_MINE_ORG="your-team-fork-org"
+
+# Your GitHub login, marking which directly-opened PRs are "yours". Defaults to
+# the gh-authenticated user. A PR counts as yours if it is forwarded from
+# LFR_PULLS_MINE_ORG or authored by LFR_PULLS_USER.
+LFR_PULLS_USER="your-github-login"
