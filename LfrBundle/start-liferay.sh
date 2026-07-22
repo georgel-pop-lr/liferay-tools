@@ -926,13 +926,15 @@ _status_bar_ports_line() {
 	printf '%s' "$text"
 }
 
-# Lower row: editor URL, then the bundle path, then a stop hint. If the line
-# would overflow, the path is left-truncated with a leading "..." so the
+# Lower row: editor URL, then the bundle path, then a stop hint. The URL uses the
+# LAN IP (so it works both on this machine and from another device on the same
+# network) and falls back to localhost when the IP cannot be resolved. If the
+# line would overflow, the path is left-truncated with a leading "..." so the
 # identifying tail (the bundle folder) stays visible, not the generic leading
 # directories; the hint is dropped first when space is very tight.
 _status_bar_url_line() {
 	local cols="$1"
-	local prefix=" http://localhost:$HTTP_PORT/   |   "
+	local prefix=" http://${LAN_IP:-localhost}:$HTTP_PORT/   |   "
 	local suffix="   |   Ctrl+C stop, +f force "
 	local path="$BUNDLE" budget
 	budget=$((cols - ${#prefix} - ${#suffix}))
@@ -1082,9 +1084,15 @@ export JAVA_HOME="$JDK_PATH"
 export JRE_HOME="$JDK_PATH"
 export PATH="$JDK_PATH/bin:$PATH"
 
+# The primary LAN IP, so the portal can be reached from another device on the
+# same network. Prefer the source address the kernel uses to reach outside (the
+# real outbound interface); fall back to the first hostname -I address.
+LAN_IP="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i <= NF; i++) if ($i == "src") {print $(i + 1); exit}}')"
+[ -z "$LAN_IP" ] && LAN_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+
 echo
 echo "Starting Liferay (Ctrl+C to stop; then press f to force-kill if it hangs)."
-echo "  Editor / portal: http://localhost:$HTTP_PORT/"
+echo "  Editor / portal: http://${LAN_IP:-localhost}:$HTTP_PORT/ (reachable from this machine and other devices on the network)"
 echo "  Logs           : $TOMCAT_DIR/logs/catalina.out"
 echo "  JDK            : $JDK_PATH $JDK_SOURCE"
 if [ -n "$ARQUILLIAN_PORT" ]; then
