@@ -1,14 +1,22 @@
 # lfr-ant.sh — guarded `ant all` (the lfrAntAll command).
 #
 # Loaded via the root lfrTools.sh. Defines lfrAntAll (short alias lfraa): run
-# `ant all` in the current repo, but first refuse if THIS repo's Liferay bundle
-# is running. A full build while that server is up risks partial deploys, locked
-# osgi/state and work/temp, and a corrupt runtime. A bundle from an unrelated
-# checkout is left alone. Pass --force / -f to build anyway. Any extra args are
-# forwarded to `ant all`.
+# `ant all` in the current repo, with three guards:
+#   1. Refuse if THIS repo's Liferay bundle is running. A full build while that
+#      server is up risks partial deploys, locked osgi/state and work/temp, and a
+#      corrupt runtime. A bundle from an unrelated checkout is left alone.
+#   2. Refuse if the target bundle is SHARED via lfrShare. `ant all` rebuilds and
+#      overwrites the bundle it deploys into, so building into a shared bundle
+#      clobbers it for every repo pointing at it (and defeats the point of
+#      sharing, which is to run a prebuilt bundle without rebuilding).
+#   3. Refuse to run two `ant all` at once (machine-wide, per user). Concurrent
+#      full builds thrash and can corrupt the shared Gradle build cache.
+# Pass --force / -f to bypass guards 1 and 2. Guard 3 (one at a time) is always
+# enforced; a stale lock from a dead build is reclaimed automatically. Any extra
+# args are forwarded to `ant all`.
 #
 # Bundle detection (_lfrBundleProcs / _lfrBundleList / _lfrBundlePidForDir) comes
-# from LfrBundle.
+# from LfrBundle; the shared-bundle lookup (_lfrShareReposForBundle) from LfrShare.
 
 # Echo the app-server bundle dir that `ant all` in the current repo deploys into:
 # read app.server.parent.dir from app.server.${USER}.properties (falling back to
@@ -41,13 +49,18 @@ lfrAntAll() {
 	case "${1-}" in
 	-h | --help)
 		cat <<-'EOF'
-			lfrAntAll — run `ant all` in this repo, but refuse if this repo's
-			Liferay server is running (a full build while it is up can corrupt the
-			runtime).
+			lfrAntAll — run `ant all` in this repo, with safety guards.
+
+			Refuses when:
+			  - this repo's Liferay server is running (a full build can corrupt it),
+			  - the target bundle is shared via lfrShare (ant all would overwrite the
+			    shared bundle), or
+			  - another `ant all` is already running (only one at a time).
 
 			Usage:
 			  lfrAntAll [ant-args]  run `ant all`; extra args are forwarded to ant
-			  lfrAntAll -f          build even if the server is running (--force)
+			  lfrAntAll -f          bypass the running-server and shared-bundle guards
+			                        (--force); the one-at-a-time lock still applies
 		EOF
 		return 0
 		;;
@@ -62,25 +75,63 @@ lfrAntAll() {
 		esac
 	done
 
+	local mine
+	mine="$(_lfrRepoBundleDir)" || mine=""
+
+	# Guard 1: refuse if this repo's bundle (or, if unresolved, any bundle) runs.
 	if [ "${force}" != 1 ] && declare -F _lfrBundleProcs >/dev/null 2>&1; then
-		local mine pid
-		mine="$(_lfrRepoBundleDir)"
+		local pid
 		if [ -n "${mine}" ] && declare -F _lfrBundlePidForDir >/dev/null 2>&1; then
-			# We know which bundle this repo deploys into: only that one matters.
 			if pid="$(_lfrBundlePidForDir "${mine}")"; then
 				echo "lfrAntAll: this repo's bundle is running (PID ${pid}). Stop it first (lfrBundle), or pass --force:" >&2
 				printf '  %s\n' "${mine}" >&2
 				return 1
 			fi
 		elif [ -n "$(_lfrBundleProcs)" ]; then
-			# Could not resolve this repo's bundle; block on any running bundle.
 			echo "lfrAntAll: a Liferay bundle is running. Stop it first (lfrBundle), or pass --force:" >&2
 			_lfrBundleList >&2
 			return 1
 		fi
 	fi
 
-	ant all "${antargs[@]}"
+	# Guard 2: refuse if the target bundle is shared via lfrShare, since a full
+	# build overwrites it for every repo that points at it.
+	if [ "${force}" != 1 ] && [ -n "${mine}" ] && declare -F _lfrShareReposForBundle >/dev/null 2>&1; then
+		local sharers
+		sharers="$(_lfrShareReposForBundle "${mine}")"
+		if [ -n "${sharers}" ]; then
+			echo "lfrAntAll: target bundle is shared via lfrShare by: ${sharers}" >&2
+			echo "  A full 'ant all' would rebuild and overwrite it. Reset the share first (lfrShare reset), or pass --force:" >&2
+			printf '  %s\n' "${mine}" >&2
+			return 1
+		fi
+	fi
+
+	# Guard 3: one `ant all` at a time, machine-wide per user. A mkdir lock (not a
+	# held-open flock fd, which a lingering Gradle daemon could inherit and never
+	# release); a stale lock whose holder has died is reclaimed.
+	local lockdir="${TMPDIR:-/tmp}/lfr-ant-all.${USER}.lock.d"
+	if ! mkdir "${lockdir}" 2>/dev/null; then
+		local holder
+		holder="$(cat "${lockdir}/pid" 2>/dev/null)"
+		if [ -n "${holder}" ] && kill -0 "${holder}" 2>/dev/null; then
+			echo "lfrAntAll: another 'ant all' is already running; only one at a time." >&2
+			[ -f "${lockdir}/info" ] && sed 's/^/  /' "${lockdir}/info" >&2
+			return 3
+		fi
+		echo "lfrAntAll: clearing a stale ant-all lock (holder ${holder:-?} is gone)." >&2
+		rm -rf "${lockdir}"
+		mkdir "${lockdir}" 2>/dev/null || { echo "lfrAntAll: could not acquire lock ${lockdir}" >&2; return 1; }
+	fi
+
+	# Run under the lock in a subshell so its cleanup trap is local and fires on
+	# normal exit or interrupt, releasing the lock either way.
+	(
+		trap 'rm -rf "${lockdir}"' EXIT INT TERM
+		echo "${BASHPID}" >"${lockdir}/pid"
+		printf 'pid %s, repo %s, since %s\n' "${BASHPID}" "${mine:-${PWD}}" "$(date '+%F %T')" >"${lockdir}/info"
+		ant all "${antargs[@]}"
+	)
 }
 
 # Short alias.

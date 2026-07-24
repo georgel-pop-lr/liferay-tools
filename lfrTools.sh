@@ -34,7 +34,7 @@ lfrTools() {
 		  lfrRunBundle  same as lfrBundle
 
 		Build
-		  lfrAntAll     run `ant all`, refusing if this repo's server is running
+		  lfrAntAll     run `ant all`, guarded (running server, shared bundle, one at a time)
 		  lfrCache      share one Gradle build cache across repos/worktrees
 
 		Git
