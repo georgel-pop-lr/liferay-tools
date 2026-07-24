@@ -273,10 +273,13 @@ the running server (instead of a managed one the test boots itself):
 lfrBundle <name> -t
 ```
 
-The Arquillian and DataGuard connectors ship in `osgi/test`, which a normal
-launcher boot never scans, so by default they never start. With `--test` the
-launcher copies each connector jar from `osgi/test` into `osgi/modules` (a scanned
-dir) so it starts on boot, and seeds its `.config` with a **per-instance port
+The test-support bundles (`com.liferay.portal.test`, which exports
+`com.liferay.portal.kernel.test`, the `*.test.util` jars, and the Arquillian and
+DataGuard connectors) all ship in `osgi/test`, which a normal launcher boot never
+scans, so by default none of them start. With `--test` the launcher adds
+`osgi/test` to `module.framework.auto.deploy.dirs` (via `portal-ext.properties`)
+so the whole set is scanned **in place** — exactly what a managed `testIntegration`
+boot does — and seeds each connector's `.config` with a **per-instance port
 derived from the HTTP offset**:
 
 | HTTP | Arquillian | DataGuard |
@@ -298,17 +301,17 @@ Run the tests against the printed port:
 gradlew testIntegration --tests <Class> -Dliferay.arquillian.port=32764
 ```
 
-Without `--test` the launch is lean: an auto-provisioned connector (still present
-in `osgi/test`, so nothing is lost) is removed from `osgi/modules` along with its
-seeded config, so a plain boot never runs the test infra.
+Without `--test` the launch is lean: the `osgi/test` scan override is removed and
+each connector's seeded config is dropped, so a plain boot never runs the test
+infra (nothing is lost — everything stays in `osgi/test`).
 
-The **DataGuard** connector is only provisioned when its provider,
-`com.liferay.portal.test.jar` (which exports `com.liferay.portal.kernel.test`), is
-already deployed in a scanned dir (`osgi/portal` or `osgi/modules`). On a stock
-bundle that jar lives only in `osgi/test`, so DataGuard would fail to resolve on a
-launcher boot; there it is skipped instead. Arquillian has no such dependency, so
-it is always provisioned. This keeps DataGuard on test-enabled bundles without a
-boot error on stock ones.
+The connectors are **not** copied into `osgi/modules`. Once `osgi/test` is scanned,
+a second copy of the same bundle in another scanned dir is a duplicate (same
+symbolic name and version) that fails Declarative Services with `Component
+descriptor entry ... not found`. Seeding the `.config` is enough, since
+`osgi/configs` is always scanned. For the same reason, `--test` clears any
+`osgi/test` jar left behind in `osgi/modules` (from a prior copy-based `--test` or
+a manual copy) before boot, keeping a single authoritative copy in `osgi/test`.
 
 ### Clean start
 
@@ -401,12 +404,12 @@ redirected, it just `exec`s Tomcat.)
    HTTP offset (deterministic) rather than scanned — this is what lets two bundles
    run at once. Also sets `portal.instance.inet.socket.address` to the resolved
    HTTP port, and remaps Glowroot's web port in `glowroot/admin.json` if present.
-   The Arquillian/DataGuard test connectors are handled only under `--test` (see
+   The test-support bundles are handled only under `--test` (see
    [Test mode](#test-mode---test-testintegration-against-a-live-bundle)): with the
-   flag they are copied from `osgi/test` into `osgi/modules` and seeded a
+   flag `osgi/test` is added to the module scan and each connector is seeded a
    per-instance port from the HTTP offset (`32763`/`42763` at 8080, `32764`/`42764`
-   at 8081); without it a launch is lean and any previously provisioned connector
-   is removed, so a normal boot never starts the test infra.
+   at 8081); without it a launch is lean (the scan override is removed), so a
+   normal boot never starts the test infra.
 4. **Backs up `tomcat/conf/server.xml`** to
    `server.xml.bak.<yyyymmdd-hhmmss>` and rewrites the connector ports —
    only when at least one port differs from what's already in the file.

@@ -16,7 +16,7 @@
 #   start-liferay.sh --clean --yes (-y)           # picker, clean without prompting, start
 #   start-liferay.sh --clean --db-docker (-dbd) pg-db  # reset DB via docker exec, then start
 #   start-liferay.sh --clean-cache (-cc)          # picker, then clear caches only (no DB)
-#   start-liferay.sh --test (-t)                  # expose the Arquillian/DataGuard test connectors (testIntegration against a live bundle)
+#   start-liferay.sh --test (-t)                  # scan osgi/test so the bundle is a testIntegration target (Arquillian/DataGuard + test-support)
 #
 # DEBUG mode runs Tomcat via 'catalina.sh jpda run' so a remote debugger can
 # attach. The JPDA port defaults to 8000, with the same auto-bump behaviour as
@@ -43,11 +43,12 @@
 # (the full wipe) wins.
 #
 # TEST mode (--test / -t) makes the bundle a target for testIntegration against a
-# live server: it copies the Arquillian and DataGuard connectors from osgi/test
-# into osgi/modules so they start on boot, and seeds each a per-instance port from
-# the HTTP offset (8080 -> 32763, 8081 -> 32764, ...), so parallel test bundles
-# never clash. Without it the bundle stays lean and any previously provisioned
-# connector is removed. Run tests with -Dliferay.arquillian.port=<the printed port>.
+# live server: it adds osgi/test to module.framework.auto.deploy.dirs so the whole
+# test-support set (com.liferay.portal.test, the *.test.util jars, and the
+# Arquillian/DataGuard connectors) is scanned in place, and seeds each connector a
+# per-instance port from the HTTP offset (8080 -> 32763, 8081 -> 32764, ...), so
+# parallel test bundles never clash. Without it the bundle stays lean (the scan
+# override is removed). Run tests with -Dliferay.arquillian.port=<the printed port>.
 #
 # Database location is handled in this order: a Docker DB that publishes its
 # port to the host is reached by the normal host:port path; if that host reset
@@ -719,76 +720,47 @@ OSGI_CONSOLE_PORT=$(choose_port "$OSGI_CONSOLE_DEFAULT")
 export LIFERAY_MODULE_PERIOD_FRAMEWORK_PERIOD_PROPERTIES_PERIOD_OSGI_PERIOD_CONSOLE="localhost:$OSGI_CONSOLE_PORT"
 
 # The Arquillian and DataGuard test connectors let a testIntegration run connect
-# to a LIVE launcher bundle instead of a managed one. They ship in osgi/test,
-# which a launcher boot never scans (osgi/test is not in
+# to a LIVE launcher bundle instead of a managed one. Together with the rest of
+# the test-support bundles (com.liferay.portal.test, which exports
+# com.liferay.portal.kernel.test, and the *.test.util jars) they ship in
+# osgi/test, which a launcher boot never scans (osgi/test is not in
 # module.framework.auto.deploy.dirs), so they are off by default and dev bundles
-# stay lean. Pass --test/-t to make a bundle a test target: the connector jar is
-# copied from osgi/test into osgi/modules (a scanned dir) so it starts on boot,
-# and its .config is seeded with a per-instance port from the HTTP offset.
+# stay lean. Pass --test/-t to make a bundle a test target: osgi/test is added to
+# the scan (see the deploy-dirs override further below) so every test-support
+# bundle resolves in place, and each connector's .config is seeded with a
+# per-instance port from the HTTP offset.
+#
+# We do NOT copy the connectors into osgi/modules: with osgi/test scanned, a
+# second copy of the same bundle in another scanned dir is a duplicate (same
+# symbolic name + version) that fails Declarative Services with "Component
+# descriptor entry not found". Seeding the .config is enough, since osgi/configs
+# is always scanned.
 #
 # The offset keeps the default 8080 bundle on the default 32763 (so a managed
 # testIntegration, which targets 32763 unless -Dliferay.arquillian.port is passed,
 # still connects) while a parallel 8081 bundle lands on 32764, etc., so two live
 # test bundles never clash on the fixed ports (the old System.exit(-10) failure).
-# Without --test we go lean: an auto-provisioned connector (still present in
-# osgi/test, so nothing is lost) is removed from osgi/modules along with its
-# seeded .config, so a plain launch never runs the test infra.
-bundle_has_module() {
-	compgen -G "$LIFERAY_OSGI_DIR/modules/$1" >/dev/null 2>&1
-}
 
-# Provision (with --test) or de-provision (without) one connector, then seed its
-# port when it is in osgi/modules. $1 label, $2 jar name, $3 config PID
-# (filename), $4 default port, $5 name of the out variable (empty when off),
-# $6 optional guard jar that must be deployed in a scanned dir for the connector
-# to be provisioned (its dependency provider).
-setup_test_connector() {
-	local label="$1" jar="$2" pid="$3" default="$4" outvar="$5" guard="${6:-}" port
+# Seed one connector's per-instance port (its .config lives in osgi/configs, an
+# always-scanned dir). With --test the connector deploys from the now-scanned
+# osgi/test; a plain launch drops the seeded config so the infra never starts.
+# $1 label, $2 jar name, $3 config PID (filename), $4 default port, $5 out-var name.
+seed_test_connector() {
+	local label="$1" jar="$2" pid="$3" default="$4" outvar="$5" port
 	local src="$LIFERAY_OSGI_DIR/test/$jar"
-	local dst="$LIFERAY_OSGI_DIR/modules/$jar"
 	local config="$LIFERAY_OSGI_DIR/configs/$pid.config"
 
-	if [ "$TEST" = 1 ]; then
-		# A connector with a guard jar only resolves when that provider is already
-		# deployed in a scanned dir. DataGuard imports com.liferay.portal.kernel.test
-		# from com.liferay.portal.test, which on a stock bundle lives only in
-		# osgi/test (never scanned on a launcher boot), so provisioning DataGuard
-		# there just yields an unresolved-import error. Provision it only when the
-		# guard is present (a test-enabled bundle that keeps it in osgi/portal), and
-		# otherwise skip it (dropping any stale copy) rather than boot with the error.
-		if [ -n "$guard" ] &&
-		   [ ! -f "$LIFERAY_OSGI_DIR/portal/$guard" ] &&
-		   [ ! -f "$LIFERAY_OSGI_DIR/modules/$guard" ]; then
-			rm -f "$dst" "$config"
-			echo "$label connector skipped: provider $guard not deployed (only in osgi/test); needs a managed testIntegration boot"
-			return 0
-		fi
-
-		# Copy fresh from osgi/test so an updated connector jar is not left stale.
-		# osgi/modules is a scanned dir Liferay creates on boot, but this runs
-		# before boot, so on a never-booted bundle (e.g. a shared bundle, whose
-		# modules come from the shared repo) it may not exist yet: create it.
-		if [ -f "$src" ]; then
-			mkdir -p "$LIFERAY_OSGI_DIR/modules"
-			cp -f "$src" "$dst"
-			echo "$label connector provisioned from osgi/test (--test)"
-		fi
-	elif [ -f "$dst" ] && [ -f "$src" ]; then
-		# Lean launch: drop the auto-provisioned duplicate and its seeded config.
-		# Only when it also lives in osgi/test, so a connector that genuinely
-		# ships in osgi/modules is left untouched.
-		rm -f "$dst" "$config"
-		echo "$label connector removed for a non-test launch (kept in osgi/test)"
+	if [ "$TEST" != 1 ]; then
+		rm -f "$config"
+		return 0
 	fi
-
-	bundle_has_module "$jar" || return 0
+	[ -f "$src" ] || return 0
 
 	# Deterministic offset from the (already de-conflicted) HTTP port, NOT
 	# choose_port: distinct HTTP ports already give distinct connector ports, and
 	# a fixed mapping keeps the default 8080 bundle on the default 32763 so a
-	# managed testIntegration (which targets 32763 unless -Dliferay.arquillian.port
-	# is passed) still connects. choose_port would bump it whenever a sibling
-	# transiently holds the port, desyncing exactly that case.
+	# managed testIntegration still connects. choose_port would bump it whenever a
+	# sibling transiently holds the port, desyncing exactly that case.
 	port=$((default + HTTP_PORT - HTTP_DEFAULT))
 	printf 'port="%s"\n' "$port" >"$config"
 	printf -v "$outvar" '%s' "$port"
@@ -797,15 +769,14 @@ setup_test_connector() {
 
 ARQUILLIAN_PORT=""
 DATA_GUARD_PORT=""
-setup_test_connector "Arquillian" \
+seed_test_connector "Arquillian" \
 	"com.liferay.arquillian.extension.junit.bridge.connector.jar" \
 	"com.liferay.arquillian.extension.junit.bridge.connector.ArquillianConnector" \
 	"$ARQUILLIAN_DEFAULT" ARQUILLIAN_PORT
-setup_test_connector "DataGuard" \
+seed_test_connector "DataGuard" \
 	"com.liferay.data.guard.connector.jar" \
 	"com.liferay.data.guard.connector.DataGuardConnector" \
-	"$DATA_GUARD_DEFAULT" DATA_GUARD_PORT \
-	"com.liferay.portal.test.jar"
+	"$DATA_GUARD_DEFAULT" DATA_GUARD_PORT
 [ -n "$ARQUILLIAN_PORT$DATA_GUARD_PORT" ] && echo
 
 # The embedded Elasticsearch sidecar binds a transport port (default 9300) late
@@ -873,6 +844,42 @@ set_portal_ext_prop "$LIFERAY_HOME/portal-ext.properties" \
 	portal.instance.inet.socket.address "localhost:$HTTP_PORT"
 echo "portal.instance.inet.socket.address set to localhost:$HTTP_PORT"
 echo
+
+# Test mode (--test) needs the test-support bundles — com.liferay.portal.test
+# (exports com.liferay.portal.kernel.test), the *.test.util jars, and the
+# Arquillian/DataGuard connectors — on the module path so a testIntegration run
+# against this live bundle can resolve their imports. They ship in osgi/test,
+# which a launcher boot never scans. Rather than copy ~70 jars into osgi/modules
+# (stale copies, and a duplicate of anything already there fails DS with
+# "Component descriptor entry not found"), scan osgi/test in place — exactly like a
+# managed testIntegration boot — by adding it to module.framework.auto.deploy.dirs.
+# Without --test we remove the override so a plain boot stays lean.
+portal_ext="$LIFERAY_HOME/portal-ext.properties"
+if [ "$TEST" = 1 ]; then
+	set_portal_ext_prop "$portal_ext" module.framework.auto.deploy.dirs \
+		'${module.framework.client.extensions.dir},${module.framework.configs.dir},${module.framework.marketplace.dir},${module.framework.modules.dir},${module.framework.portal.dir},${module.framework.portal.war.dir},${module.framework.base.dir}/test'
+	echo "module.framework.auto.deploy.dirs set to scan osgi/test (--test)"
+
+	# With osgi/test scanned, any copy of an osgi/test jar left in osgi/modules is a
+	# duplicate bundle (same symbolic name + version) that fails DS with "Component
+	# descriptor entry not found". Remove those copies; the originals stay in
+	# osgi/test. This also cleans up jars a prior copy-based --test, or a manual
+	# copy, left behind.
+	cleared=0
+	for src in "$LIFERAY_OSGI_DIR"/test/*.jar; do
+		[ -f "$src" ] || continue
+		dup="$LIFERAY_OSGI_DIR/modules/$(basename "$src")"
+		if [ -f "$dup" ]; then
+			rm -f "$dup"
+			cleared=$((cleared + 1))
+		fi
+	done
+	[ "$cleared" -gt 0 ] && echo "Cleared $cleared duplicate test jar(s) from osgi/modules (kept in osgi/test)"
+	echo
+elif [ -f "$portal_ext" ]; then
+	# Lean launch: stop scanning osgi/test.
+	sed -i -E '/^[[:space:]]*module\.framework\.auto\.deploy\.dirs=/d' "$portal_ext"
+fi
 
 print_port() {
 	local label=$1
