@@ -271,8 +271,14 @@ lfrGitUpdateMaster() {
 		return 0
 	fi
 
+	# -f (--force-rebase) recreates the commits even when the branch already sits
+	# on the target: plain `git rebase` no-ops there ("up to date"), so pass the
+	# flag through to git rather than only bypassing the early-return above.
+	local force_flag=""
+	[ "${force_rebase}" = 1 ] && force_flag="--force-rebase"
+
 	echo "Rebasing ${cur} onto ${target}..."
-	if ! git rebase "${target}"; then
+	if ! git rebase ${force_flag} "${target}"; then
 		echo "lfrGitUpdateMaster: rebase stopped (resolve conflicts, then push yourself); skipping -p." >&2
 		return 1
 	fi
