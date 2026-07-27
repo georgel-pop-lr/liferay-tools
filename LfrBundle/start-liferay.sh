@@ -626,6 +626,14 @@ LIFERAY_OSGI_DIR="$LIFERAY_HOME/osgi"
 ELASTIC_TARGET_DIR="$LIFERAY_OSGI_DIR/configs"
 mkdir -p "$ELASTIC_TARGET_DIR"
 
+# Liferay's WabGenerator toRealPath()s osgi/war and osgi/portal-war at portal init
+# (WabGenerator.activate -> _getRequiredForStartupContextPaths) to scan them for
+# startup-ordered WARs. On a bundle where no WAR was ever deployed, osgi/war does
+# not exist, so boot logs a NoSuchFileException (harmless but noisy, and it recurs
+# after every --clean since these dirs are never recreated). Pre-create both as
+# empty dirs so the scan finds nothing instead of throwing.
+mkdir -p "$LIFERAY_OSGI_DIR/war" "$LIFERAY_OSGI_DIR/portal-war"
+
 bundle_has_elasticsearch7() {
 	compgen -G "$LIFERAY_OSGI_DIR/portal/com.liferay.portal.search.elasticsearch7.impl.jar" >/dev/null 2>&1 ||
 		compgen -G "$LIFERAY_OSGI_DIR/modules/com.liferay.portal.search.elasticsearch7.impl.jar" >/dev/null 2>&1
