@@ -21,7 +21,8 @@ and `lfrs` are interchangeable.
 | Command | Short | What it does | Folder |
 | --- | --- | --- | --- |
 | `lfrRepo` | `lfrr` | Jump between Liferay repos with a picker | `LfrRepo/` |
-| `lfrWorktree` | `lfrw` | Create a git worktree off a base ref | `LfrRepo/` |
+| `lfrWorktree` | `lfrw` | Create a git worktree off a base ref, wired to its own bundle and database (per-user props copied and repointed, bundle dir created with `portal-ext.properties` on `portal-<branch>`) | `LfrRepo/` |
+| `lfrWorktreeRemove` | `lfrwr` | Remove a worktree, its branch, and its bundle dir when unused. Refuses while that bundle's Tomcat runs; never drops the database. Takes `[--force]` | `LfrRepo/` |
 | `lfrCache` | `lfrc` | Share one Gradle build cache across repos/worktrees: build master once, and the others reuse its compiled modules instead of rebuilding. Bare `lfrCache` shows each repo's state and toggles the one you pick. | `LfrCache/` |
 | `lfrGitClean` / `lfrGitCleanDry` | `lfrgc` / `lfrgcd` | Safe `git clean` keeping IDE and per-user props | `LfrGit/` |
 | `lfrGitSync` / `lfrGitSyncEE` | `lfrgs` / `lfrgse` | Sync a fork from upstream (optional `[org]`, defaults to your configured fork) | `LfrGit/` |
