@@ -12,8 +12,11 @@ fi
 # repos.local.conf. Mirrors LFR_REPO_PRIORITY for repos.
 [ -z "${LFR_BUNDLES_PRIORITY+x}" ] && LFR_BUNDLES_PRIORITY=("liferay-bundle-master" "liferay-bundle")
 
-# Emit "<path>\t<name>  (<root>)" for every bundle-looking dir under the roots,
+# Emit "<path>\t<name>  (<root>)" for every launchable Tomcat bundle under the
+# roots (a Tomcat dir directly or under liferay-dxp/, matching start-liferay.sh),
 # with LFR_BUNDLES_PRIORITY prefixes sorted first (stable within each rank).
+# Empty shells (a bare .liferay-home, no server) and non-Tomcat (Wildfly/JBoss)
+# bundles are skipped, since lfrBundle only launches Tomcat.
 _lfrBundleEntries() {
 	local root d name rank i seq=0
 	{
@@ -21,7 +24,7 @@ _lfrBundleEntries() {
 			[ -d "${root}" ] || continue
 			for d in "${root}"/*/; do
 				[ -d "${d}" ] || continue
-				if compgen -G "${d}tomcat*" >/dev/null 2>&1 || [ -e "${d}.liferay-home" ] || [ -d "${d}liferay-dxp" ]; then
+				if compgen -G "${d}tomcat*" >/dev/null 2>&1 || compgen -G "${d}liferay-dxp/tomcat*" >/dev/null 2>&1; then
 					name="$(basename "${d}")"
 					rank=9999
 					for i in "${!LFR_BUNDLES_PRIORITY[@]}"; do
