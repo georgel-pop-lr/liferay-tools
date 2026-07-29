@@ -43,26 +43,34 @@ _lfrRepoEntries() {
 
 # Generic picker. Reads "value<TAB>label" lines from stdin, shows the labels in
 # fzf (or a numbered menu), and echoes the chosen value. $1 is the prompt, $2 an
-# optional query that prefilters and auto-selects on a single match. Used by the
-# repo picker below and by other tools (e.g. lfrShare's bundle picker).
+# optional query that prefilters and auto-selects on a single match, $3 an
+# optional preview command (fzf only; it runs in a plain shell, so it can use
+# {1} for the highlighted line's value but not our shell functions), $4 an
+# optional toolbar of key hints, drawn on the bottom border (printed above the
+# menu in the fzf-less fallback). Used by the repo picker below and by other
+# tools (e.g. lfrShare's bundle picker).
 _lfrPick() {
-	local prompt="${1:-> }" query="${2:-}" input selection
+	local prompt="${1:-> }" query="${2:-}" preview="${3:-}" toolbar="${4:-}" input selection
+	local -a fzfArgs=(
+		--delimiter=$'\t'
+		--exit-0
+		--height=40%
+		--prompt="${prompt}"
+		--query="${query}"
+		--reverse
+		--select-1
+		--with-nth=2..
+	)
 
 	input="$(cat)"
 	[ -z "${input}" ] && return 1
 
+	[ -n "${preview}" ] && fzfArgs+=(--preview="${preview}" --preview-window='right,60%,wrap')
+	[ -n "${toolbar}" ] &&
+		fzfArgs+=(--border=sharp --border-label=" ${toolbar} " --border-label-pos=bottom)
+
 	if command -v fzf >/dev/null 2>&1; then
-		selection="$(
-			printf '%s\n' "${input}" | fzf \
-				--delimiter=$'\t' \
-				--exit-0 \
-				--height=40% \
-				--prompt="${prompt}" \
-				--query="${query}" \
-				--reverse \
-				--select-1 \
-				--with-nth=2..
-		)"
+		selection="$(printf '%s\n' "${input}" | fzf "${fzfArgs[@]}")"
 		[ -z "${selection}" ] && return 1
 		printf '%s\n' "${selection%%$'\t'*}"
 		return 0
@@ -85,7 +93,7 @@ _lfrPick() {
 		fi
 	fi
 
-	echo "Select:" >&2
+	printf '%s\n' "${toolbar:-Select:}" >&2
 	local choice
 	select choice in "${labels[@]}"; do
 		[ -n "${choice}" ] || continue

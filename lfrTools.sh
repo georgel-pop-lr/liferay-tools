@@ -45,10 +45,13 @@ lfrTools() {
 		  lfrGitRebase      interactive rebase over the last N commits
 		  lfrGitUpdateMaster  refresh master mirrors, optionally rebase your branch
 
+		Code
+		  lfrCodeView   pick a commit (or your local changes) and diff it
+
 		Pull requests
 		  lfrPulls      list open PRs on the Brian mirror; per-month stats
 
 		Most commands have a short alias (lfrr, lfrw, lfrs, lfrb, lfraa, lfrgc,
-		lfrgcd, lfrgs, lfrgse, lfrgr, lfrgum, lfrp).
+		lfrgcd, lfrgs, lfrgse, lfrgr, lfrgum, lfrcv, lfrp).
 	EOF
 }
