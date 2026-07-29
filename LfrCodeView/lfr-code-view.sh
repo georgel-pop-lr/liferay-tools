@@ -4,9 +4,10 @@
 #     lfrCodeView   pick a commit (or your local changes) from a picker and diff it
 #
 # The picker lists your local changes, the whole branch against its base, and one
-# line per commit the branch adds, previewing each entry's diffstat. Picking one
-# runs `git show` / `git diff` in your pager; quitting the pager brings the picker
-# back, so one lfrCodeView reads through a whole change.
+# line per commit the branch adds (up to 50), previewing each entry's diffstat.
+# Picking one runs `git show` / `git diff` in your pager; from there the left arrow
+# (or b) comes back to the list, on the same entry, and q ends it. So one
+# lfrCodeView reads through a whole change, diff by diff.
 #
 # With -a it lists a ticket's commits across every ref instead (the copy on
 # master, the backports on release branches). The ticket defaults to the one in
@@ -23,24 +24,29 @@ _lfrCodeViewHelp() {
 		                            backports too (ticket defaults to the one in
 		                            the branch name, LPD-12345-fix -> LPD-12345)
 
-		The picker (fzf, or a numbered menu) lists, leaving out what does not apply,
-		and previews the highlighted entry's diffstat:
+		The picker lists, leaving out what does not apply, and previews the
+		highlighted entry's diffstat:
 
 		  local  uncommitted   git diff HEAD, then each untracked file
 		  branch vs <base>     git diff <base>...HEAD, all the branch adds
-		  <sha> <date> <sub>   git show <sha>, one line per commit
+		  <sha> <date> <sub>   git show <sha>, one line per commit, 50 at most
 
-		A toolbar of the keys sits on the bottom line of both views:
+		A toolbar of the keys sits on the bottom line of both views, and the arrows
+		drive the whole thing:
 
-		  in the list   enter view    esc quit
-		  in a diff     b back to the list    q quit
+		  in the list   up/down move    right or enter view    left or esc quit
+		  in a diff     left or b back to the list    q quit
 
-		So it loops through as many diffs as you want until you close it. b works
-		inside the diff itself (it is rebound in the pager), no need to leave it
-		first. Nothing is written: no index, stash, or checkout.
+		So it loops through as many diffs as you want until you close it. Going back
+		works inside the diff itself (left and b are rebound in the pager), no need
+		to leave it first, and the list reopens on the entry you just read rather
+		than at the top, so walking a branch commit by commit is left, down, right.
+		Nothing is written: no index, stash, or checkout.
 
-		b needs less 582 or newer, which is the pager unless you set GIT_PAGER or
-		PAGER; with another pager the same choice is asked once it exits.
+		That rebinding needs less 582 or newer, which is the pager unless you set
+		GIT_PAGER or PAGER; with another pager the same choice is asked once it
+		exits. The list keys are fzf's; without fzf it is a numbered menu you
+		answer with a number, and only the diff keys apply.
 
 		The branch listing has no ticket filter on purpose: every commit on top of
 		the base is the change. The ticket only matters for -a.
@@ -70,12 +76,12 @@ _lfrCodeViewCommits() {
 	git log --max-count=50 --format=$'commit:%H\t%h  %cd  %s' --date=format:'%Y-%m-%d' "$@"
 }
 
-# Echo the path of a lesskey file that rebinds b to "quit with status 98" (the
-# code of b itself), so pressing b inside a diff sends us back to the list while q
-# still just quits. Written once per machine, in source form, which less reads
-# from LESSKEYIN since 582. Fails when the pager is not less, when less is older
-# than that, or when the file cannot be written; the caller then asks after the
-# pager exits instead.
+# Echo the path of a lesskey file that rebinds b and the left arrow to "quit with
+# status 98" (the code of b itself), so either one sends us back to the list from
+# inside a diff while q still just quits. Written once per machine, in source form,
+# which less reads from LESSKEYIN since 582. Fails when the pager is not less, when
+# less is older than that, or when the file cannot be written; the caller then asks
+# after the pager exits instead.
 _lfrCodeViewKeys() {
 	local pager="${GIT_PAGER:-${PAGER:-less}}" version file
 
@@ -84,8 +90,14 @@ _lfrCodeViewKeys() {
 	version="$(less --version 2>/dev/null | grep -oE '[0-9]+' | head -1)"
 	[ -n "${version}" ] && [ "${version}" -ge 582 ] || return 1
 
+	# \kl is lesskey's name for the left arrow, which resolves to the terminfo
+	# sequence (ESC O D, since less puts the keypad in transmit mode); ESC [ D is the
+	# same key on a terminal that did not switch, so bind both. Rebinding it costs
+	# only left horizontal scrolling, which diffs (wrapped by default) do not use,
+	# and ESC-( still does that. Rewritten every time, so an older file from a
+	# previous version cannot linger.
 	file="${TMPDIR:-/tmp}/lfr-code-view.${USER:-user}.lesskey"
-	[ -s "${file}" ] || printf '#command\nb quit b\n' >"${file}" 2>/dev/null || return 1
+	printf '#command\nb quit b\n\\kl quit b\n\\e[D quit b\n' >"${file}" 2>/dev/null || return 1
 
 	printf '%s\n' "${file}"
 }
@@ -94,16 +106,24 @@ _lfrCodeViewKeys() {
 # Enter) so the caller loops, fails on anything else so it leaves. Only needed for
 # pagers we cannot bind b in (see _lfrCodeViewKeys).
 _lfrCodeViewAgain() {
-	local key
+	local key rest
 
 	[ -t 0 ] || return 1
 
-	printf '\n[b] back to the list   [q] quit > ' >&2
+	printf '\n[<- or b] back to the list   [q] quit > ' >&2
 	read -rsn1 key
+
+	# An arrow arrives as ESC plus two more bytes, so pick those up before deciding;
+	# a bare Esc (nothing follows) stays a quit.
+	if [ "${key}" = $'\e' ]; then
+		read -rsn2 -t 0.2 rest
+		key="${key}${rest}"
+	fi
+
 	printf '\n' >&2
 
 	case "${key}" in
-	b | B | '') return 0 ;;
+	b | B | '' | $'\e[D' | $'\eOD') return 0 ;;
 	*) return 1 ;;
 	esac
 }
@@ -133,7 +153,7 @@ _lfrCodeViewDiff() {
 # stay in the loop (b), 1 to leave (q).
 _lfrCodeViewPage() {
 	local value="${1}" base="${2}" keys
-	local toolbar='  b back to the list    q quit    ?pB%pB\%..'
+	local toolbar='  <- or b  back to the list     q  quit     ?pB%pB\%..'
 
 	if keys="$(_lfrCodeViewKeys)"; then
 		# No -F: a diff that fits one screen must still wait, or there is nowhere to
@@ -229,12 +249,16 @@ lfrCodeView() {
 		EOF
 	)"
 
-	# One diff after another until you say stop: pick, read it, b for the list
-	# again, q to leave. Esc in the picker leaves too.
-	local value
+	# One diff after another until you say stop: pick, read it, back for the list
+	# again (reopened on the same entry, so going back never loses your place),
+	# quit to leave.
+	local value last=""
 	while true; do
 		value="$(printf '%s\n' "${entries}" | _lfrPick 'view> ' '' "${preview}" \
-			'enter view    esc quit    in a diff: b back, q quit')" || break
+			'up down move    right or enter view    left or esc quit    in a diff: left or b back, q quit' \
+			"${last}")" || break
+
+		last="${value}"
 
 		_lfrCodeViewPage "${value}" "${base}" || break
 	done

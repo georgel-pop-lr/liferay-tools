@@ -46,12 +46,18 @@ _lfrRepoEntries() {
 # optional query that prefilters and auto-selects on a single match, $3 an
 # optional preview command (fzf only; it runs in a plain shell, so it can use
 # {1} for the highlighted line's value but not our shell functions), $4 an
-# optional toolbar of key hints, drawn on the bottom border (printed above the
-# menu in the fzf-less fallback). Used by the repo picker below and by other
-# tools (e.g. lfrShare's bundle picker).
+# optional toolbar of key hints drawn on the bottom border, $5 an optional value
+# to start the cursor on instead of the first line, so a caller that reopens the
+# picker in a loop keeps the entry you were on. The last three are fzf's; the
+# numbered-menu fallback below ignores them, since it is answered with a number.
+# Used by the repo picker below and by other tools (e.g. lfrShare's bundle picker).
 _lfrPick() {
-	local prompt="${1:-> }" query="${2:-}" preview="${3:-}" toolbar="${4:-}" input selection
+	local prompt="${1:-> }" query="${2:-}" preview="${3:-}" toolbar="${4:-}" start="${5:-}"
+	local input selection line
 	local -a fzfArgs=(
+		# Right/Left alias Enter/Esc, so the whole picker can be driven with the
+		# arrow keys: up and down to move, right to take the entry, left to leave.
+		--bind='right:accept,left:abort'
 		--delimiter=$'\t'
 		--exit-0
 		--height=40%
@@ -68,6 +74,13 @@ _lfrPick() {
 	[ -n "${preview}" ] && fzfArgs+=(--preview="${preview}" --preview-window='right,60%,wrap')
 	[ -n "${toolbar}" ] &&
 		fzfArgs+=(--border=sharp --border-label=" ${toolbar} " --border-label-pos=bottom)
+
+	# pos() needs the whole list in, which is what --sync waits for; fzf reads its
+	# input asynchronously otherwise and would move the cursor on a partial list.
+	if [ -n "${start}" ]; then
+		line="$(printf '%s\n' "${input}" | awk -F'\t' -v value="${start}" '$1 == value {print NR; exit}')"
+		[ -n "${line}" ] && fzfArgs+=(--sync --bind="start:pos(${line})")
+	fi
 
 	if command -v fzf >/dev/null 2>&1; then
 		selection="$(printf '%s\n' "${input}" | fzf "${fzfArgs[@]}")"
@@ -93,7 +106,7 @@ _lfrPick() {
 		fi
 	fi
 
-	printf '%s\n' "${toolbar:-Select:}" >&2
+	echo "Select:" >&2
 	local choice
 	select choice in "${labels[@]}"; do
 		[ -n "${choice}" ] || continue
