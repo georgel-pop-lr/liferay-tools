@@ -42,9 +42,20 @@ both `master` and `masterBrian`.
    `masterBrian:brian`): fetch `<remote>/master` (no tags), push it to your fork
    under `<branch>` (creating the branch on the fork if missing, and forcing with
    `--force-with-lease` if the fork diverged because the source rewrote master),
-   and update the local `<branch>` to it (fast-forwarded in place if it is the
-   branch you have checked out; a mirror checked out in another worktree is left
-   alone with a note).
+   and update the local `<branch>` to it, wherever it is checked out:
+   - not checked out anywhere: the ref is moved straight to the target.
+   - checked out here: fast-forwarded in place, so your files move with it.
+   - checked out in another worktree: the fast-forward runs *inside* that
+     worktree (`git -C <worktree> merge --ff-only`), so its ref, index, and files
+     move together. Moving the ref from here instead would leave that worktree's
+     HEAD on the new commit with the old files, i.e. every changed file showing up
+     as a local modification, which is why git refuses it outright.
+
+   So a mirror ends up current no matter which worktree you run from. Two cases
+   are still left for you, both reported: the source rewrote master (the mirror
+   has diverged, and only a `reset --hard` fixes it, which drops commits), and a
+   fast-forward git itself refuses because local changes in that worktree are in
+   the way. Unrelated local edits there are fine and are carried across.
 2. Sync the team fork: `lfrGitSync`, or `lfrGitSyncEE` when the repo's remotes
    point at `liferay-portal-ee` (detected by remote, not folder name).
 3. With `-r`/`--rebase`, rebase the current branch onto a target, skipped when you

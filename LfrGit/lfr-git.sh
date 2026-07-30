@@ -41,9 +41,12 @@ _lfrGitHelp() {
 		  lfrGitRebase [N]     interactive rebase over the last N commits (default 20)
 		  lfrGitUpdateMaster [-r] [-f] [-p] [target]
 		                       refresh your master mirror branches from their
-		                       remotes and sync your fork; with -r also rebase the
-		                       current branch onto <target> (default upstream/master),
-		                       -f forces the rebase, -p then force-pushes it
+		                       remotes and sync your fork, from any worktree: a
+		                       mirror checked out elsewhere is fast-forwarded
+		                       inside that worktree, so it lands wherever it
+		                       lives; with -r also rebase the current branch onto
+		                       <target> (default upstream/master), -f forces the
+		                       rebase, -p then force-pushes it
 	EOF
 }
 
@@ -116,12 +119,12 @@ _lfrGitPushMirror() {
 # Bring the local <branch> to <up> (its <remote>/master tracking ref): create it
 # if missing, fast-forward it, or reset it when the source rewrote master (a
 # mirror is a pure copy, so a divergence is the source's own rewritten history,
-# not your work). If <branch> is the branch checked out HERE, update it in place
-# with a fast-forward merge (you are standing on it, so its working tree moves
-# safely). If it is checked out in ANOTHER worktree, leave it with a note, since
-# git will not move a branch checked out elsewhere without desyncing that tree.
+# not your work). Checked out HERE, it is fast-forwarded in place (you are standing
+# on it, so its working tree moves with it); checked out in ANOTHER worktree, the
+# fast-forward is run inside that worktree, which is the only way to move it
+# without leaving that tree's files behind its HEAD.
 _lfrGitUpdateLocalMaster() {
-	local branch="${1}" up="${2}" tip wt target head
+	local branch="${1}" up="${2}" tip wt target head reason
 	target="$(git rev-parse "${up}")"
 	tip="$(git rev-parse --verify -q "refs/heads/${branch}" 2>/dev/null || true)"
 
@@ -143,11 +146,23 @@ _lfrGitUpdateLocalMaster() {
 		return 0
 	fi
 
-	# Checked out in another worktree: cannot move it from here.
+	# Checked out in another worktree: moving the branch from here would leave that
+	# worktree's HEAD ahead of its own files, so run the fast-forward inside it,
+	# where ref, index, and files move together. A mirror has to be current wherever
+	# it lives, so this is the normal path, not a special case; only a rewritten
+	# source (needs a reset, which drops commits) or a merge git itself refuses
+	# (local changes in the way) is left for you.
 	wt="$(git worktree list --porcelain |
 		awk -v b="branch refs/heads/${branch}" '/^worktree /{w=substr($0,10)} $0==b{print w; exit}')"
 	if [ -n "${wt}" ]; then
-		echo "  ${branch} is checked out at ${wt}; leaving it (reset it there: git -C \"${wt}\" reset --hard ${up})." >&2
+		if ! git merge-base --is-ancestor "${branch}" "${target}" 2>/dev/null; then
+			echo "  ${branch} is checked out at ${wt} and has diverged from ${up}; reset it there: git -C \"${wt}\" reset --hard ${up}." >&2
+		elif reason="$(git -C "${wt}" merge --ff-only "${target}" 2>&1 >/dev/null)"; then
+			echo "  fast-forwarded ${branch} to ${up} in ${wt}."
+		else
+			echo "  ${branch} is checked out at ${wt} and would not fast-forward there: ${reason%%$'\n'*}" >&2
+			echo "  (see git -C \"${wt}\" status, clear that, then re-run)" >&2
+		fi
 		return 0
 	fi
 
