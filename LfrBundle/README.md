@@ -285,20 +285,32 @@ derived from the HTTP offset**:
 | HTTP | Arquillian | DataGuard |
 |---|---|---|
 | 8080 | 32763 | 42763 |
-| 8081 | 32764 | 42764 |
-| 8090 | 32773 | 42773 |
+| 8081 | 32804 | 42804 |
+| 8090 | 32813 | 42813 |
 
 Because the default 8080 bundle stays on the default `32763`, a managed
 `testIntegration` (which targets `32763` unless told otherwise) still works, while
-a parallel 8081 bundle lands on `32764` — so **two live test bundles never clash**
-on the fixed connector ports. The resolved port is shown in the startup banner and
-the ports table, and a `>>> Arquillian connector listening on port <port>` line is
-printed once the socket binds (it binds late in boot).
+every other bundle lands a whole block higher (`TEST_CONNECTOR_BLOCK`, 40), so
+**two live test bundles never clash** on the fixed connector ports. The resolved
+port is shown in the startup banner and the ports table, and a
+`>>> Arquillian connector listening on port <port>` line is printed once the socket
+binds (it binds late in boot).
+
+The block is what keeps the seeded ports out of the **client's** range. A test JVM
+listens for results on `32764` upwards (`SocketState._START_PORT`), so the old
+`+1` mapping put an 8081 bundle's connector on the very port the client of a run
+against the 8080 bundle had already taken, and it died on startup with:
+
+```
+ERROR [ArquillianConnector:47] Encountered a problem while using 127.0.0.1:32764.
+Shutting down now.
+java.net.BindException: Address already in use
+```
 
 Run the tests against the printed port:
 
 ```bash
-gradlew testIntegration --tests <Class> -Dliferay.arquillian.port=32764
+gradlew testIntegration --tests <Class> -Dliferay.arquillian.port=32804
 ```
 
 Without `--test` the launch is lean: the `osgi/test` scan override is removed and
@@ -407,9 +419,10 @@ redirected, it just `exec`s Tomcat.)
    The test-support bundles are handled only under `--test` (see
    [Test mode](#test-mode---test-testintegration-against-a-live-bundle)): with the
    flag `osgi/test` is added to the module scan and each connector is seeded a
-   per-instance port from the HTTP offset (`32763`/`42763` at 8080, `32764`/`42764`
-   at 8081); without it a launch is lean (the scan override is removed), so a
-   normal boot never starts the test infra.
+   per-instance port from the HTTP offset (`32763`/`42763` at 8080, `32804`/`42804`
+   at 8081, a block clear of the ports the test JVM itself listens on); without it
+   a launch is lean (the scan override is removed), so a normal boot never starts
+   the test infra.
 4. **Backs up `tomcat/conf/server.xml`** to
    `server.xml.bak.<yyyymmdd-hhmmss>` and rewrites the connector ports —
    only when at least one port differs from what's already in the file.

@@ -670,6 +670,10 @@ GLOWROOT_DEFAULT=4000
 ARQUILLIAN_DEFAULT=32763
 DATA_GUARD_DEFAULT=42763
 
+# How far above its default a non-8080 bundle's test connector is seeded, so it
+# clears the ports the test JVM itself listens on (default+1 upwards).
+TEST_CONNECTOR_BLOCK=40
+
 is_port_free() {
 	local port=$1
 	if command -v ss >/dev/null 2>&1; then
@@ -746,8 +750,15 @@ export LIFERAY_MODULE_PERIOD_FRAMEWORK_PERIOD_PROPERTIES_PERIOD_OSGI_PERIOD_CONS
 #
 # The offset keeps the default 8080 bundle on the default 32763 (so a managed
 # testIntegration, which targets 32763 unless -Dliferay.arquillian.port is passed,
-# still connects) while a parallel 8081 bundle lands on 32764, etc., so two live
+# still connects) while any parallel bundle lands a whole block higher, so two live
 # test bundles never clash on the fixed ports (the old System.exit(-10) failure).
+#
+# The block matters: the ports just above the default belong to the CLIENT side of
+# a run, not to us. The test JVM listens for results on <default>+1 upwards
+# (SocketState._START_PORT = 32764), so seeding a parallel bundle's connector to
+# <default>+1 made it fight the client of a run against the default bundle:
+# "Encountered a problem while using 127.0.0.1:32764 ... Address already in use",
+# and that bundle's connector then shut itself down.
 
 # Seed one connector's per-instance port (its .config lives in osgi/configs, an
 # always-scanned dir). With --test the connector deploys from the now-scanned
@@ -766,10 +777,16 @@ seed_test_connector() {
 
 	# Deterministic offset from the (already de-conflicted) HTTP port, NOT
 	# choose_port: distinct HTTP ports already give distinct connector ports, and
-	# a fixed mapping keeps the default 8080 bundle on the default 32763 so a
-	# managed testIntegration still connects. choose_port would bump it whenever a
-	# sibling transiently holds the port, desyncing exactly that case.
-	port=$((default + HTTP_PORT - HTTP_DEFAULT))
+	# a fixed mapping keeps the default 8080 bundle on the default port so a managed
+	# testIntegration still connects. choose_port would bump it whenever a sibling
+	# transiently holds the port, desyncing exactly that case. Every other bundle
+	# starts a block above the default, leaving <default>+1 upwards to the test
+	# JVM's own result listener (see the note above).
+	if [ "$HTTP_PORT" = "$HTTP_DEFAULT" ]; then
+		port="$default"
+	else
+		port=$((default + TEST_CONNECTOR_BLOCK + HTTP_PORT - HTTP_DEFAULT))
+	fi
 	printf 'port="%s"\n' "$port" >"$config"
 	printf -v "$outvar" '%s' "$port"
 	echo "$label connector ready: port $port (default $default)"
