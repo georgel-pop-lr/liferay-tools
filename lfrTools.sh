@@ -49,7 +49,8 @@ lfrTools() {
 		  lfrCodeView   pick a commit (or your local changes) and diff it
 
 		Pull requests
-		  lfrPulls      list open PRs on the Brian mirror; per-month stats
+		  lfrPulls      list open PRs on the Brian mirror; one ticket's pulls
+		                (lfrPulls LPD-12345); per-month stats
 
 		Most commands have a short alias (lfrr, lfrw, lfrs, lfrb, lfraa, lfrgc,
 		lfrgcd, lfrgs, lfrgse, lfrgr, lfrgum, lfrcv, lfrp).

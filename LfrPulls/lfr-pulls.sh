@@ -25,6 +25,11 @@ _lfrPullsHelp() {
 
 		Usage (each command has a short form and an alias):
 		  lfrPulls [mine|all]              list open PRs (yours by default)
+		  lfrPulls ticket <LPD-12345>  (t, lfrpt)
+		                                   every pull ever opened for that ticket,
+		                                   oldest first, then what the ticket has
+		                                   landed on the master ref. A bare ticket
+		                                   works too: lfrPulls LPD-12345
 		  lfrPulls week [days]  (w, lfrpw) your pulls closed in the last days
 		                                   (default 7): PR / SENDER / STATUS / TITLE
 		  lfrPulls stats [mine|all] [months]  (s, lfrps)
@@ -37,6 +42,14 @@ _lfrPullsHelp() {
 		number), i.e. roughly how many are in front of it in the merge queue, so
 		a small number means yours is close. The list ends with when the repo was
 		last active (the most recent pull merged or rejected) and how long ago.
+
+		ticket shows STATE as GitHub has it (OPEN or CLOSED) and does not label any
+		pull merged: Brian's merge rewrites the commits, so only a subject can be
+		matched, and a ticket's resends all carry the same title, which would mark
+		every one of them merged. The footer answers it instead, listing the
+		ticket's commits on the master ref; their date tells you which resend
+		landed, and "nothing landed yet" with the ref tip tells you the ref may
+		just be stale (lfrGitUpdateMaster).
 
 		stats (mine) counts the PRs you opened directly, by month:
 		  SENT      PRs you created that month
@@ -67,15 +80,17 @@ _lfrPullsCount() {
 }
 
 # Resolve a local clone to grep for master landings: LFR_PULLS_MASTER_REPO, else
-# the current repo. Echoes its path; errors if the master ref is missing.
+# the current repo. Echoes its path; errors if the master ref is missing. $1 names
+# the calling command for the error messages (default stats).
 _lfrPullsMasterDir() {
+	local command="${1:-stats}"
 	local dir="${LFR_PULLS_MASTER_REPO:-$(git rev-parse --show-toplevel 2>/dev/null)}"
 	if [ -z "${dir}" ]; then
-		echo "lfrPulls stats: run from a liferay-portal clone, or set LFR_PULLS_MASTER_REPO." >&2
+		echo "lfrPulls ${command}: run from a liferay-portal clone, or set LFR_PULLS_MASTER_REPO." >&2
 		return 1
 	fi
 	if ! git -C "${dir}" rev-parse --verify -q "${LFR_PULLS_MASTER_REF}" >/dev/null 2>&1; then
-		echo "lfrPulls stats: ref ${LFR_PULLS_MASTER_REF} not found in ${dir}; set LFR_PULLS_MASTER_REF/REPO." >&2
+		echo "lfrPulls ${command}: ref ${LFR_PULLS_MASTER_REF} not found in ${dir}; set LFR_PULLS_MASTER_REF/REPO." >&2
 		return 1
 	fi
 	printf '%s\n' "${dir}"
@@ -250,6 +265,78 @@ _lfrPullsWeek() {
 	fi
 	printf 'PR\tSENDER\tSTATUS\tTITLE\n%s' "${rows}" | column -t -s $'\t'
 }
+# Every pull ever opened on the mirror for one ticket, oldest first, then what that
+# ticket has landed on the master ref.
+#
+# Deliberately no per-pull MERGED column: Brian's merge rewrites the commits (a
+# pull's `eee3690` lands as `b13f864`), so only the subject can be matched, and a
+# ticket's resends all carry the same title, which would mark every one of them
+# merged. What is answerable is whether the ticket landed at all, so that goes in
+# the footer, where the newest landed commit tells you which resend Brian took.
+_lfrPullsTicket() {
+	local ticket="" a
+	for a in "$@"; do
+		case "${a}" in
+		-h | --help) _lfrPullsHelp; return 0 ;;
+		[A-Za-z]*-[0-9]*) ticket="${a^^}" ;;
+		*) echo "lfrPulls ticket: unknown argument '${a}' (want a ticket like LPD-12345)." >&2; return 1 ;;
+		esac
+	done
+
+	if [ -z "${ticket}" ]; then
+		echo "lfrPulls ticket: pass a ticket, e.g. lfrPulls ticket LPD-12345." >&2
+		return 1
+	fi
+
+	echo "Searching ${LFR_PULLS_REPO} for ${ticket}..." >&2
+
+	local json
+	json="$(gh pr list --repo "${LFR_PULLS_REPO}" --search "${ticket} in:title" \
+		--state all --limit 200 \
+		--json number,title,state,headRefName,author,createdAt,closedAt,url)" || return 1
+
+	local rows
+	rows="$(printf '%s' "${json}" | jq -r \
+		'sort_by(.createdAt) | .[] |
+			"#\(.number)\t\(if (.headRefName | test("-sender-")) then (.headRefName | sub(".*-sender-"; "")) else .author.login end)\t\(.state)\t\(.createdAt[:10])\t\(.closedAt[:10] // "-")\t\(.title)"' 2>/dev/null)"
+
+	if [ -z "${rows}" ]; then
+		echo "No pull on ${LFR_PULLS_REPO} has ${ticket} in its title."
+	else
+		printf 'PR\tSENDER\tSTATE\tCREATED\tCLOSED\tTITLE\n%s\n' "${rows}" | column -t -s $'\t'
+		printf '\n%s pull(s) for %s: %s open, %s closed.\n' \
+			"$(printf '%s' "${json}" | jq 'length')" "${ticket}" \
+			"$(printf '%s' "${json}" | jq '[.[] | select(.state == "OPEN")] | length')" \
+			"$(printf '%s' "${json}" | jq '[.[] | select(.state != "OPEN")] | length')"
+	fi
+
+	# The landing report is a bonus, so a missing clone or ref must not fail the
+	# listing above.
+	local dir
+	dir="$(_lfrPullsMasterDir ticket)" || return 0
+
+	# GitHub's title search tokenizes, so it also finds a pull titled "LCD 52771"
+	# for LCD-52771. Match the same variants here, or the footer would miss the
+	# commits of exactly those pulls.
+	local landed count
+	landed="$(git -C "${dir}" log "${LFR_PULLS_MASTER_REF}" --grep="${ticket/-/[- ]}" \
+		--regexp-ignore-case --format='%h	%cd	%s' --date=format:'%Y-%m-%d' 2>/dev/null)"
+	count="$(printf '%s\n' "${landed}" | grep -c .)"
+
+	if [ "${count}" -eq 0 ]; then
+		printf '%s on %s: nothing landed yet (ref tip %s).\n' "${ticket}" "${LFR_PULLS_MASTER_REF}" \
+			"$(git -C "${dir}" log -1 --format='%cd' --date=format:'%Y-%m-%d %H:%M' "${LFR_PULLS_MASTER_REF}")"
+		return 0
+	fi
+
+	printf '%s on %s: %s commit(s) landed, newest first.\n' \
+		"${ticket}" "${LFR_PULLS_MASTER_REF}" "${count}"
+	printf '%s\n' "${landed}" | head -5 | column -t -s $'\t' | sed 's/^/  /'
+	[ "${count}" -gt 5 ] && printf '  ... %s more\n' "$((count - 5))"
+
+	return 0
+}
+
 _lfrPullsAgo() {
 	local ts="${1}" diff d h m rel
 	diff=$(( $(date +%s) - $(date -d "${ts}" +%s) ))
@@ -287,6 +374,8 @@ lfrPulls() {
 	case "${1:-}" in
 	stats | st | s) shift; _lfrPullsStats "$@"; return ;;
 	week | recent | w) shift; _lfrPullsWeek "$@"; return ;;
+	ticket | t) shift; _lfrPullsTicket "$@"; return ;;
+	[A-Za-z]*-[0-9]*) _lfrPullsTicket "$@"; return ;;
 	esac
 
 	local mode="mine" a
@@ -339,3 +428,4 @@ lfrPulls() {
 lfrp() { lfrPulls "$@"; }
 lfrpw() { lfrPulls week "$@"; }
 lfrps() { lfrPulls stats "$@"; }
+lfrpt() { lfrPulls ticket "$@"; }

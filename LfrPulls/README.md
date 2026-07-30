@@ -1,33 +1,69 @@
 # LfrPulls
 
 List open pull requests on the Brian CI mirror repo (or any repo you point it
-at), showing only yours by default or all of them.
+at), showing only yours by default or all of them, look up every pull ever opened
+for one ticket, and count what you have sent, merged, and had rejected per month.
 
 ## Commands
 
 - `lfrPulls` (alias `lfrp`) — list open PRs. Yours by default; `all` shows every
   open PR.
+- `lfrPulls ticket <TICKET>` (`t`, alias `lfrpt`) — every pull ever opened for one
+  ticket, oldest first, then what that ticket has landed on the master ref. A bare
+  ticket is the same thing: `lfrPulls LPD-12345`.
 - `lfrPulls week [days]` — your pulls closed in the last `days` (default 7), as
   PR / SENDER / STATUS / TITLE, where STATUS is `MERGED` or `REJECTED`.
 - `lfrPulls stats [mine|all] [months]` — per-month counts of PRs sent, merged,
   and rejected, with a TOTAL row. Yours by default; months default to 12.
 
 ```bash
-lfrPulls              # open PRs from your fork or opened by you
-lfrPulls all          # every open PR on the repo
-lfrPulls week         # your pulls closed in the last 7 days, with status
-lfrPulls week 14      # ...in the last 14 days
-lfrPulls stats        # your PRs per month, last 12 months
-lfrPulls stats all 6  # whole-repo PRs per month, last 6 months
+lfrPulls               # open PRs from your fork or opened by you
+lfrPulls all           # every open PR on the repo
+lfrPulls LPD-75909     # every pull for that ticket, and what landed
+lfrpt LPD-75909        # same, via the alias
+lfrPulls week          # your pulls closed in the last 7 days, with status
+lfrPulls week 14       # ...in the last 14 days
+lfrPulls stats         # your PRs per month, last 12 months
+lfrPulls stats all 6   # whole-repo PRs per month, last 6 months
 lfrPulls --help
 ```
 
-Each list row is the PR number, the source fork owner or author (`sender`), the
-`AHEAD` count, and the title. `AHEAD` is how many open pulls are older (lower
-number) than this one, i.e. roughly how many are in front of it in the merge
-queue, so a small number means yours is close to being merged. The list ends
-with a `Last active:` footer showing when the repo last processed a pull (merged
-or rejected) and how long ago, so you can tell whether Brian is active right now.
+Each row of the open list is the PR number, the source fork owner or author
+(`sender`), the `AHEAD` count, and the title. `AHEAD` is how many open pulls are
+older (lower number) than this one, i.e. roughly how many are in front of it in
+the merge queue, so a small number means yours is close to being merged. The list
+ends with a `Last active:` footer showing when the repo last processed a pull
+(merged or rejected) and how long ago, so you can tell whether Brian is active
+right now.
+
+## One ticket's pulls
+
+`lfrPulls ticket` searches the repo for pulls with the ticket in the title (any
+state, up to 200) and prints PR / SENDER / STATE / CREATED / CLOSED / TITLE oldest
+first, so a ticket's resend history reads top to bottom. `STATE` is what GitHub
+reports, `OPEN` or `CLOSED`, and the footer counts each.
+
+It deliberately does **not** label a pull merged. Brian's merge rebases, so a
+pull's commits land under different SHAs (`eee3690` became `b13f864` on
+LPD-99386), which leaves the subject as the only thing to match, and a ticket's
+resends all carry the same title, so every one of them would come out "merged".
+What is answerable is whether the ticket landed at all, which is the footer:
+
+```
+18 pull(s) for LPD-75909: 0 open, 18 closed.
+LPD-75909 on brian/master: 10 commit(s) landed, newest first.
+  d9e362488888f  2026-07-29  LPD-75909 Easy to read
+  ...
+```
+
+The dates tell you which resend Brian took. When nothing matches, the footer
+prints the ref's tip date too, so you can see whether the ticket really has not
+landed or your mirror is just behind (`lfrGitUpdateMaster`).
+
+The search is GitHub's title search, which tokenizes, so `LCD-52771` also finds a
+pull titled `LCD 52771 2`. That is wanted (those are the same ticket's pulls,
+titled sloppily), and the footer's `git log --grep` accepts the same variants, so
+both halves of the output agree.
 
 ## Statistics
 

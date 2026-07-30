@@ -32,7 +32,7 @@ and `lfrs` are interchangeable.
 | `lfrShare` | `lfrs` | Point a worktree at a shared, already-built bundle (no rebuild to switch). Bare `lfrShare` shows each repo's state and toggles the one you pick. | `LfrShare/` |
 | `lfrAntAll` | `lfraa` | Run `ant all`, but refuse if this repo's Liferay bundle is running (stop it first, or `--force`) | `LfrBuild/` |
 | `lfrCodeView` | `lfrcv` | Read the code of a change from a picker instead of copying hashes: your uncommitted changes, the branch vs its base, and each commit it adds. Picking runs `git show` / `git diff`, with a key toolbar on the bottom line of both views (`→`/`enter` view and `←`/`esc` quit in the list, `←`/`b` back and `q` quit in a diff), reopening the list on the entry you just read, so it loops until you stop. `-a [ticket]` lists that ticket's commits on every ref (master copy, backports) | `LfrCodeView/` |
-| `lfrPulls` | `lfrp` | List open pull requests on the Brian mirror (yours or all), with an `AHEAD` merge-queue position. Also `lfrPulls week` (`lfrpw`) for your pulls closed in the last days with merged/rejected status, and `lfrPulls stats` (`lfrps`) for per-month counts. | `LfrPulls/` |
+| `lfrPulls` | `lfrp` | List open pull requests on the Brian mirror (yours or all), with an `AHEAD` merge-queue position. Also `lfrPulls <TICKET>` / `lfrPulls ticket` (`lfrpt`) for every pull ever opened for one ticket plus what it landed on the master ref, `lfrPulls week` (`lfrpw`) for your pulls closed in the last days with merged/rejected status, and `lfrPulls stats` (`lfrps`) for per-month counts. | `LfrPulls/` |
 
 Each folder has its own README with the details.
 
