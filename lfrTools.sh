@@ -25,12 +25,17 @@ lfrTools() {
 		Liferay helper commands. Run any with -h (or --help) for details.
 
 		Repos and worktrees
-		  lfrRepo       jump to a Liferay repo (picker, or by name)
-		  lfrWorktree   create a git worktree + branch for a ticket
-		  lfrShare      point a repo at an already-built bundle (no rebuild)
+		  lfrRepo               jump to a Liferay repo (picker, or by name)
+		  lfrWorktree           create a git worktree + branch for a ticket
+		  lfrWorktreeRemove     remove a worktree, its branch, its unused bundle,
+		                        and IntelliJ's project state
+		  lfrWorktreeIdeaClean  make IntelliJ forget worktree projects that are
+		                        gone (lfrWorktreeIdeaCleanDry previews it)
+		  lfrShare              point a repo at an already-built bundle (no rebuild)
 
 		Server bundle
-		  lfrBundle     start or stop a Liferay server (toggle); show status
+		  lfrBundle     start or stop a Liferay server (toggle); show status;
+		                cd to a bundle; run its database upgrade tool
 		  lfrRunBundle  same as lfrBundle
 
 		Build

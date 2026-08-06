@@ -3,8 +3,9 @@
 A small set of shell functions for working with Liferay git repos scattered
 across more than one root directory. `lfrRepo` (short alias `lfrr`) jumps between
 clones without typing full paths; `lfrWorktree` (short alias `lfrw`) spins up a
-new worktree off `upstream/master`, wired to a bundle and database of its own,
-and `lfrWorktreeRemove` (short alias `lfrwr`) takes all three away again.
+worktree for a branch (new off a base ref, or an existing one checked out),
+wired to a bundle and database of its own, and `lfrWorktreeRemove` (short alias
+`lfrwr`) takes all three away again, IntelliJ's project state included.
 
 Both load via the top-level `lfrTools.sh` aggregator (see the repo's top-level
 README). They are shell functions, so they must be sourced, not executed: a
@@ -15,11 +16,13 @@ script runs in a subshell and its `cd` would not reach your interactive shell.
 | File | Purpose |
 |---|---|
 | `lfr-repo.sh` | Defines the `lfrRepo` switcher and its tab-completion. |
-| `lfr-worktree.sh` | Defines the `lfrWorktree` creator and the `lfrWorktreeRemove` remover. |
+| `lfr-worktree.sh` | Defines the `lfrWorktree` creator, the `lfrWorktreeRemove` remover, and `lfrWorktreeIdeaClean` for IntelliJ leftovers. |
 
 The repo list, picker, and per-user config live in the shared module
 `../LfrCommon/lfr-repo-list.sh` (config in `../LfrCommon/repos.local.conf`),
-since `lfrCache` reuses the same picker.
+since `lfrCache` reuses the same picker. `lfr-worktree.sh` also uses
+`_lfrRepoBundleDir` from `../LfrBuild/lfr-ant.sh` to resolve a worktree's
+bundle, so LfrBuild must be loaded too (the aggregator loads everything).
 
 ## Setup
 
@@ -58,7 +61,7 @@ two `liferay-portal` clones) stay distinguishable.
 | Invocation | Behavior |
 |---|---|
 | `lfrRepo` | Open the picker over every repo in all roots. |
-| `lfrRepo <name>` | Jump straight to the only match; open the picker prefiltered by `<name>` when more than one matches. |
+| `lfrRepo <name>` | Jump straight to the only match; with more than one match, open the picker prefiltered by `<name>` (fzf; the numbered fallback lists everything). |
 | `lfrRepo -l`, `lfrRepo --list` | List every repo and its root, without changing directory. |
 | `lfrRepo <prefix><Tab>` | Tab-complete repo names. |
 
@@ -73,45 +76,54 @@ listing.
 
 ### `lfrWorktree`: create a worktree
 
-Creates a new git worktree and branch, then `cd`s into it. Run it from inside
-any `liferay-portal` clone. The worktree is created under `LFR_WORKTREE_ROOT`
-as a sibling named `liferay-portal-<branch>`, branched off `LFR_WORKTREE_BASE`
-(`upstream/master` by default). When the base ref is qualified as
-`<remote>/<ref>`, that remote ref is fetched first so the branch starts current.
+Creates a git worktree for a branch, then `cd`s into it. Run it from inside
+any `liferay-portal` clone. The worktree goes under `LFR_WORKTREE_ROOT`
+(created if missing) as `liferay-portal-<branch>`.
 
 | Invocation | Behavior |
 |---|---|
-| `lfrWorktree <branch>` | Worktree + branch off `upstream/master` at `liferay-portal-<branch>`, then `cd` in. |
-| `lfrWorktree <branch> <base-ref>` | Same, but branch off the given base ref instead. |
+| `lfrWorktree <branch>` | New branch off `LFR_WORKTREE_BASE` (`upstream/master` by default) at `liferay-portal-<branch>`, then `cd` in. If the branch already exists it is checked out instead, and any base argument is ignored. |
+| `lfrWorktree <branch> <base-ref>` | Same, but branch off the given base ref: a local branch, a `<remote>/<ref>`, or a sha. |
 
 ```bash
 lfrWorktree LPD-12345                  # branch LPD-12345 off upstream/master
 lfrWorktree LPD-12345 upstream/7.4.x   # branch off a different base
 ```
 
-It refuses to run when no branch is given, when not inside a git repo, or when
-the target directory already exists, leaving no half-made worktree behind.
-Because the new directory is named `liferay-portal-*`, it shows up at the top
-of `lfrRepo` alongside your other portal clones.
+A `<remote>/<ref>` base is fetched first so the branch starts current, but only
+when the leading segment is a real configured remote; otherwise the whole value
+is treated as a local ref (so a branch literally named `feature/x` works) and
+must resolve.
+
+It refuses to run when no branch is given, when not inside a git repo, when
+the target directory already exists, or when the base ref does not resolve,
+leaving no half-made worktree behind; an existing branch already checked out
+elsewhere is refused by git itself. Because the new directory is named
+`liferay-portal-*`, it shows up at the top of `lfrRepo` alongside your other
+portal clones.
 
 Whether the branch is new or already existed, the invoking clone's per-user
-(gitignored) `*.${USER}.properties` are copied in with any bundle path repointed
-to `bundles/liferay-bundle-<branch>`, so the worktree deploys to and tests
-against its own bundle. That bundle directory is created too, with the invoking
-bundle's `portal-ext.properties` copied in and its `jdbc.default.url` pointed at
-`portal-<branch>`, lowercased, so the two bundles never share one database. The
-database itself is not created: the first startup does that. Slashes in a branch
-name become dashes in both the bundle directory and the database name.
+(gitignored) `*.${USER}.properties` are copied in with any
+`bundles/liferay-bundle-<x>` path repointed to `bundles/liferay-bundle-<branch>`
+(a path not matching that pattern is copied unchanged), so the worktree deploys
+to and tests against its own bundle. That bundle directory is created too, with
+the invoking bundle's `portal-ext.properties` copied in and its
+`jdbc.default.url` pointed at `portal-<branch>`, lowercased, so the two bundles
+never share one database. The PostgreSQL database itself is created for you when
+`psql` can reach the server (UTF8, from `template0`); with a non-Postgres URL,
+no `psql`, or an unreachable server it prints a note and leaves it to the first
+startup. Slashes in a branch name become dashes in both the bundle directory
+and the database name.
 
 ### `lfrWorktreeRemove`: remove a worktree
 
-Undoes an `lfrWorktree`: removes the worktree, deletes its branch, and deletes
-the bundle directory that came with it. Run it from any other worktree of the
-same repo.
+Undoes an `lfrWorktree`: removes the worktree, deletes its branch, deletes the
+bundle directory that came with it, and makes IntelliJ forget the project. Run
+it from any other worktree of the same repo.
 
 | Invocation | Behavior |
 |---|---|
-| `lfrWorktreeRemove <branch>` | Remove the worktree, delete the branch, and delete the bundle when it holds nothing but the `portal-ext.properties` `lfrWorktree` created. |
+| `lfrWorktreeRemove <branch>` | Remove the worktree, delete the branch, and delete the bundle when it is empty or holds nothing but the `portal-ext.properties` `lfrWorktree` created. |
 | `lfrWorktreeRemove <branch> --force` | Same, but also when the worktree has changes or the branch is unmerged. |
 
 ```bash
@@ -119,14 +131,53 @@ lfrWorktreeRemove LPD-12345            # remove worktree, branch, unused bundle
 lfrWorktreeRemove LPD-12345 --force    # discard changes and delete unmerged
 ```
 
-All three deletions are destructive, so it is deliberately cautious. It finds
+Every deletion here is destructive, so it is deliberately cautious. It finds
 the worktree by the branch it has checked out rather than by guessing the path,
 and refuses when a Tomcat is running out of that bundle, when the branch looks
 like a `master` branch, or when the branch is the one checked out where you ran
 it. A bundle holding more than that one properties file is kept and reported,
 `--force` included, since a built bundle is work this command never did. The
-database is always left alone, its name printed so you can drop it yourself:
-dropping is `start-liferay.sh --reset-db`'s job.
+database is always left alone, its name printed so you can drop it yourself
+(e.g. `dropdb portal-<branch>`).
+
+### `lfrWorktreeIdeaClean`: forget worktree projects that are gone
+
+A worktree's `.idea` and `*.iml` go with the directory, but IntelliJ keeps the
+rest of a project's state elsewhere, so removing a worktree used to leave it
+behind: the Welcome screen kept offering a path that no longer exists, and the
+project's index cache (about 6 MB per Liferay worktree) stayed on disk.
+`lfrWorktreeRemove` now clears all of it per IDE version: the `recentProjects.xml`
+entry, its `trusted-paths.xml` entry, the `workspace/<id>.xml` that entry names,
+and the `projects/` plus `log/indexing-diagnostic/` caches.
+
+A cache directory is found by hash, not by name: it is `<project>.<hash>`, where
+the hash is Java's `String.hashCode` of the project's absolute path in hex. Two
+projects can share a name (a `liferay-portal` clone plus another one on a second
+drive), and only the hash tells their caches apart.
+
+The one case `lfrWorktreeRemove` skips is a running IntelliJ, which rewrites its
+options from memory on exit and would put the entry straight back. It says so and
+leaves the state alone; this command is how you finish the job afterwards.
+
+| Invocation | Behavior |
+|---|---|
+| `lfrWorktreeIdeaCleanDry` | List every worktree project IntelliJ still offers whose directory is gone. Deletes nothing. |
+| `lfrWorktreeIdeaClean` | Clear the state of those projects. Refuses while IntelliJ is running. |
+
+```bash
+lfrWorktreeIdeaCleanDry                # preview the leftovers
+lfrWorktreeIdeaClean                   # clear them
+```
+
+A missing directory alone is not enough to call a project a leftover, so three
+things have to hold. It sits directly in `LFR_WORKTREE_ROOT`, where `lfrWorktree`
+puts every worktree, so a deleted clone kept elsewhere is none of this command's
+business. Its name is one `lfrWorktree` makes (`liferay-portal-<branch>`), never a
+clone itself. And that root is mounted: with the Data drive unmounted every
+project on it is missing, and forgetting all of them over an unmounted drive is
+the one failure this command must not have.
+
+All four commands accept `-h`/`--help`.
 
 ## Configuration
 

@@ -25,20 +25,23 @@ Shared cache dir: `LFR_CACHE_DIR`, default
 
 ## Commands
 
-Run with no path to act on the current directory's repo, or pass a path (`.`
-for current) or a name to pick from the shared repo list.
+For `[repo]`, pass a path (`.` for the current repo) to use it directly, or a
+name to prefilter the picker. Omitted, `on`/`off`/`seed` open the picker,
+`status` defaults to the current directory's repo, and `prune` covers every
+sharing repo.
 
 | Command | Effect |
 | --- | --- |
-| `lfrCache` (no args) | Picker listing each repo and its cache state; selecting one **toggles** it (ON to off, off to ON). Press Esc to cancel without changing anything. |
-| `lfrCache on [repo]` | Share the cache: write the redirect init script into the repo and register it. |
-| `lfrCache off [repo]` | Stop sharing: remove the init script (the repo falls back to its own local cache). |
-| `lfrCache status [repo]` | Show whether the repo shares, all sharing repos, and the shared cache size. |
-| `lfrCache list` | List the cache folders on disk: the shared cache plus each repo's local `build-cache-1`, with sizes and whether it is redirected (orphaned) or standalone. |
+| `lfrCache` (no args) | Picker listing each repo and its cache state; selecting one **toggles** it (ON to off, off to ON). Press Esc to cancel without changing anything. `lfrCache toggle` is a synonym. |
+| `lfrCache on [repo]` | Share the cache: write the redirect init script into the repo and register it in `LfrCache/enabled-repos.txt` (the registry `status` and `prune` read). |
+| `lfrCache off [repo]` | Stop sharing: remove the init script and deregister the repo (it falls back to its own local cache). |
+| `lfrCache status [repo]` | Show whether the repo shares, all sharing repos, and the shared cache size and entry count. A bare name is not resolved here; pass a path. |
+| `lfrCache list` (or `ls`) | List the cache folders on disk: the shared cache plus the local `build-cache-1` of each repo directly under `LFR_REPO_ROOTS`, with sizes and whether it is redirected (orphaned) or standalone. |
 | `lfrCache seed [repo]` | Copy a repo's existing `build-cache-1` into the shared dir (preserve already-built entries). |
-| `lfrCache prune [repo]` | Delete the orphaned per-repo cache of a sharing repo to reclaim space. |
+| `lfrCache prune [repo]` | Delete the orphaned per-repo cache of a sharing repo to reclaim space. With no repo it prunes **all** sharing repos. |
 
-`on`, `off`, `status` also accept dashed forms (`-on`, `-off`, `-status`).
+Any command also works with leading dashes (`-on`, `--status`, ...), and
+`help`/`-h`/`--help` prints usage.
 
 ## How `seed` works
 

@@ -1,6 +1,6 @@
 # Liferay repo per-user config. Copy to repos.local.conf and edit.
 # repos.local.conf is gitignored, so your machine-specific paths stay local.
-# Shared by lfrRepo, lfrWorktree, lfrCache, lfrShare, and lfrBundle.
+# Shared by lfrRepo, lfrWorktree, lfrCache, lfrShare, lfrBundle, and lfrCodeView.
 
 # Roots searched for git repos, in order.
 LFR_REPO_ROOTS=(

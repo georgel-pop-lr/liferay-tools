@@ -1,7 +1,7 @@
 # Run bundles
 
 Launcher for Liferay DXP bundles that picks free ports if the defaults are
-busy and drops in a known-good Elasticsearch configuration on the first run.
+busy and writes a known-good Elasticsearch configuration on every run.
 Useful when you keep several bundles on the same machine and want to start
 one without manually editing `server.xml` or hunting for a free port.
 
@@ -9,9 +9,9 @@ one without manually editing `server.xml` or hunting for a free port.
 
 | File | Purpose |
 |---|---|
-| `start-liferay.sh` | Launches a bundle with auto-port selection. Modifies `tomcat/conf/server.xml` in place if any default port is busy, after backing it up. |
-| `lfr-bundle.sh` | Defines `lfrBundle` (alias `lfrb`): toggles a bundle (start if stopped, stop if running) via a picker or by name, plus `status` and `stop-all`. `lfrRunBundle` / `lfrrb` remain as back-compat aliases. |
-| `com.liferay.portal.search.elasticsearch7.configuration.ElasticsearchConfiguration.config` | Embedded-Elasticsearch configuration for ES7-era bundles. Copied into the bundle's `osgi/configs/` directory on first run, so search works out of the box without an external Elasticsearch server. |
+| `start-liferay.sh` | Launches a bundle with auto-port selection. Rewrites `tomcat/conf/server.xml` in place when the resolved ports differ from what the file holds, after backing it up. |
+| `lfr-bundle.sh` | Defines `lfrBundle` (alias `lfrb`): toggles a bundle (start if stopped, stop if running) via a picker or by name, plus `status`, `stop-all`, `cd` (jump to a bundle without starting it), and `upgrade` (run its database upgrade tool). `lfrRunBundle` / `lfrrb` remain as back-compat aliases. |
+| `com.liferay.portal.search.elasticsearch7.configuration.ElasticsearchConfiguration.config` | Embedded-Elasticsearch configuration for ES7-era bundles. Regenerated into the bundle's `osgi/configs/` directory on every run (with a per-instance transport port), so search works out of the box without an external Elasticsearch server. |
 | `com.liferay.portal.search.elasticsearch8.configuration.ElasticsearchConfiguration.config` | Same, for ES8-era bundles. The launcher picks the right one based on the bundle's Elasticsearch sidecar version. |
 | `start-liferay.conf` | Machine-specific config (bundle roots and JDK paths). Gitignored — yours alone. |
 
@@ -45,7 +45,8 @@ together you can move the folder freely.
 4. (Only needed for `--clean`) Install a database client on the host — `psql`
    for PostgreSQL or `mysql` for MySQL/MariaDB — so the launcher can drop and
    recreate the database. `docker` is optional and only used as a fallback when
-   the database runs inside a container.
+   the database runs inside a container. `jq` is optional too, used only to
+   remap Glowroot's web port when the bundle ships `glowroot/admin.json`.
 
 ## Configuration
 
@@ -57,8 +58,10 @@ back to built-in defaults and prints a hint.
 
 | Key | Purpose |
 |---|---|
-| `BUNDLES_DIRS` | Array of directories that hold your Liferay bundles. The picker scans all of them; missing directories are silently skipped. |
-| `JDK_8` / `JDK_11` / `JDK_17` / `JDK_21` | JDK roots by major version. The launcher picks one from the bundle name (see [JDK selection](#jdk-selection-older-bundles-need-older-jdks)); leave a version empty if you never run that family. |
+| `BUNDLES_DIRS` | Array of directories that hold your Liferay bundles. `start-liferay.sh`'s own picker scans all of them; missing directories are silently skipped. Note: the `lfrBundle` picker uses a separate list, `LFR_BUNDLES_DIRS` from `LfrCommon` (override it in `LfrCommon/repos.local.conf`), so keep the two in sync if you change either. |
+| `JDK_8` / `JDK_11` / `JDK_17` | JDK roots by major version. The launcher picks one from the bundle name (see [JDK selection](#jdk-selection-older-bundles-need-older-jdks)); leave a version empty if you never run that family. |
+| `JDK_21` | JDK root usable via `--jdk`/`JAVA_HOME` only; the name-based detection never selects it. |
+| `JPDA_SUSPEND` | Set to `y` to make `--debug` wait for the debugger before starting (same as `--suspend`). |
 | `BUNDLE_DEFAULT` | Optional. A fallback bundle path — largely vestigial now that a bare invocation opens the picker; leave it empty. |
 
 Example:
@@ -85,10 +88,14 @@ shows each bundle's parent directory, so bundles that share a name across
 locations stay distinguishable:
 
 ```bash
-lfrRunBundle                 # picker
-lfrRunBundle --pick          # same thing, forced explicitly
-lfrRunBundle --debug         # picker, then debug mode
+./start-liferay.sh           # picker
+./start-liferay.sh --pick    # same thing, forced explicitly
+./start-liferay.sh --debug   # picker, then debug mode
 ```
+
+(This is the launcher's own picker. `lfrBundle`/`lfrRunBundle` open the
+state-labelled *toggle* picker instead; see
+[the `lfrBundle` command](#running-and-stopping-the-lfrbundle-command).)
 
 When [`fzf`](https://github.com/junegunn/fzf) is installed it drives a fuzzy
 picker (type to filter, `Enter` to choose); otherwise the launcher falls back
@@ -133,8 +140,8 @@ Pass `--debug` to start Tomcat with the JVM's JPDA debug agent enabled, so
 IntelliJ / Eclipse / VS Code can attach to it:
 
 ```bash
-lfrRunBundle --debug
-lfrRunBundle --debug /path/to/another/liferay-bundle
+lfrBundle <name> -d
+./start-liferay.sh --debug /path/to/another/liferay-bundle
 ```
 
 JPDA listens on port `8000` by default. If `8000` is already taken, the
@@ -142,8 +149,8 @@ script bumps to the next free port — same behaviour as the other ports — and
 prints the resolved value:
 
 ```
-Starting Liferay (Ctrl+C to stop).
-  Editor / portal: http://localhost:8080/
+Starting Liferay (Ctrl+C to stop; then press f to force-kill if it hangs).
+  Editor / portal: http://<LAN-IP>:8080/ (reachable from this machine and other devices on the network)
   Logs           : .../tomcat/logs/catalina.out
   JDK            : .../zulu17...
   Debug attach   : localhost:8000 (transport=dt_socket, suspend=n)
@@ -164,7 +171,7 @@ boots whether a debugger is attached or not. Pass `--suspend` (or set
 before starting:
 
 ```bash
-lfrRunBundle --suspend
+lfrBundle <name> -s
 ```
 
 Attach from your IDE using:
@@ -176,18 +183,20 @@ Attach from your IDE using:
 ### Running from anywhere
 
 Once you source the Liferay Tools aggregator (`lfrTools.sh`) from your shell rc,
-`lfrRunBundle` is available from any directory:
+`lfrBundle` (and its back-compat alias `lfrRunBundle`) is available from any
+directory:
 
 ```bash
-lfrRunBundle
-lfrRunBundle --debug
-lfrRunBundle --suspend
-lfrRunBundle /path/to/bundle
+lfrBundle
+lfrBundle <name> -d
+lfrBundle /path/to/bundle
 ```
 
-`lfrRunBundle` is a thin wrapper around `start-liferay.sh` (defined in
-`lfr-run.sh`). The script resolves its own location internally, so the bundled
-Elasticsearch config is still found regardless of where you call it from.
+These are the toggle (defined in `lfr-bundle.sh`): a stopped bundle is started
+through `start-liferay.sh`, a running one is stopped, and flags are forwarded
+only on the start path. The launcher resolves its own location internally, so
+the bundled Elasticsearch config is still found regardless of where you call
+it from.
 
 ### Running and stopping: the `lfrBundle` command
 
@@ -196,9 +205,9 @@ a stopped bundle or stops a running one, so you never blindly start a second
 copy (a bundle cannot run twice safely, since a second instance shares the same
 `catalina.base`, database, and OSGi state). A running bundle is a java process
 started with `catalina.sh run` (so it carries `-Dcatalina.base=`); that is how
-the tool finds running bundles and shows each one's PID, bundle name, and the
-TCP ports it is listening on (read from `ss`, so auto-picked ports show their
-real value).
+the tool finds running bundles and shows each one's PID, full bundle path (so
+same-named bundles across roots stay distinguishable), and the TCP ports it is
+listening on (read from `ss`, so auto-picked ports show their real value).
 
 ```bash
 lfrBundle                # picker over every known bundle with its state; selecting one toggles it. Esc cancels
@@ -207,17 +216,34 @@ lfrBundle <name> -c      # start-flags (here --clean) are forwarded to start-lif
 lfrBundle <name> -t      # start as a testIntegration target (exposes the test connectors)
 lfrBundle status         # just list running bundles and their ports
 lfrBundle stop-all       # stop every running bundle (asks to confirm)
+lfrBundle cd [<name>]    # cd to a bundle's Liferay home; never starts or stops anything
+lfrBundle upgrade [<name>] [args]   # run a stopped bundle's database upgrade tool
 ```
+
+`lfrBundle cd` jumps into the bundle to edit `portal-ext.properties`, read
+logs, or run a tool by hand. It lands in the Liferay home: the bundle
+directory itself, or the nested `liferay-dxp/` of a packaged DXP bundle. With
+no name it opens the same state-labelled picker as the toggle.
+
+`lfrBundle upgrade` runs the bundle's
+`tools/portal-tools-db-upgrade-client/db_upgrade_client.sh` in the foreground,
+so its output streams to your terminal and its interactive shell works; extra
+args are passed through to the client. It refuses while that bundle is
+running, since the upgrade needs the database to itself.
 
 Start flags are passed through to `start-liferay.sh` when a stopped bundle is
 started, and ignored when a running bundle is stopped. Each has a short alias:
 `-c` (`--clean`), `-cc` (`--clean-cache`), `-d` (`--debug`), `-s` (`--suspend`),
-`-p` (`--pick`), `-t` (`--test`), `-y` (`--yes`), `-j` (`--jdk <path>`), and `-dbd`
-(`--db-docker <container>`). Stopping sends `SIGTERM` for a clean
-JVM shutdown, waits up to 10s, then `SIGKILL`s anything still alive. The picker
-lists bundles under `LFR_BUNDLES_DIRS`; give a path to toggle a bundle outside
-those roots. `lfrRunBundle` / `lfrrb` remain as back-compat aliases (they now
-toggle, like `lfrBundle`).
+`-t` (`--test`), `-y` (`--yes`), `-j` (`--jdk <path>`), and `-dbd`
+(`--db-docker <container>`). Do not forward `--pick`/`-p`: it opens the
+launcher's own second picker, whose choice replaces the bundle you just
+toggled. Stopping sends `SIGTERM` for a clean JVM shutdown, waits up to 10s,
+then `SIGKILL`s anything still alive. The picker lists the launchable Tomcat
+bundles under `LFR_BUNDLES_DIRS` (needs `LfrCommon` loaded, with
+`LFR_BUNDLES_PRIORITY` names floated to the top); give a path to toggle a
+bundle outside those roots. `status`/`ls`, `stop-all`/`stopall`, and
+`help`/`-h`/`--help` are synonyms. `lfrRunBundle` / `lfrrb` remain as
+back-compat aliases (they now toggle, like `lfrBundle`).
 
 A picker entry a repo shares via [lfrShare](../LfrShare/README.md) is tagged
 `shared <- <repo>`, so you can see a bundle is a deploy target before you stop
@@ -233,33 +259,34 @@ The launcher picks a JDK automatically based on the bundle's name:
 
 | Bundle name pattern | JDK chosen |
 |---|---|
-| `liferay-portal-6.*`, `liferay-dxp-7.0.*`, `liferay-dxp-7.1.*` | JDK 8 |
-| `liferay-dxp-7.2.*`, `liferay-dxp-7.3.*` | JDK 11 |
-| `liferay-dxp-7.4.*`, `liferay-dxp-tomcat-2023.*`, `liferay-dxp-tomcat-2024.*` | JDK 11 |
+| `liferay-portal-6.*`, `liferay-dxp-digital-enterprise-7.0.*`, `liferay-dxp-7.0.*`, `liferay-dxp-7.1.*` | JDK 8 |
+| `liferay-dxp-7.2.*`, `liferay-dxp(-tomcat)-7.3.*` | JDK 11 |
+| `liferay-dxp(-tomcat)-7.4.*`, `liferay-dxp-tomcat-2023.*`, `liferay-dxp-tomcat-2024.*` | JDK 11 |
 | `liferay-dxp-tomcat-2025.*`, `liferay-dxp-tomcat-2026.*` | JDK 17 |
+| anything else (dev bundles like `liferay-bundle-master`) | JDK 17 |
 
-The actual JDK paths are constants near the top of `start-liferay.sh`
-(`JDK_8`, `JDK_11`, `JDK_17`, `JDK_21`). Edit them if your machine keeps
-JDKs in different locations.
+The JDK paths come from `start-liferay.conf` (`JDK_8`, `JDK_11`, `JDK_17`,
+`JDK_21`); edit that file if your machine keeps JDKs in different locations.
+`JDK_21` is never chosen by name detection, only via `--jdk` or `JAVA_HOME`.
 
 To override the detection per-run, use `--jdk`:
 
 ```bash
-lfrRunBundle --pick --jdk ${HOME}/liferay/tools/jvm/jdk-11
-lfrRunBundle --jdk=/path/to/jdk /path/to/bundle
+lfrBundle <name> -j ${HOME}/liferay/tools/jvm/jdk-11
+./start-liferay.sh --jdk=/path/to/jdk /path/to/bundle
 ```
 
 Or export `JAVA_HOME` before invoking:
 
 ```bash
-JAVA_HOME=${HOME}/liferay/tools/jvm/jdk-11 lfrRunBundle --pick
+JAVA_HOME=${HOME}/liferay/tools/jvm/jdk-11 ./start-liferay.sh --pick
 ```
 
 The launcher logs the chosen JDK and where it came from:
 
 ```
-Starting Liferay (Ctrl+C to stop).
-  Editor / portal: http://localhost:8081/
+Starting Liferay (Ctrl+C to stop; then press f to force-kill if it hangs).
+  Editor / portal: http://<LAN-IP>:8081/ (reachable from this machine and other devices on the network)
   Logs           : .../tomcat/logs/catalina.out
   JDK            : /home/.../jdk-11.0.22 (auto-detected for liferay-dxp-7.3.10.u27)
 ```
@@ -330,7 +357,8 @@ a manual copy) before boot, keeping a single authoritative copy in `osgi/test`.
 There are two levels of clean, both prompting for confirmation. The prompt takes
 only `y` or `n` (anything else, including a bare Enter, re-asks, so a stray key
 never triggers a wipe): `y` cleans, `n` skips just the clean and still starts the
-bundle. Pass `--yes` / `-y` to skip the prompt and clean:
+bundle. With no interactive stdin the prompt answers `n` by itself. Pass
+`--yes` / `-y` to skip the prompt and clean:
 
 | Flag | What it does |
 |---|---|
@@ -342,8 +370,8 @@ When both are given, `--clean` wins.
 #### Full clean (`--clean`)
 
 ```bash
-lfrRunBundle --clean
-lfrRunBundle --clean --yes         # skip the confirmation prompt
+lfrBundle <name> -c
+lfrBundle <name> -c -y      # skip the confirmation prompt
 ```
 
 After confirmation it:
@@ -361,7 +389,7 @@ connections.
 #### Cache clean (`--clean-cache`)
 
 ```bash
-lfrRunBundle --clean-cache
+lfrBundle <name> -cc
 ```
 
 The light version: it removes only `osgi/state`, `work`, and the Tomcat
@@ -373,11 +401,12 @@ database — no database connection is touched.
 host is reset through the normal path. If the database is only reachable inside
 a container's network, the launcher prints what `portal-ext.properties` expects
 plus the running containers and their ports, and lets you pick one to reset
-inside via `docker exec`. To target a container directly (and skip the prompt),
-pass `--db-docker <container>`:
+inside via `docker exec`. Under `--yes` that picker is skipped and the run
+aborts instead, telling you to re-run with `--db-docker`. To target a container
+directly (and skip the prompt), pass `--db-docker <container>`:
 
 ```bash
-lfrRunBundle --clean --db-docker pg-db
+lfrBundle <name> -c -dbd pg-db
 ```
 
 ### Stopping the server
@@ -385,9 +414,10 @@ lfrRunBundle --clean --db-docker pg-db
 `Ctrl+C` stops the server: it sends `SIGTERM` for a clean shutdown and waits for
 Tomcat to exit. That is all `Ctrl+C` ever does (pressing it again just re-shows
 the hint), so an accidental double-tap can never hard-kill a still-shutting-down
-JVM. If Tomcat genuinely hangs, press the `f` key to force-kill the whole process
-tree (the JVM plus the Elasticsearch sidecar) with `SIGKILL`. No background
-processes are left behind.
+JVM. If Tomcat genuinely hangs during that shutdown, press the `f` key to
+force-kill the whole process tree (the JVM plus the Elasticsearch sidecar) with
+`SIGKILL`; `f` only works after `Ctrl+C`, never during a normal run. No
+background processes are left behind.
 
 (On a TTY the script runs `catalina.sh run` in the background and waits, so it
 can pin the status bar, redraw on resize, and handle `Ctrl+C` as above; piped or
@@ -441,8 +471,8 @@ Tomcat : .../liferay-dxp/tomcat
 Elasticsearch config written: .../osgi/configs/...elasticsearch8...config (http AUTO, transport 9301)
 portal.instance.inet.socket.address set to localhost:8080
 
-Starting Liferay (Ctrl+C to stop).
-  Editor / portal: http://localhost:8080/
+Starting Liferay (Ctrl+C to stop; then press f to force-kill if it hangs).
+  Editor / portal: http://<LAN-IP>:8080/ (reachable from this machine and other devices on the network)
   Logs           : .../tomcat/logs/catalina.out
   JDK            : .../zulu17...
 
@@ -469,8 +499,8 @@ Selected ports:
 server.xml backed up to .../server.xml.bak.20260505-113412
 server.xml updated.
 
-Starting Liferay (Ctrl+C to stop).
-  Editor / portal: http://localhost:8081/
+Starting Liferay (Ctrl+C to stop; then press f to force-kill if it hangs).
+  Editor / portal: http://<LAN-IP>:8081/ (reachable from this machine and other devices on the network)
   ...
 ```
 
@@ -483,23 +513,24 @@ backup file is in the same directory:
 cp .../tomcat/conf/server.xml.bak.<latest> .../tomcat/conf/server.xml
 ```
 
-The Elasticsearch config can be reset by deleting the deployed copy and
-re-running the launcher:
-
-```bash
-rm <bundle>/.../osgi/configs/com.liferay.portal.search.elasticsearch7.configuration.ElasticsearchConfiguration.config
-./start-liferay.sh
-```
+The Elasticsearch config is computed and rewritten on every run, so there is
+no original to restore: deleting the deployed copy and re-running just
+regenerates the same file. Delete it only if you are retiring the bundle or
+switching to an external Elasticsearch.
 
 ## Notes
 
-- The script only modifies `server.xml` and writes one file into
-  `osgi/configs/` on first run. It never touches the database, deploy
-  folder, or anything else inside the bundle.
-- It does **not** rewrite `portal-ext.properties` or `portal.properties`.
-  If you need URL generation to use the resolved HTTP port (for example
-  when running behind a reverse proxy), set `web.server.http.port`
-  separately.
+- On a plain launch the script touches: `server.xml` (only when the resolved
+  ports differ from the file), the Elasticsearch `.config` in `osgi/configs/`
+  (rewritten every run), the `portal.instance.inet.socket.address` line in
+  `portal-ext.properties` (every run), `glowroot/admin.json` when present, and
+  it pre-creates `osgi/war`/`osgi/portal-war`. `--test` also seeds the test
+  connector `.config`s and the `module.framework.auto.deploy.dirs` line (both
+  removed again by a non-test launch). Only `--clean` touches the database or
+  the data folders.
+- It does **not** set `web.server.http.port`. If you need URL generation to
+  use the resolved HTTP port (for example when running behind a reverse
+  proxy), set it separately.
 - Multiple bundles can be launched in parallel by calling the script with
   different bundle paths. Each call picks its own non-conflicting port
   set; the per-bundle `server.xml` keeps its own assigned ports between

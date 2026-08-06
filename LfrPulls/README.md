@@ -6,15 +6,17 @@ for one ticket, and count what you have sent, merged, and had rejected per month
 
 ## Commands
 
-- `lfrPulls` (alias `lfrp`) — list open PRs. Yours by default; `all` shows every
-  open PR.
+- `lfrPulls [mine|all]` (alias `lfrp`) — list open PRs. Yours by default
+  (`mine`); `all` shows every open PR. `-m`/`--mine` and `-a`/`--all` work too.
 - `lfrPulls ticket <TICKET>` (`t`, alias `lfrpt`) — every pull ever opened for one
   ticket, oldest first, then what that ticket has landed on the master ref. A bare
   ticket is the same thing: `lfrPulls LPD-12345`.
-- `lfrPulls week [days]` — your pulls closed in the last `days` (default 7), as
+- `lfrPulls week [days]` (`w` or `recent`, alias `lfrpw`) — your pulls closed in
+  the last `days` (default 7, reading at most 200 closed PRs), as
   PR / SENDER / STATUS / TITLE, where STATUS is `MERGED` or `REJECTED`.
-- `lfrPulls stats [mine|all] [months]` — per-month counts of PRs sent, merged,
-  and rejected, with a TOTAL row. Yours by default; months default to 12.
+- `lfrPulls stats [mine|all] [months]` (`s` or `st`, alias `lfrps`) — per-month
+  counts of PRs sent, merged, and rejected, with a TOTAL row. Yours by default;
+  months default to 12 (reading at most your last 500 PRs).
 
 ```bash
 lfrPulls               # open PRs from your fork or opened by you
@@ -106,7 +108,10 @@ A PR on the mirror is either forwarded by the CI bot or opened directly:
 - **Direct** — the author is you, with a plain head branch. `lfrPulls` matches
   the author against your login (`LFR_PULLS_USER`).
 
-A PR counts as yours if either matches.
+The open list counts a PR as yours if either matches. `week` and `stats mine`
+are narrower: they query GitHub by author only (`LFR_PULLS_USER`), so pulls
+forwarded by the CI bot from your fork do not appear in them, and their SENDER
+column can only ever show your own login.
 
 ## Config
 
@@ -122,5 +127,7 @@ cp lfr-pulls.local.conf.example lfr-pulls.local.conf
   your team fork org, or your GitHub login if you forward from a personal fork.
 - `LFR_PULLS_USER` — your GitHub login (defaults to the `gh`-authed user).
 - `LFR_PULLS_MASTER_REPO` — local clone to grep for merges (defaults to the
-  current repo). Set it so `stats` works from any directory.
-- `LFR_PULLS_MASTER_REF` — master ref to grep (default `brian/master`).
+  current repo). Set it so `stats mine`, `week`, and `ticket`'s landing footer
+  work from any directory (`stats all` needs no clone).
+- `LFR_PULLS_MASTER_REF` — master ref to grep (default `brian/master`), used by
+  the same three.

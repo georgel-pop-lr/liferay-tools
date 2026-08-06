@@ -1,4 +1,5 @@
-# lfr-bundle.sh — start/stop Liferay bundles by toggling (the lfrBundle command).
+# lfr-bundle.sh — manage Liferay bundles (the lfrBundle command): toggle
+# start/stop, cd to one, or run its database upgrade tool.
 #
 # Loaded via the root lfrTools.sh. Defines lfrBundle (short alias lfrb):
 #   lfrBundle [<bundle>] [start-flags]  toggle a bundle: start it if stopped
@@ -7,6 +8,8 @@
 #                                       picker shows every bundle's state; Esc cancels.
 #   lfrBundle status                    list the running bundles and their ports
 #   lfrBundle stop-all                  stop every running bundle (confirms)
+#   lfrBundle cd [<bundle>]             jump to a bundle's Liferay home, no start
+#   lfrBundle upgrade [<bundle>]        run the bundle's database upgrade tool
 #
 # A running bundle is a java process started by `catalina.sh run`, so it carries
 # -Dcatalina.base=<bundle>/tomcat-x.y.z; that is how we find them. Ports come
@@ -130,19 +133,10 @@ _lfrBundleResolve() {
 	esac
 }
 
-# Toggle a bundle. $1 is an optional bundle name/path (empty opens the picker);
-# the rest are start-liferay.sh flags forwarded when starting a stopped bundle.
-_lfrBundleToggle() {
-	local name="${1-}"
-	shift 2>/dev/null
-	local path running pid base entries epath ename pidfor state shared repos
-	if [ -n "${name}" ]; then
-		path="$(_lfrBundleResolve "${name}")" || return 1
-		_lfrBundleToggleOne "${path}" "$@"
-		return
-	fi
-
-	# Picker over every known bundle, each labelled with its current state.
+# Picker over every known bundle, each labelled with its current state; $1 is
+# the prompt. Echoes the chosen bundle path.
+_lfrBundlePickWithState() {
+	local prompt="${1}" running pid base entries epath ename pidfor state shared repos
 	if ! declare -F _lfrBundleEntries >/dev/null 2>&1; then
 		echo "lfrBundle: bundle list needs LfrCommon loaded; pass a bundle name." >&2
 		return 1
@@ -170,8 +164,69 @@ _lfrBundleToggle() {
 		entries+="${epath}"$'\t'"${ename}  [${state}${shared}]"$'\n'
 	done < <(_lfrBundleEntries)
 	[ -z "${entries}" ] && { echo "lfrBundle: no bundles found under: ${LFR_BUNDLES_DIRS[*]}" >&2; return 1; }
-	path="$(printf '%s' "${entries}" | _lfrPick 'toggle bundle> ')" || return 1
+	printf '%s' "${entries}" | _lfrPick "${prompt}"
+}
+
+# Resolve an optional bundle name/path ($1), opening the picker with prompt $2
+# when it is empty. Echoes the bundle path.
+_lfrBundleNameOrPick() {
+	if [ -n "${1}" ]; then
+		_lfrBundleResolve "${1}"
+	else
+		_lfrBundlePickWithState "${2}"
+	fi
+}
+
+# Toggle a bundle. $1 is an optional bundle name/path (empty opens the picker);
+# the rest are start-liferay.sh flags forwarded when starting a stopped bundle.
+_lfrBundleToggle() {
+	local name="${1-}"
+	shift 2>/dev/null
+	local path
+	path="$(_lfrBundleNameOrPick "${name}" 'toggle bundle> ')" || return 1
 	_lfrBundleToggleOne "${path}" "$@"
+}
+
+# Echo a bundle's Liferay home: the bundle dir itself, or liferay-dxp/ inside
+# it when a packaged DXP bundle nests its Tomcat and portal-ext there.
+_lfrBundleHome() {
+	if [ -d "${1}/liferay-dxp" ]; then
+		printf '%s\n' "${1}/liferay-dxp"
+	else
+		printf '%s\n' "${1}"
+	fi
+}
+
+# Jump (cd) to a bundle's Liferay home without starting anything, to edit its
+# portal-ext.properties, poke its logs, or run a tool by hand.
+_lfrBundleCd() {
+	local path
+	path="$(_lfrBundleNameOrPick "${1-}" 'cd bundle> ')" || return 1
+	cd "$(_lfrBundleHome "${path}")" || return 1
+}
+
+# Run the database upgrade tool of a bundle. $1 is an optional bundle
+# name/path; the rest go to db_upgrade_client.sh. Refuses while the bundle is
+# running, since the upgrade needs the database to itself.
+_lfrBundleUpgrade() {
+	local name=""
+	if [ "$#" -gt 0 ] && [ "${1#-}" = "${1}" ]; then
+		name="${1}"
+		shift
+	fi
+	local path pid dir
+	path="$(_lfrBundleNameOrPick "${name}" 'upgrade bundle> ')" || return 1
+	pid="$(_lfrBundlePidForDir "${path}")"
+	if [ -n "${pid}" ]; then
+		echo "lfrBundle: $(basename "${path}") is running (PID ${pid}); stop it before upgrading." >&2
+		return 1
+	fi
+	dir="$(_lfrBundleHome "${path}")/tools/portal-tools-db-upgrade-client"
+	if [ ! -x "${dir}/db_upgrade_client.sh" ]; then
+		echo "lfrBundle: no upgrade client at ${dir}" >&2
+		return 1
+	fi
+	(cd "${dir}" && ./db_upgrade_client.sh "$@")
 }
 
 lfrBundle() {
@@ -190,16 +245,31 @@ lfrBundle() {
 		_lfrBundleStopAll
 		return 0
 		;;
+	cd)
+		shift
+		_lfrBundleCd "${1-}"
+		return
+		;;
+	upgrade)
+		shift
+		_lfrBundleUpgrade "$@"
+		return
+		;;
 	help | -h | --help)
 		cat <<-'EOF'
-			lfrBundle — start or stop a Liferay server bundle (a toggle).
+			lfrBundle — Liferay server bundles: toggle start/stop, jump to one,
+			or run its database upgrade.
 
 			Usage:
-			  lfrBundle               pick a bundle from a list, then toggle it
-			  lfrBundle <bundle>      toggle the named bundle (by name or path)
-			  lfrBundle <bundle> -d   start it in the mode set by the flags below
-			  lfrBundle status        show every bundle and whether it is running
-			  lfrBundle stop-all       stop every running bundle
+			  lfrBundle                    pick a bundle from a list, then toggle it
+			  lfrBundle <bundle>           toggle the named bundle (by name or path)
+			  lfrBundle <bundle> -d        start it with the flags below
+			  lfrBundle status             list the running bundles and their ports
+			  lfrBundle stop-all           stop every running bundle (asks first)
+			  lfrBundle cd [<bundle>]      cd to a bundle's Liferay home; never
+			                               starts or stops anything
+			  lfrBundle upgrade [<bundle>] run a stopped bundle's database upgrade
+			                               tool (extra args go to db_upgrade_client.sh)
 
 			Toggle means a stopped bundle is started and a running one is stopped.
 			Press Esc to cancel the picker.

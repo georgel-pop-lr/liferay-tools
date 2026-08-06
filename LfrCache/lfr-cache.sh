@@ -201,8 +201,9 @@ EOF
 			  lfrCache seed [repo]   copy a repo's existing cache into the shared dir
 			  lfrCache prune [repo]  delete a sharing repo's orphaned per-repo cache
 
-			Omit [repo] to use the current repo (or a picker). A hard `git clean`
-			wipes the init script, so re-run `lfrCache on` after one.
+			Omit [repo] to pick from a list; status defaults to the current repo
+			and prune then covers every sharing repo. A hard `git clean` wipes
+			the init script, so re-run `lfrCache on` after one.
 		EOF
 		;;
 	*)

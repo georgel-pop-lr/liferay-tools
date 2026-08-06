@@ -24,11 +24,11 @@ cp lfr-git.local.conf.example lfr-git.local.conf
 | Command | Short | What it does |
 | --- | --- | --- |
 | `lfrGitCleanDry` | `lfrgcd` | Preview what `git clean` would remove. Run this first. |
-| `lfrGitClean` | `lfrgc` | Remove untracked and ignored files, keeping `*.iml`, `.idea`, and `app.server/build/test.$USER.properties`. |
+| `lfrGitClean` | `lfrgc` | Remove untracked and ignored files, keeping `*.iml`, `.idea`, and your `app.server.$USER.properties`, `build.$USER.properties`, and `test.$USER.properties`. |
 | `lfrGitSync [org]` | `lfrgs` | `gh repo sync <org>/liferay-portal --source <upstream>/liferay-portal`. `org` defaults to `LFR_GIT_FORK_ORG`. |
 | `lfrGitSyncEE [org]` | `lfrgse` | Same for `liferay-portal-ee` master. |
 | `lfrGitRebase [N]` | `lfrgr` | `git rebase -i HEAD~N` (N defaults to 20). |
-| `lfrGitUpdateMaster [-r] [-f] [-p] [rebase-target]` | `lfrgum` | Update every local `master*` branch from the `<remote>/master` it tracks (`master` from upstream, `masterBrian` from brian) and sync the team fork; `-r` rebases the current branch onto a target (default `upstream/master`, or pass a remote/branch), `-f` forces it, `-p` force-pushes it. |
+| `lfrGitUpdateMaster [-r] [-f] [-p] [rebase-target]` | `lfrgum` | Update each mirror configured in `LFR_GIT_MASTER_MIRRORS` from its `<remote>/master` (e.g. `master` from upstream, `masterBrian` from brian) and sync the team fork; `-r` rebases the current branch onto a target (default `upstream/master`, or pass a remote/branch), `-f` forces the rebase (implies `-r`), `-p` force-pushes it after (implies `-r`). A target without `-r` is an error. |
 
 `lfrGitSync`/`lfrGitSyncEE` take an optional fork org to sync a different fork
 than the configured `LFR_GIT_FORK_ORG`, e.g. `lfrGitSync my-other-org`.
@@ -39,11 +39,14 @@ are the `branch:remote` pairs in `LFR_GIT_MASTER_MIRRORS` (default
 both `master` and `masterBrian`.
 
 1. For each configured `branch:remote` pair (e.g. `master:upstream`,
-   `masterBrian:brian`): fetch `<remote>/master` (no tags), push it to your fork
-   under `<branch>` (creating the branch on the fork if missing, and forcing with
+   `masterBrian:brian`): fetch `<remote>/master` (no tags), push it to the
+   branch's push remote (its `@{push}` remote, falling back to `origin`) under
+   `<branch>` (creating the branch on the fork if missing, and forcing with
    `--force-with-lease` if the fork diverged because the source rewrote master),
    and update the local `<branch>` to it, wherever it is checked out:
-   - not checked out anywhere: the ref is moved straight to the target.
+   - not checked out anywhere: the ref is moved straight to the target, even
+     when it has diverged (a mirror is a pure copy, so a divergence is the
+     source's own rewritten history, and it is reset to the target).
    - checked out here: fast-forwarded in place, so your files move with it.
    - checked out in another worktree: the fast-forward runs *inside* that
      worktree (`git -C <worktree> merge --ff-only`), so its ref, index, and files
@@ -52,10 +55,11 @@ both `master` and `masterBrian`.
      as a local modification, which is why git refuses it outright.
 
    So a mirror ends up current no matter which worktree you run from. Two cases
-   are still left for you, both reported: the source rewrote master (the mirror
-   has diverged, and only a `reset --hard` fixes it, which drops commits), and a
-   fast-forward git itself refuses because local changes in that worktree are in
-   the way. Unrelated local edits there are fine and are carried across.
+   are still left for you, both reported, and only where the mirror is checked
+   out: the source rewrote master (the checked-out mirror has diverged, and only
+   a `reset --hard` fixes it, which drops commits), and a fast-forward git itself
+   refuses because local changes in that worktree are in the way. Unrelated
+   local edits there are fine and are carried across.
 2. Sync the team fork: `lfrGitSync`, or `lfrGitSyncEE` when the repo's remotes
    point at `liferay-portal-ee` (detected by remote, not folder name).
 3. With `-r`/`--rebase`, rebase the current branch onto a target, skipped when you
@@ -68,7 +72,10 @@ both `master` and `masterBrian`.
 
 List your mirrors in `LFR_GIT_MASTER_MIRRORS`; each is created if missing (locally,
 tracking `<remote>/master`, and on your fork), so a fresh clone just needs the
-config. A pair whose remote does not exist is skipped with a note.
+config. A pair whose fetch fails (missing remote, network) is skipped with a
+note, as is a malformed pair (anything not `branch:remote`).
+
+Every command accepts `-h`/`--help` and prints this module's usage.
 
 `lfrGitClean` and `lfrGitCleanDry` accept extra `git clean` arguments, e.g.
 `lfrGitClean modules/apps/some-app`.

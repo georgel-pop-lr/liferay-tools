@@ -243,7 +243,8 @@ lfrShare() {
 			  lfrShare status [repo]      show which bundle the repo(s) point at
 			  lfrShare reset [repo]       restore the repo's original bundle config
 
-			Omit [repo] to use the current repo (or a picker).
+			Omit [repo] to pick from a list; pass a path to skip the picker or
+			a name to prefilter it.
 		EOF
 		;;
 	*)

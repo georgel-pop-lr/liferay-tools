@@ -15,3 +15,10 @@ LFR_PULLS_MINE_ORG="your-team-fork-org"
 # the gh-authenticated user. A PR counts as yours if it is forwarded from
 # LFR_PULLS_MINE_ORG or authored by LFR_PULLS_USER.
 LFR_PULLS_USER="your-github-login"
+
+# Local clone whose history is grepped for merged titles (stats mine, week, and
+# ticket's landing footer). Defaults to the repo you run the command from.
+#LFR_PULLS_MASTER_REPO="${HOME}/liferay/repos/liferay-portal"
+
+# The master ref grepped in that clone. Keep it fetched (lfrGitUpdateMaster).
+#LFR_PULLS_MASTER_REF="brian/master"

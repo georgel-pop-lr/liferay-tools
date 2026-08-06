@@ -23,14 +23,18 @@ Build helpers for Liferay repos. Loaded as shell functions via the root
    repo that points at it (and defeats sharing, which is to run a prebuilt bundle
    without rebuilding). When the target bundle is shared, it aborts and names the
    sharing repos; reset the share (`lfrShare reset`) first, or pass `--force`.
+   When the repo's bundle cannot be resolved this guard is skipped.
 3. **One at a time.** Two full builds at once thrash and can corrupt the shared
    Gradle build cache, so a machine-wide (per-user) lock refuses a second
-   `ant all` while one is running. This lock is always enforced, even with
-   `--force`; a stale lock from a build that died is reclaimed automatically.
+   `ant all` (exit code 3, naming the holder) while one is running. This lock is
+   always enforced, even with `--force`; a stale lock from a build that died is
+   reclaimed automatically.
 
-`--force` / `-f` bypasses guards 1 and 2 only. Extra arguments are forwarded to
-`ant all`.
+`--force` / `-f` (accepted anywhere in the arguments, and consumed rather than
+forwarded) bypasses guards 1 and 2 only. All other arguments are forwarded to
+`ant all`. `-h`/`--help` prints usage.
 
 Bundle detection is shared with `LfrBundle` (`_lfrBundleProcs`,
-`_lfrBundlePidForDir`); the shared-bundle lookup with `LfrShare`
-(`_lfrShareReposForBundle`).
+`_lfrBundlePidForDir`, `_lfrBundleList`); the shared-bundle lookup with
+`LfrShare` (`_lfrShareReposForBundle`). Guards 1 and 2 are no-ops when those
+modules are not loaded.

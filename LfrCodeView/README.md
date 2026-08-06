@@ -11,7 +11,7 @@ Loaded as the `lfrCodeView` shell function (short alias `lfrcv`) via the root
 | Command | Effect |
 | --- | --- |
 | `lfrCodeView` | Everything about the current branch: your uncommitted changes, the branch against its base, and one line per commit it adds. |
-| `lfrCodeView -a [ticket]` | That ticket's commits on **every** ref instead: the copy on master, the backports on release branches. The ticket defaults to the one in the branch name (`LPD-12345-fix` -> `LPD-12345`). |
+| `lfrCodeView -a [ticket]` | That ticket's commits on **every** ref instead: the copy on master, the backports on release branches. The ticket defaults to the one in the branch name (`LPD-12345-fix` -> `LPD-12345`). `--all` is the long form; `-h`/`--help` prints usage. |
 
 On a ticket branch that is what you want by default:
 
@@ -28,7 +28,9 @@ view> local   uncommitted         2 file(s), untracked included
 ## What the picker offers
 
 The same picker `lfrRepo` uses (`fzf`, or a numbered menu when `fzf` is missing),
-with the highlighted entry's diffstat in the preview pane:
+with the highlighted entry previewed in the side pane: a diffstat for a commit
+or the branch range, `git status --short` for the local entry. With exactly one
+entry, `fzf` auto-selects it and its diff opens without showing the list:
 
 | Entry | Shows |
 | --- | --- |
@@ -55,22 +57,25 @@ index, stash, or checkout is touched.
 
 Coming back does not lose your place: the list reopens with the cursor on the
 entry you just read, not at the top (`fzf --sync --bind start:pos(N)`, with the
-line resolved from the entry's value). So reading a branch commit by commit is
-just left, down, right.
+line resolved from the entry's value; the numbered fallback has no cursor to
+restore). So reading a branch commit by commit is just left, down, right.
 
 Going back works inside the diff itself, without leaving the pager first: `less`
 is started with a `LESSKEYIN` file that rebinds `b` and the left arrow to quit
 with an exit status of their own (98), which the loop reads as "back to the list"
 while `q` still means quit. That needs `less` 582 or newer (`LESSKEYIN` in source
 form), which is the pager unless `GIT_PAGER` or `PAGER` says otherwise; with any
-other pager the same choice is asked as a one-key prompt right after it exits.
+other pager the same choice is asked as a one-key prompt right after it exits
+(`←`, `b`, or a bare Enter go back; anything else quits; with no interactive
+stdin the loop just ends).
 
 Rebinding the left arrow costs only left horizontal scrolling, which wrapped
 diffs do not use, and `ESC-(` still does it.
 
-The pager runs without `-F` on purpose, so a diff that fits on one screen still
-waits, and without `-X`, so closing it clears the diff and the list comes back on
-a clean screen.
+On the `less`-582 path the pager runs without `-F` on purpose, so a diff that
+fits on one screen still waits, and without `-X`, so closing it clears the diff
+and the list comes back on a clean screen. The fallback default is `less -FRX`,
+where a one-screen diff exits immediately and stays on screen.
 
 The list keys and the preview are `fzf`'s. Without `fzf` the list is the numbered
 menu `lfrRepo` falls back to, answered with a number; the diff keys work either

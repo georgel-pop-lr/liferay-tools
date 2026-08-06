@@ -25,7 +25,7 @@ _lfrCodeViewHelp() {
 		                            the branch name, LPD-12345-fix -> LPD-12345)
 
 		The picker lists, leaving out what does not apply, and previews the
-		highlighted entry's diffstat:
+		highlighted entry (a diffstat; local previews git status --short):
 
 		  local  uncommitted   git diff HEAD, then each untracked file
 		  branch vs <base>     git diff <base>...HEAD, all the branch adds

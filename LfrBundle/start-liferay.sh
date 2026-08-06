@@ -46,7 +46,7 @@
 # live server: it adds osgi/test to module.framework.auto.deploy.dirs so the whole
 # test-support set (com.liferay.portal.test, the *.test.util jars, and the
 # Arquillian/DataGuard connectors) is scanned in place, and seeds each connector a
-# per-instance port from the HTTP offset (8080 -> 32763, 8081 -> 32764, ...), so
+# per-instance port from the HTTP offset (8080 -> 32763, 8081 -> 32804, ...), so
 # parallel test bundles never clash. Without it the bundle stays lean (the scan
 # override is removed). Run tests with -Dliferay.arquillian.port=<the printed port>.
 #
