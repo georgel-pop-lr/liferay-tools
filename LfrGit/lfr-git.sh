@@ -6,7 +6,8 @@
 #     lfrGitSync       sync a fork's liferay-portal from upstream ([org] optional)
 #     lfrGitSyncEE     sync a fork's liferay-portal-ee master from upstream ([org] optional)
 #     lfrGitRebase     interactive rebase over the last N commits (default 20)
-#     lfrGitUpdateMaster  update each master* mirror from the <remote>/master it tracks + sync; -r rebase current branch onto a target (default upstream), -f force, -p force-push ([-r] [-f] [-p] [rebase-target])
+#     lfrGitRebaseOnto replay only this branch's own commits onto a target (default upstream/master), dropping the mirror history it was rebased onto ([target])
+#     lfrGitUpdateMaster  update each master* mirror from the <remote>/master it tracks + sync; -r rebase current branch onto a target (default upstream), -f force, -o cut at the fork point, -p force-push ([-r] [-f] [-o] [-p] [rebase-target])
 #
 # Per-user settings (your team fork org) live in lfr-git.local.conf next to this
 # file. It is gitignored. Copy lfr-git.local.conf.example to lfr-git.local.conf.
@@ -39,14 +40,26 @@ _lfrGitHelp() {
 		                       upstream (org defaults to LFR_GIT_FORK_ORG)
 		  lfrGitSyncEE [org]   same, for liferay-portal-ee
 		  lfrGitRebase [N]     interactive rebase over the last N commits (default 20)
-		  lfrGitUpdateMaster [-r] [-f] [-p] [target]
+		  lfrGitRebaseOnto [target]
+		                       replay only this branch's own commits onto <target>
+		                       (default upstream/master), dropping any mirror
+		                       history it was rebased onto in between: use it when
+		                       a branch ended up on masterBrian and belongs on
+		                       master. Updates no mirror and syncs no fork.
+		  lfrGitUpdateMaster [-r] [-f] [-o] [-p] [target]
 		                       refresh your master mirror branches from their
 		                       remotes and sync your fork, from any worktree: a
 		                       mirror checked out elsewhere is fast-forwarded
 		                       inside that worktree, so it lands wherever it
 		                       lives; with -r also rebase the current branch onto
 		                       <target> (default upstream/master), -f forces the
-		                       rebase, -p then force-pushes it
+		                       rebase, -o cuts at the branch's own fork point,
+		                       -p then force-pushes it
+
+		Aliases: lfrgc lfrgcd lfrgs lfrgse lfrgr lfrgro lfrgum
+
+		A rebase only ever moves the branch's own commits, and refuses to replay
+		more than LFR_GIT_REBASE_MAX (default 50).
 	EOF
 }
 
@@ -177,30 +190,160 @@ _lfrGitUpdateLocalMaster() {
 	fi
 }
 
+# The mirrors to maintain, as "branch:remote" pairs one per line: whatever
+# LFR_GIT_MASTER_MIRRORS holds, else just the upstream master mirror.
+_lfrGitMirrors() {
+	if [ "${LFR_GIT_MASTER_MIRRORS+x}" = x ] && [ "${#LFR_GIT_MASTER_MIRRORS[@]}" -gt 0 ]; then
+		printf '%s\n' "${LFR_GIT_MASTER_MIRRORS[@]}"
+	else
+		printf '%s\n' "master:upstream"
+	fi
+}
+
+# Every ref a branch could have been rebased onto: each mirror's <remote>/master
+# and the local mirror branch that tracks it.
+_lfrGitMirrorRefs() {
+	local pair
+	while read -r pair; do
+		[ -n "${pair}" ] || continue
+		printf '%s\n%s\n' "${pair##*:}/master" "${pair%%:*}"
+	done < <(_lfrGitMirrors)
+}
+
+# Resolve a rebase target: empty -> upstream/master; a remote name -> its master;
+# anything else -> a branch or ref (e.g. masterBrian, brian/master).
+_lfrGitRebaseTarget() {
+	local target="${1-}"
+	if [ -z "${target}" ]; then
+		target="upstream/master"
+	elif git remote get-url "${target}" >/dev/null 2>&1; then
+		target="${target}/master"
+	fi
+	if ! git rev-parse --verify -q "${target}" >/dev/null 2>&1; then
+		echo "rebase target '${target}' not found." >&2
+		return 1
+	fi
+	printf '%s\n' "${target}"
+}
+
+# Where HEAD really forked from the master line. `git rebase <target>` always cuts
+# at merge-base(target, HEAD), so a branch you rebased onto another mirror carries
+# that mirror's commits between the target and your work, and the rebase replays
+# every one of them as yours (masterBrian runs hundreds of commits ahead of
+# upstream/master, so that is hundreds rewritten under your name). Compare every
+# mirror and echo the fork point that leaves the fewest commits to replay: that is
+# the one the branch was really built on.
+_lfrGitForkPoint() {
+	local target="${1}" base count mb n ref
+	base="$(git merge-base "${target}" HEAD)" || return 1
+	count="$(git rev-list --count "${base}..HEAD")"
+	while read -r ref; do
+		git rev-parse --verify -q "${ref}" >/dev/null 2>&1 || continue
+		mb="$(git merge-base "${ref}" HEAD 2>/dev/null)" || continue
+		n="$(git rev-list --count "${mb}..HEAD")"
+		if [ "${n}" -lt "${count}" ]; then
+			base="${mb}"
+			count="${n}"
+		fi
+	done < <(_lfrGitMirrorRefs)
+	printf '%s\n' "${base}"
+}
+
+# Rebase HEAD onto <target>, replaying only the branch's own commits: cut at the
+# real fork point with --onto whenever that differs from merge-base(target, HEAD),
+# which is exactly the case a plain rebase gets wrong. Refuses a run that would
+# replay more than LFR_GIT_REBASE_MAX commits (default 50), since no branch owns
+# that many; it means the fork point is wrong and the rebase is about to rewrite
+# other people's commits as yours. Returns 2 when there is nothing to do.
+# Args: <branch> <target> <force_rebase 0|1> <rebase_onto 0|1>
+_lfrGitRebaseOnto() {
+	local cur="${1}" target="${2}" force_rebase="${3}" rebase_onto="${4}"
+	local base target_base replay max
+	local -a rebase_args
+
+	target_base="$(git merge-base "${target}" HEAD)" || return 1
+	base="$(_lfrGitForkPoint "${target}")" || return 1
+
+	if [ "${base}" != "${target_base}" ] || [ "${rebase_onto}" = 1 ]; then
+		rebase_args=(--onto "${target}" "${base}")
+	elif [ "${force_rebase}" != 1 ] && git merge-base --is-ancestor "${target}" HEAD 2>/dev/null; then
+		echo "${cur} already on latest ${target}; nothing to rebase."
+		return 2
+	elif [ "${force_rebase}" = 1 ]; then
+		rebase_args=(--force-rebase "${target}")
+	else
+		rebase_args=("${target}")
+	fi
+
+	replay="$(git rev-list --count "${base}..HEAD")"
+	max="${LFR_GIT_REBASE_MAX:-50}"
+	if [ "${replay}" -gt "${max}" ]; then
+		echo "lfrGitRebaseOnto: rebasing ${cur} onto ${target} would replay ${replay} commits (limit ${max})." >&2
+		echo "  No branch owns that many, so the fork point is wrong and those commits are someone else's." >&2
+		echo "  See them with: git log --oneline $(git rev-parse --short "${base}")..HEAD" >&2
+		echo "  Override for this run with LFR_GIT_REBASE_MAX=${replay}." >&2
+		return 3
+	fi
+
+	if [ "${base}" != "${target_base}" ]; then
+		echo "${cur} sits on $(git rev-parse --short "${base}"), not on ${target}; replaying only its ${replay} own commit(s) onto ${target}..."
+	else
+		echo "Rebasing ${cur} onto ${target}..."
+	fi
+	git rebase "${rebase_args[@]}"
+}
+
+# Replay only the current branch's own commits onto <target> (default
+# upstream/master), dropping whatever mirror history it picked up in between: the
+# fix for a branch that ended up on masterBrian and belongs on master. Unlike
+# `lfrGitUpdateMaster -r`, this touches no mirror and syncs no fork.
+# Args: lfrGitRebaseOnto [target]
+lfrGitRebaseOnto() {
+	case "${1-}" in -h | --help) _lfrGitHelp; return 0 ;; esac
+	local cur target
+	if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+		echo "lfrGitRebaseOnto: not inside a git repo" >&2
+		return 1
+	fi
+	cur="$(git rev-parse --abbrev-ref HEAD)"
+	case "${cur}" in
+	master*)
+		echo "lfrGitRebaseOnto: ${cur} is a master mirror; not rebasing it." >&2
+		return 1
+		;;
+	esac
+	target="$(_lfrGitRebaseTarget "${1-}")" || return 1
+	_lfrGitRebaseOnto "${cur}" "${target}" 0 1
+}
+
 # Keep your master mirrors current in one run. The mirrors to maintain are a list
 # of "branch:remote" pairs in LFR_GIT_MASTER_MIRRORS (lfr-git.local.conf),
 # defaulting to "master:upstream". For each pair: fetch <remote>/master, push it
 # to your fork under <branch> (creating the branch on the fork if missing, and
 # force-updating with --force-with-lease if the fork diverged), and create or
-# reset the local <branch> to it (a mirror checked out in a worktree is left
-# alone, with a note). So "master:upstream" "masterBrian:brian" keeps master and
-# masterBrian current together. Then sync the team fork.
+# update the local <branch> to it (a mirror checked out in a worktree is
+# fast-forwarded inside that worktree; see _lfrGitUpdateLocalMaster). So
+# "master:upstream" "masterBrian:brian" keeps master and masterBrian current
+# together. Then sync the team fork.
 #
 # With -r, rebase the current branch onto a target once the mirrors are fresh
 # (skipped when you are on a master* mirror). The target defaults to
 # upstream/master; pass a remote (e.g. `brian` -> brian/master) or a branch (e.g.
 # `masterBrian`) to rebase onto Brian's line instead. The rebase is skipped when
 # the branch already sits on the latest target; -f forces it, and -p (implies -r)
-# then force-pushes the rebased branch with --force-with-lease.
-# Args: [-r|--rebase] [-f|--force-rebase] [-p|--push] [rebase-target].
+# then force-pushes the rebased branch with --force-with-lease. Only the branch's
+# own commits ever move: a branch built on another mirror is cut at its real fork
+# point (see _lfrGitRebaseOnto), and -o forces that cut even when it is not needed.
+# Args: [-r|--rebase] [-f|--force-rebase] [-o|--rebase-onto] [-p|--push] [rebase-target].
 lfrGitUpdateMaster() {
-	local cur a rebase=0 force_rebase=0 push_branch=0
+	local cur a rebase=0 force_rebase=0 rebase_onto=0 push_branch=0
 	local -a pos=()
 	for a in "$@"; do
 		case "${a}" in
 		-h | --help) _lfrGitHelp; return 0 ;;
 		-r | --rebase) rebase=1 ;;
 		-f | --force-rebase) force_rebase=1; rebase=1 ;;
+		-o | --rebase-onto) rebase_onto=1; rebase=1 ;;
 		-p | --push) push_branch=1; rebase=1 ;;
 		-*) echo "lfrGitUpdateMaster: unknown flag '${a}'." >&2; return 1 ;;
 		*) pos+=("${a}") ;;
@@ -216,12 +359,11 @@ lfrGitUpdateMaster() {
 	# <remote>/master and created if missing. Set LFR_GIT_MASTER_MIRRORS in
 	# lfr-git.local.conf (e.g. "master:upstream" "masterBrian:brian"); defaults to
 	# just the upstream master mirror.
-	local -a mirrors
-	if [ "${LFR_GIT_MASTER_MIRRORS+x}" = x ] && [ "${#LFR_GIT_MASTER_MIRRORS[@]}" -gt 0 ]; then
-		mirrors=("${LFR_GIT_MASTER_MIRRORS[@]}")
-	else
-		mirrors=("master:upstream")
-	fi
+	local -a mirrors=()
+	local mirror
+	while read -r mirror; do
+		[ -n "${mirror}" ] && mirrors+=("${mirror}")
+	done < <(_lfrGitMirrors)
 
 	local pair branch remote up
 	for pair in "${mirrors[@]}"; do
@@ -267,36 +409,24 @@ lfrGitUpdateMaster() {
 		return 0
 	fi
 
-	# Resolve the rebase target: default upstream/master; a remote name -> its
-	# master; anything else -> a branch or ref (e.g. masterBrian, brian/master).
-	local target="${pos[0]-}"
-	if [ -z "${target}" ]; then
-		target="upstream/master"
-	elif git remote get-url "${target}" >/dev/null 2>&1; then
-		target="${target}/master"
-	fi
-	if ! git rev-parse --verify -q "${target}" >/dev/null 2>&1; then
-		echo "lfrGitUpdateMaster: rebase target '${target}' not found." >&2
-		return 1
-	fi
+	local target
+	target="$(_lfrGitRebaseTarget "${pos[0]-}")" || return 1
 
-	# Skip a no-op rebase (the branch already sits on the latest target) unless -f.
-	if [ "${force_rebase}" != 1 ] && git merge-base --is-ancestor "${target}" HEAD 2>/dev/null; then
-		echo "${cur} already on latest ${target}; nothing to rebase."
-		return 0
-	fi
-
-	# -f (--force-rebase) recreates the commits even when the branch already sits
-	# on the target: plain `git rebase` no-ops there ("up to date"), so pass the
-	# flag through to git rather than only bypassing the early-return above.
-	local force_flag=""
-	[ "${force_rebase}" = 1 ] && force_flag="--force-rebase"
-
-	echo "Rebasing ${cur} onto ${target}..."
-	if ! git rebase ${force_flag} "${target}"; then
+	# -f (--force-rebase) recreates the commits even when the branch already sits on
+	# the target, where a plain `git rebase` no-ops ("up to date"); -o forces the
+	# fork-point cut. _lfrGitRebaseOnto applies that cut on its own whenever the branch
+	# turns out to be built on another mirror, so -f can no longer drag that
+	# mirror's history in as your commits.
+	_lfrGitRebaseOnto "${cur}" "${target}" "${force_rebase}" "${rebase_onto}"
+	case "$?" in
+	0) ;;
+	2) return 0 ;;
+	3) return 1 ;;
+	*)
 		echo "lfrGitUpdateMaster: rebase stopped (resolve conflicts, then push yourself); skipping -p." >&2
 		return 1
-	fi
+		;;
+	esac
 
 	# -p: the rebase rewrote history, so force-push the branch to its fork
 	# (--force-with-lease, which refuses if the remote moved unexpectedly).
@@ -318,4 +448,5 @@ lfrgcd() { lfrGitCleanDry "$@"; }
 lfrgs() { lfrGitSync "$@"; }
 lfrgse() { lfrGitSyncEE "$@"; }
 lfrgr() { lfrGitRebase "$@"; }
+lfrgro() { lfrGitRebaseOnto "$@"; }
 lfrgum() { lfrGitUpdateMaster "$@"; }

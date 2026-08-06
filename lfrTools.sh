@@ -48,6 +48,8 @@ lfrTools() {
 		  lfrGitSync        sync your team fork's master from upstream
 		  lfrGitSyncEE      same, for liferay-portal-ee
 		  lfrGitRebase      interactive rebase over the last N commits
+		  lfrGitRebaseOnto  replay only this branch's own commits onto a target,
+		                    dropping the mirror history it was rebased onto
 		  lfrGitUpdateMaster  refresh master mirrors, optionally rebase your branch
 
 		Code
@@ -57,7 +59,9 @@ lfrTools() {
 		  lfrPulls      list open PRs on the Brian mirror; one ticket's pulls
 		                (lfrPulls LPD-12345); per-month stats
 
-		Most commands have a short alias (lfrr, lfrw, lfrs, lfrb, lfraa, lfrgc,
-		lfrgcd, lfrgs, lfrgse, lfrgr, lfrgum, lfrcv, lfrp).
+		Every command has a short alias: lfrr, lfrw, lfrwr, lfrs, lfrb, lfrrb,
+		lfraa, lfrc, lfrcv, lfrp, lfrgc, lfrgcd, lfrgs, lfrgse, lfrgr, lfrgro,
+		lfrgum. Three expand to an lfrPulls subcommand: lfrpw (week), lfrps
+		(stats), lfrpt (ticket).
 	EOF
 }

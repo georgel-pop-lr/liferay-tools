@@ -1,8 +1,9 @@
 # LfrGit
 
 Liferay git helpers: a safe `git clean`, fork sync from upstream, keeping your
-master mirror current, and a quick interactive rebase. Loaded as shell functions
-via the root `lfrTools.sh`.
+master mirrors current, and rebasing your branch onto one of them without
+dragging the other's history along. Loaded as shell functions via the root
+`lfrTools.sh`.
 
 ## Per-user config
 
@@ -18,6 +19,7 @@ cp lfr-git.local.conf.example lfr-git.local.conf
 | `LFR_GIT_FORK_ORG` | Your team's fork org on GitHub | (required for sync) |
 | `LFR_GIT_UPSTREAM_ORG` | Upstream org to sync from | `liferay` |
 | `LFR_GIT_MASTER_MIRRORS` | Master mirrors `lfrGitUpdateMaster` keeps current, as `branch:remote` pairs | `("master:upstream")` |
+| `LFR_GIT_REBASE_MAX` | Most commits a rebase may replay before it is refused | `50` |
 
 ## Commands
 
@@ -28,7 +30,8 @@ cp lfr-git.local.conf.example lfr-git.local.conf
 | `lfrGitSync [org]` | `lfrgs` | `gh repo sync <org>/liferay-portal --source <upstream>/liferay-portal`. `org` defaults to `LFR_GIT_FORK_ORG`. |
 | `lfrGitSyncEE [org]` | `lfrgse` | Same for `liferay-portal-ee` master. |
 | `lfrGitRebase [N]` | `lfrgr` | `git rebase -i HEAD~N` (N defaults to 20). |
-| `lfrGitUpdateMaster [-r] [-f] [-p] [rebase-target]` | `lfrgum` | Update each mirror configured in `LFR_GIT_MASTER_MIRRORS` from its `<remote>/master` (e.g. `master` from upstream, `masterBrian` from brian) and sync the team fork; `-r` rebases the current branch onto a target (default `upstream/master`, or pass a remote/branch), `-f` forces the rebase (implies `-r`), `-p` force-pushes it after (implies `-r`). A target without `-r` is an error. |
+| `lfrGitRebaseOnto [target]` | `lfrgro` | Replay only the current branch's own commits onto `target` (default `upstream/master`), dropping the mirror history it was rebased onto in between. The fix for a branch that ended up on `masterBrian` and belongs on `master`. Updates no mirror and syncs no fork. |
+| `lfrGitUpdateMaster [-r] [-f] [-o] [-p] [rebase-target]` | `lfrgum` | Update each mirror configured in `LFR_GIT_MASTER_MIRRORS` from its `<remote>/master` (e.g. `master` from upstream, `masterBrian` from brian) and sync the team fork; `-r` rebases the current branch onto a target (default `upstream/master`, or pass a remote/branch), `-f` forces the rebase (implies `-r`), `-o` cuts at the branch's own fork point (implies `-r`), `-p` force-pushes it after (implies `-r`). A target without `-r` is an error. |
 
 `lfrGitSync`/`lfrGitSyncEE` take an optional fork org to sync a different fork
 than the configured `LFR_GIT_FORK_ORG`, e.g. `lfrGitSync my-other-org`.
@@ -69,6 +72,29 @@ both `master` and `masterBrian`.
    rebase is skipped when the branch already sits on the latest target;
    `-f`/`--force-rebase` forces it, and `-p`/`--push` (implies `-r`) then
    force-pushes the rebased branch with `--force-with-lease`.
+
+## Only your own commits ever move
+
+`git rebase <target>` always cuts at `merge-base(target, HEAD)`, and that is the
+wrong cut for a branch you once rebased onto a different mirror. `masterBrian`
+runs hundreds of commits ahead of `upstream/master`, so a branch built on it has
+all of those sitting between `upstream/master` and your work:
+
+- `-r` alone saw `upstream/master` was already an ancestor and reported
+  `nothing to rebase`, leaving the branch on Brian's line.
+- `-r -f` took the same cut and replayed *every* commit after it, rewriting
+  hundreds of other people's commits under your name.
+
+So the rebase now finds where the branch really forked: the fork point among all
+configured mirrors that leaves the fewest commits to replay. When that differs
+from `merge-base(target, HEAD)`, it cuts there with `--onto`, and only your own
+commits land on the target. `-o`/`--rebase-onto` forces that cut, and
+`lfrGitRebaseOnto` does it on its own without touching the mirrors.
+
+As a backstop, a rebase that would replay more than `LFR_GIT_REBASE_MAX` commits
+(default 50) is refused with the command to inspect them: no branch owns that
+many, so it means the fork point is wrong. Raise the variable for a run that
+genuinely needs it.
 
 List your mirrors in `LFR_GIT_MASTER_MIRRORS`; each is created if missing (locally,
 tracking `<remote>/master`, and on your fork), so a fresh clone just needs the
