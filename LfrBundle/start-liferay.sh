@@ -45,10 +45,14 @@
 # TEST mode (--test / -t) makes the bundle a target for testIntegration against a
 # live server: it adds osgi/test to module.framework.auto.deploy.dirs so the whole
 # test-support set (com.liferay.portal.test, the *.test.util jars, and the
-# Arquillian/DataGuard connectors) is scanned in place, and seeds each connector a
-# per-instance port from the HTTP offset (8080 -> 32763, 8081 -> 32804, ...), so
-# parallel test bundles never clash. Without it the bundle stays lean (the scan
-# override is removed). Run tests with -Dliferay.arquillian.port=<the printed port>.
+# Arquillian/DataGuard connectors) is scanned in place. Without it the bundle stays
+# lean (the scan override is removed). Run tests with
+# -Dliferay.arquillian.port=<the printed port>.
+#
+# Each connector's per-instance port, from the HTTP offset (8080 -> 32763, 8081 ->
+# 32804, ...), is pinned on EVERY launch, with or without --test, so parallel test
+# bundles never clash and a connector left installed by an earlier --test run can
+# never fall back onto the default port.
 #
 # Database location is handled in this order: a Docker DB that publishes its
 # port to the host is reached by the normal host:port path; if that host reset
@@ -761,18 +765,25 @@ export LIFERAY_MODULE_PERIOD_FRAMEWORK_PERIOD_PROPERTIES_PERIOD_OSGI_PERIOD_CONS
 # and that bundle's connector then shut itself down.
 
 # Seed one connector's per-instance port (its .config lives in osgi/configs, an
-# always-scanned dir). With --test the connector deploys from the now-scanned
-# osgi/test; a plain launch drops the seeded config so the infra never starts.
+# always-scanned dir), on EVERY launch, whether or not --test was passed.
+#
+# A plain launch used to delete the seeded config instead, on the premise that
+# without the osgi/test scan the connector never starts anyway. It does start: once
+# --test has installed it, the connector stays installed in the framework state
+# cache (osgi/state) and comes up on later boots even though its dir is no longer
+# scanned — File Install only uninstalls a bundle whose FILE went away, and the jar
+# is still sitting in osgi/test. With the config deleted, DS then activated it with
+# no properties, i.e. on the hardcoded ArquillianConnector._DEFAULT_PORT (32763),
+# which the 8080 bundle already holds — and its catch does System.exit(-10), so a
+# forgotten --test killed the whole JVM on boot. Keeping the port pinned makes that
+# leftover connector bind harmlessly on this bundle's own port.
+#
 # $1 label, $2 jar name, $3 config PID (filename), $4 default port, $5 out-var name.
 seed_test_connector() {
 	local label="$1" jar="$2" pid="$3" default="$4" outvar="$5" port
 	local src="$LIFERAY_OSGI_DIR/test/$jar"
 	local config="$LIFERAY_OSGI_DIR/configs/$pid.config"
 
-	if [ "$TEST" != 1 ]; then
-		rm -f "$config"
-		return 0
-	fi
 	[ -f "$src" ] || return 0
 
 	# Deterministic offset from the (already de-conflicted) HTTP port, NOT
@@ -789,7 +800,7 @@ seed_test_connector() {
 	fi
 	printf 'port="%s"\n' "$port" >"$config"
 	printf -v "$outvar" '%s' "$port"
-	echo "$label connector ready: port $port (default $default)"
+	echo "$label connector pinned to port $port (default $default)"
 }
 
 ARQUILLIAN_PORT=""
@@ -1131,7 +1142,7 @@ echo "Starting Liferay (Ctrl+C to stop; then press f to force-kill if it hangs).
 echo "  Editor / portal: http://${LAN_IP:-localhost}:$HTTP_PORT/ (reachable from this machine and other devices on the network)"
 echo "  Logs           : $TOMCAT_DIR/logs/catalina.out"
 echo "  JDK            : $JDK_PATH $JDK_SOURCE"
-if [ -n "$ARQUILLIAN_PORT" ]; then
+if [ "$TEST" = 1 ] && [ -n "$ARQUILLIAN_PORT" ]; then
 	echo "  Arquillian     : port $ARQUILLIAN_PORT (binds late in boot; run testIntegration with -Dliferay.arquillian.port=$ARQUILLIAN_PORT)"
 fi
 
@@ -1222,9 +1233,11 @@ if [ -t 1 ]; then
 	"$CATALINA" "${catalina_args[@]}" &
 	_catalina_pid=$!
 
-	# When we seeded the Arquillian connector it will come up; announce readiness
-	# in the background (self-terminates when Tomcat exits, so no cleanup needed).
-	if [ -n "$ARQUILLIAN_PORT" ]; then
+	# Under --test the Arquillian connector will come up; announce readiness in the
+	# background (self-terminates when Tomcat exits, so no cleanup needed). A plain
+	# launch has a pinned port too, but only a bundle already carrying the connector
+	# in its state cache brings it up, so there is nothing to wait for.
+	if [ "$TEST" = 1 ] && [ -n "$ARQUILLIAN_PORT" ]; then
 		_watch_connector_ready "$ARQUILLIAN_PORT" &
 	fi
 

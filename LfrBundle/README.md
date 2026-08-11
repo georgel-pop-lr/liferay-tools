@@ -303,11 +303,12 @@ lfrBundle <name> -t
 The test-support bundles (`com.liferay.portal.test`, which exports
 `com.liferay.portal.kernel.test`, the `*.test.util` jars, and the Arquillian and
 DataGuard connectors) all ship in `osgi/test`, which a normal launcher boot never
-scans, so by default none of them start. With `--test` the launcher adds
-`osgi/test` to `module.framework.auto.deploy.dirs` (via `portal-ext.properties`)
-so the whole set is scanned **in place** — exactly what a managed `testIntegration`
-boot does — and seeds each connector's `.config` with a **per-instance port
-derived from the HTTP offset**:
+scans, so on a bundle that has never had `--test` none of them start. With `--test`
+the launcher adds `osgi/test` to `module.framework.auto.deploy.dirs` (via
+`portal-ext.properties`) so the whole set is scanned **in place** — exactly what a
+managed `testIntegration` boot does. Each connector's `.config` is seeded with a
+**per-instance port derived from the HTTP offset**, on every launch, with or without
+`--test`:
 
 | HTTP | Arquillian | DataGuard |
 |---|---|---|
@@ -340,9 +341,26 @@ Run the tests against the printed port:
 gradlew testIntegration --tests <Class> -Dliferay.arquillian.port=32804
 ```
 
-Without `--test` the launch is lean: the `osgi/test` scan override is removed and
-each connector's seeded config is dropped, so a plain boot never runs the test
-infra (nothing is lost — everything stays in `osgi/test`).
+Without `--test` the launch is lean: the `osgi/test` scan override is removed, so a
+plain boot does not add the test infra (nothing is lost, everything stays in
+`osgi/test`). The seeded connector ports stay in place though, and dropping them is
+what the launcher used to do wrong. Once `--test` has installed the connector, it
+lives in the framework state cache (`osgi/state`) and starts on later boots even
+without the scan: File Install only uninstalls a bundle whose file went away, and
+the jar is still in `osgi/test`. With its config deleted, Declarative Services then
+activated it with no properties, i.e. on the hardcoded
+`ArquillianConnector._DEFAULT_PORT` (`32763`), which the 8080 bundle already holds,
+and the connector's catch runs `System.exit(-10)`. So forgetting `--test` on a
+parallel bundle killed its JVM during boot with the same `BindException` shown
+above. Keeping the port pinned always makes that leftover connector bind harmlessly
+on this bundle's own port.
+
+So `--test` is still the flag that puts the test infra on a bundle: pass it the first
+time, and again after `--clean` / `--clean-cache`, both of which wipe `osgi/state`
+and take the installed test bundles with it. In between, the state cache carries them
+across plain launches, but that is a side effect rather than something to rely on, so
+the simple rule is to always pass `-t` on a bundle you run tests against. It is
+idempotent.
 
 The connectors are **not** copied into `osgi/modules`. Once `osgi/test` is scanned,
 a second copy of the same bundle in another scanned dir is a duplicate (same
@@ -446,13 +464,13 @@ redirected, it just `exec`s Tomcat.)
    HTTP offset (deterministic) rather than scanned — this is what lets two bundles
    run at once. Also sets `portal.instance.inet.socket.address` to the resolved
    HTTP port, and remaps Glowroot's web port in `glowroot/admin.json` if present.
-   The test-support bundles are handled only under `--test` (see
-   [Test mode](#test-mode---test-testintegration-against-a-live-bundle)): with the
-   flag `osgi/test` is added to the module scan and each connector is seeded a
-   per-instance port from the HTTP offset (`32763`/`42763` at 8080, `32804`/`42804`
-   at 8081, a block clear of the ports the test JVM itself listens on); without it
-   a launch is lean (the scan override is removed), so a normal boot never starts
-   the test infra.
+   Each test connector is seeded a per-instance port from the HTTP offset on every
+   launch (`32763`/`42763` at 8080, `32804`/`42804` at 8081, a block clear of the
+   ports the test JVM itself listens on), so one left installed by an earlier
+   `--test` run can never fall back onto the default port and exit the JVM. Adding
+   `osgi/test` to the module scan is what `--test` alone does (see
+   [Test mode](#test-mode---test-testintegration-against-a-live-bundle)); without
+   the flag a launch is lean, since the scan override is removed.
 4. **Backs up `tomcat/conf/server.xml`** to
    `server.xml.bak.<yyyymmdd-hhmmss>` and rewrites the connector ports —
    only when at least one port differs from what's already in the file.
@@ -523,11 +541,11 @@ switching to an external Elasticsearch.
 - On a plain launch the script touches: `server.xml` (only when the resolved
   ports differ from the file), the Elasticsearch `.config` in `osgi/configs/`
   (rewritten every run), the `portal.instance.inet.socket.address` line in
-  `portal-ext.properties` (every run), `glowroot/admin.json` when present, and
-  it pre-creates `osgi/war`/`osgi/portal-war`. `--test` also seeds the test
-  connector `.config`s and the `module.framework.auto.deploy.dirs` line (both
-  removed again by a non-test launch). Only `--clean` touches the database or
-  the data folders.
+  `portal-ext.properties` (every run), `glowroot/admin.json` when present, the test
+  connector `.config`s in `osgi/configs/` (also every run), and it pre-creates
+  `osgi/war`/`osgi/portal-war`. `--test` adds the
+  `module.framework.auto.deploy.dirs` line (removed again by a non-test launch).
+  Only `--clean` touches the database or the data folders.
 - It does **not** set `web.server.http.port`. If you need URL generation to
   use the resolved HTTP port (for example when running behind a reverse
   proxy), set it separately.

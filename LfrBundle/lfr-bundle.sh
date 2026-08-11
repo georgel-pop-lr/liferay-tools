@@ -281,8 +281,9 @@ lfrBundle() {
 			  -cc, --clean-cache  clear only the OSGi/work caches (keeps the DB)
 			  -y,  --yes          with --clean, skip the confirmation prompt
 			  -dbd,--db-docker N  with --clean, reset the DB in docker container N
-			  -t,  --test         expose the Arquillian/DataGuard test connectors,
-			                      so testIntegration can run against the live bundle
+			  -t,  --test         deploy the osgi/test bundles (Arquillian/DataGuard
+			                      connectors included), so testIntegration can run
+			                      against the live bundle
 		EOF
 		return 0
 		;;
