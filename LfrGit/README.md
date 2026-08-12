@@ -18,6 +18,7 @@ cp lfr-git.local.conf.example lfr-git.local.conf
 | --- | --- | --- |
 | `LFR_GIT_FORK_ORG` | Your team's fork org on GitHub | (required for sync) |
 | `LFR_GIT_UPSTREAM_ORG` | Upstream org to sync from | `liferay` |
+| `LFR_GIT_UPSTREAM_REMOTE` | Remote `lfrGitUpdateBranch` and `lfrGitCheckoutTag` take release branches and patch tags from | `upstream` |
 | `LFR_GIT_MASTER_MIRRORS` | Master mirrors `lfrGitUpdateMaster` keeps current, as `branch:remote` pairs | `("master:upstream")` |
 | `LFR_GIT_REBASE_MAX` | Most commits a rebase may replay before it is refused | `50` |
 
@@ -32,6 +33,8 @@ cp lfr-git.local.conf.example lfr-git.local.conf
 | `lfrGitRebase [N]` | `lfrgr` | `git rebase -i HEAD~N` (N defaults to 20). |
 | `lfrGitRebaseOnto [target]` | `lfrgro` | Replay only the current branch's own commits onto `target` (default `upstream/master`), dropping the mirror history it was rebased onto in between. The fix for a branch that ended up on `masterBrian` and belongs on `master`. Updates no mirror and syncs no fork. |
 | `lfrGitUpdateMaster [-r] [-f] [-o] [-p] [rebase-target]` | `lfrgum` | Update each mirror configured in `LFR_GIT_MASTER_MIRRORS` from its `<remote>/master` (e.g. `master` from upstream, `masterBrian` from brian) and sync the team fork; `-r` rebases the current branch onto a target (default `upstream/master`, or pass a remote/branch), `-f` forces the rebase (implies `-r`), `-o` cuts at the branch's own fork point (implies `-r`), `-p` force-pushes it after (implies `-r`). A target without `-r` is an error. |
+| `lfrGitUpdateBranch [branch] [-n]` | `lfrgub` | Update one branch (e.g. `release-2026.q1`) from upstream and push it to your fork. The branch defaults to the one you are on, and is created locally when you do not have it. `-n` skips the push. |
+| `lfrGitCheckoutTag <tag> [branch] [-n]` | `lfrgct` | Check out a tag (e.g. `2026.q1.8`, `fix-pack-de-85-7010`) on a local branch: fetch the tag from upstream, branch off it, push the branch to your fork. The branch defaults to the tag's name and is reused when it exists. `-n` skips the push. |
 
 `lfrGitSync`/`lfrGitSyncEE` take an optional fork org to sync a different fork
 than the configured `LFR_GIT_FORK_ORG`, e.g. `lfrGitSync my-other-org`.
@@ -72,6 +75,47 @@ both `master` and `masterBrian`.
    rebase is skipped when the branch already sits on the latest target;
    `-f`/`--force-rebase` forces it, and `-p`/`--push` (implies `-r`) then
    force-pushes the rebased branch with `--force-with-lease`.
+
+## Release branches and patch tags
+
+The two refs a backport is built on, each in one command instead of the fetch
+plus checkout dance, and neither one needing you to have the ref locally first:
+
+```bash
+lfrgub release-2026.q1        # update the release branch, push it to your fork
+lfrgct 2026.q1.8              # branch off the patch tag and check it out
+lfrgct fix-pack-de-85-7010 LPD-94368-fix-pack-de-85-7010
+```
+
+`lfrGitUpdateBranch` is `lfrGitUpdateMaster` for one ordinary branch: it fetches
+`upstream/<branch>` (no tags), moves the local branch to it wherever that branch
+is checked out, and pushes the fetched commit to your fork. Without an argument
+it takes the branch you are standing on; a `master*` mirror is refused and sent
+to `lfrGitUpdateMaster`, which also syncs the fork and can rebase. A branch you
+do not have locally is created from upstream, which is the usual case the first
+time you touch a release branch.
+
+It treats the branch as a pure mirror, so a local `release-*` that has diverged
+is reset to upstream. Keep your own commits on a branch of their own.
+
+`lfrGitCheckoutTag` fetches the one tag ref into `FETCH_HEAD` (writing no local
+tag), branches off it, and pushes that branch to your fork with `-u`, so a later
+plain `git push` lands in the right place. The branch is named after the tag
+unless you name it. An existing branch of that name is checked out as it is,
+never moved, since by then it carries the commits you cherry-picked; when it is
+no longer at the tag you get told, with the `git reset --hard <sha>` that would
+put it back.
+
+Both refuse a missing ref (`upstream has no branch release-nope`), and `-n` /
+`--no-push` does the local half only.
+
+Every ref inside `lfrGitCheckoutTag` is spelled `refs/heads/<branch>`, and it
+switches with `git switch` rather than `git checkout`, because the branch is
+normally named after the tag and the tag is already in the repo (79313 of them
+in `liferay-portal-ee`). A bare name resolves to the tag first, since
+`git rev-parse` tries `refs/tags` before `refs/heads`: that made `git push -u
+origin <name>` fail outright with "matches more than one", and made
+`git checkout <name>` warn that the refname is ambiguous.
 
 ## Only your own commits ever move
 

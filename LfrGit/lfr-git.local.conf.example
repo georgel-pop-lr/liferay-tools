@@ -7,6 +7,10 @@ LFR_GIT_FORK_ORG="your-team-fork-org"
 # Upstream org to sync from (default: liferay).
 LFR_GIT_UPSTREAM_ORG="liferay"
 
+# The remote lfrGitUpdateBranch and lfrGitCheckoutTag take release branches and
+# patch tags from (default: upstream).
+LFR_GIT_UPSTREAM_REMOTE="upstream"
+
 # Master mirror branches for lfrGitUpdateMaster to keep current, as
 # "branch:remote" pairs. Each is updated from <remote>/master and created (local
 # + on your fork) if it does not exist. Defaults to ("master:upstream").

@@ -8,6 +8,8 @@
 #     lfrGitRebase     interactive rebase over the last N commits (default 20)
 #     lfrGitRebaseOnto replay only this branch's own commits onto a target (default upstream/master), dropping the mirror history it was rebased onto ([target])
 #     lfrGitUpdateMaster  update each master* mirror from the <remote>/master it tracks + sync; -r rebase current branch onto a target (default upstream), -f force, -o cut at the fork point, -p force-push ([-r] [-f] [-o] [-p] [rebase-target])
+#     lfrGitUpdateBranch  update one branch (e.g. release-2026.q1) from upstream and push it to your fork, creating it locally if you do not have it ([branch] [-n])
+#     lfrGitCheckoutTag   check out a tag (e.g. 2026.q1.8) on a local branch, fetching the tag from upstream and reusing the branch if it exists (<tag> [branch] [-n])
 #
 # Per-user settings (your team fork org) live in lfr-git.local.conf next to this
 # file. It is gitignored. Copy lfr-git.local.conf.example to lfr-git.local.conf.
@@ -16,6 +18,7 @@ _lfrGitDir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ -r "${_lfrGitDir}/lfr-git.local.conf" ] && . "${_lfrGitDir}/lfr-git.local.conf"
 
 : "${LFR_GIT_UPSTREAM_ORG:=liferay}"
+: "${LFR_GIT_UPSTREAM_REMOTE:=upstream}"
 
 # Files kept during a clean: IDE project files and per-developer properties.
 _lfrGitCleanExcludes=(
@@ -55,8 +58,20 @@ _lfrGitHelp() {
 		                       <target> (default upstream/master), -f forces the
 		                       rebase, -o cuts at the branch's own fork point,
 		                       -p then force-pushes it
+		  lfrGitUpdateBranch [branch] [-n]
+		                       update one branch (e.g. release-2026.q1) from
+		                       upstream and push it to your fork; the branch
+		                       defaults to the one you are on, and is created
+		                       locally when you do not have it yet. -n skips
+		                       the push
+		  lfrGitCheckoutTag <tag> [branch] [-n]
+		                       check out a tag (e.g. 2026.q1.8) on a local
+		                       branch: fetch the tag from upstream, branch off
+		                       it, push the branch to your fork. The branch
+		                       defaults to the tag's name and is reused when it
+		                       already exists. -n skips the push
 
-		Aliases: lfrgc lfrgcd lfrgs lfrgse lfrgr lfrgro lfrgum
+		Aliases: lfrgc lfrgcd lfrgs lfrgse lfrgr lfrgro lfrgum lfrgub lfrgct
 
 		A rebase only ever moves the branch's own commits, and refuses to replay
 		more than LFR_GIT_REBASE_MAX (default 50).
@@ -112,31 +127,46 @@ lfrGitRebase() {
 	git rebase -i "HEAD~${1:-20}"
 }
 
-# Push the mirror commit <up> (a <remote>/master tracking ref) to the fork under
-# refs/heads/<branch>. On a non-fast-forward the fork just holds history the
-# source rewrote away, so force it with --force-with-lease (safe: only overwrites
-# if the fork is still where our tracking ref last saw it).
-_lfrGitPushMirror() {
-	local branch="${1}" up="${2}" push_ref push_remote
+# The remote a branch is pushed to: the remote of its @{push} ref, falling back to
+# origin. Pass the source remote it mirrors (upstream, brian) to rule that one out:
+# a mirror tracks its source, so without remote.pushDefault set, @{push} resolves
+# right back to the source, and a mirror is never pushed to the repo it copies.
+_lfrGitPushRemote() {
+	local branch="${1}" source_remote="${2-}" push_ref push_remote
 	push_ref="$(git rev-parse --abbrev-ref "${branch}@{push}" 2>/dev/null)"
 	case "${push_ref}" in
 	*/*) push_remote="${push_ref%%/*}" ;;
 	*) push_remote="origin" ;;
 	esac
+	if [ -n "${source_remote}" ] && [ "${push_remote}" = "${source_remote}" ]; then
+		push_remote="origin"
+	fi
+	printf '%s\n' "${push_remote}"
+}
+
+# Push the mirror commit <up> (a <remote>/<branch> tracking ref) to the fork under
+# refs/heads/<branch>. On a non-fast-forward the fork just holds history the
+# source rewrote away, so force it with --force-with-lease (safe: only overwrites
+# if the fork is still where our tracking ref last saw it).
+# Args: <branch> <up> [source-remote]
+_lfrGitPushMirror() {
+	local branch="${1}" up="${2}" push_remote
+	push_remote="$(_lfrGitPushRemote "${branch}" "${3-}")"
 	echo "  pushing ${up} to ${push_remote} ${branch}..."
 	git push "${push_remote}" "${up}:refs/heads/${branch}" 2>/dev/null && return 0
 	echo "  ${push_remote} ${branch} was non-fast-forward; force-updating with --force-with-lease..." >&2
 	git push --force-with-lease "${push_remote}" "${up}:refs/heads/${branch}"
 }
 
-# Bring the local <branch> to <up> (its <remote>/master tracking ref): create it
-# if missing, fast-forward it, or reset it when the source rewrote master (a
+# Bring the local <branch> to <up> (its <remote>/<branch> tracking ref): create it
+# if missing, fast-forward it, or reset it when the source rewrote the branch (a
 # mirror is a pure copy, so a divergence is the source's own rewritten history,
 # not your work). Checked out HERE, it is fast-forwarded in place (you are standing
 # on it, so its working tree moves with it); checked out in ANOTHER worktree, the
 # fast-forward is run inside that worktree, which is the only way to move it
-# without leaving that tree's files behind its HEAD.
-_lfrGitUpdateLocalMaster() {
+# without leaving that tree's files behind its HEAD. A master mirror and a release
+# branch are the same job, so both go through here.
+_lfrGitUpdateLocalMirror() {
 	local branch="${1}" up="${2}" tip wt target head reason
 	target="$(git rev-parse "${up}")"
 	tip="$(git rev-parse --verify -q "refs/heads/${branch}" 2>/dev/null || true)"
@@ -322,7 +352,7 @@ lfrGitRebaseOnto() {
 # to your fork under <branch> (creating the branch on the fork if missing, and
 # force-updating with --force-with-lease if the fork diverged), and create or
 # update the local <branch> to it (a mirror checked out in a worktree is
-# fast-forwarded inside that worktree; see _lfrGitUpdateLocalMaster). So
+# fast-forwarded inside that worktree; see _lfrGitUpdateLocalMirror). So
 # "master:upstream" "masterBrian:brian" keeps master and masterBrian current
 # together. Then sync the team fork.
 #
@@ -379,8 +409,8 @@ lfrGitUpdateMaster() {
 			echo "  fetch from ${remote} failed; skipping ${branch}." >&2
 			continue
 		fi
-		_lfrGitPushMirror "${branch}" "${up}"
-		_lfrGitUpdateLocalMaster "${branch}" "${up}"
+		_lfrGitPushMirror "${branch}" "${up}" "${remote}"
+		_lfrGitUpdateLocalMirror "${branch}" "${up}"
 	done
 
 	# Sync the team fork; liferay-portal-ee checkouts use lfrGitSyncEE (detected by
@@ -442,6 +472,169 @@ lfrGitUpdateMaster() {
 	fi
 }
 
+# The remote the release branches and patch tags come from (LFR_GIT_UPSTREAM_REMOTE,
+# default upstream). Echoes it; errors when the repo has no such remote.
+_lfrGitUpstreamRemote() {
+	local caller="${1}" remote="${LFR_GIT_UPSTREAM_REMOTE}"
+	if ! git remote get-url "${remote}" >/dev/null 2>&1; then
+		echo "${caller}: this repo has no '${remote}' remote (set LFR_GIT_UPSTREAM_REMOTE in ${_lfrGitDir}/lfr-git.local.conf)." >&2
+		return 1
+	fi
+	printf '%s\n' "${remote}"
+}
+
+# Update one branch from upstream and push it to your fork: the release branches
+# (release-2026.q1) a backport is built on, which you want current before you
+# branch off them. The branch defaults to the one you are on, and you do not need
+# it locally first, since a branch you do not have is created from upstream here
+# (that is the usual case: you fetch a release branch the first time you need it).
+#
+# It is the same job as a master mirror, so it takes the same route: fetch
+# <upstream>/<branch>, push that commit to your fork, and move the local branch to
+# it, wherever it is checked out (see _lfrGitUpdateLocalMirror). Which means it is
+# a mirror both ways: the local branch is reset to upstream when the two diverged,
+# so keep your own work on a branch of its own, never on release-*.
+# Args: lfrGitUpdateBranch [branch] [-n|--no-push]
+lfrGitUpdateBranch() {
+	local a branch="" push=1
+	for a in "$@"; do
+		case "${a}" in
+		-h | --help) _lfrGitHelp; return 0 ;;
+		-n | --no-push) push=0 ;;
+		-*) echo "lfrGitUpdateBranch: unknown flag '${a}'." >&2; return 1 ;;
+		*)
+			if [ -n "${branch}" ]; then
+				echo "lfrGitUpdateBranch: one branch at a time (got '${branch}' and '${a}')." >&2
+				return 1
+			fi
+			branch="${a}"
+			;;
+		esac
+	done
+	if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+		echo "lfrGitUpdateBranch: not inside a git repo" >&2
+		return 1
+	fi
+
+	# No branch named: the one you are standing on. A master mirror is
+	# lfrGitUpdateMaster's job, which also syncs the fork and can rebase.
+	if [ -z "${branch}" ]; then
+		branch="$(git rev-parse --abbrev-ref HEAD)"
+		if [ "${branch}" = HEAD ]; then
+			echo "lfrGitUpdateBranch: HEAD is detached; name the branch to update." >&2
+			return 1
+		fi
+	fi
+	case "${branch}" in
+	master*)
+		echo "lfrGitUpdateBranch: ${branch} is a master mirror; use lfrGitUpdateMaster." >&2
+		return 1
+		;;
+	esac
+
+	local remote up
+	remote="$(_lfrGitUpstreamRemote lfrGitUpdateBranch)" || return 1
+	up="${remote}/${branch}"
+
+	echo "Updating ${branch} from ${up} (no tags)..."
+	if ! git fetch --no-tags "${remote}" "${branch}"; then
+		echo "  ${remote} has no branch ${branch}; nothing to update." >&2
+		return 1
+	fi
+	if ! git rev-parse --verify -q "${up}" >/dev/null 2>&1; then
+		echo "  fetched ${branch} but ${up} does not exist; check remote.${remote}.fetch." >&2
+		return 1
+	fi
+
+	_lfrGitUpdateLocalMirror "${branch}" "${up}"
+	[ "${push}" = 1 ] && _lfrGitPushMirror "${branch}" "${up}" "${remote}"
+	return 0
+}
+
+# Check out a tag on a local branch: the patch versions (2026.q1.8) and fix packs
+# (fix-pack-de-85-7010) a backport branches off. The tag is fetched from upstream
+# into FETCH_HEAD, so you do not need it locally first, and a tag you do have is
+# refreshed from upstream rather than trusted.
+#
+# The branch defaults to the tag's name, and an existing branch of that name is
+# checked out as it is rather than moved, since it is yours by then and may carry
+# the commits you already cherry-picked. Then it is pushed to your fork with -u, so
+# a later plain `git push` goes to the right place.
+# Args: lfrGitCheckoutTag <tag> [branch] [-n|--no-push]
+lfrGitCheckoutTag() {
+	local a tag="" branch="" push=1
+	for a in "$@"; do
+		case "${a}" in
+		-h | --help) _lfrGitHelp; return 0 ;;
+		-n | --no-push) push=0 ;;
+		-*) echo "lfrGitCheckoutTag: unknown flag '${a}'." >&2; return 1 ;;
+		*)
+			if [ -z "${tag}" ]; then
+				tag="${a}"
+			elif [ -z "${branch}" ]; then
+				branch="${a}"
+			else
+				echo "lfrGitCheckoutTag: too many arguments (want <tag> [branch])." >&2
+				return 1
+			fi
+			;;
+		esac
+	done
+	if [ -z "${tag}" ]; then
+		echo "lfrGitCheckoutTag: name the tag to check out, e.g. lfrGitCheckoutTag 2026.q1.8" >&2
+		return 1
+	fi
+	if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+		echo "lfrGitCheckoutTag: not inside a git repo" >&2
+		return 1
+	fi
+
+	local remote
+	remote="$(_lfrGitUpstreamRemote lfrGitCheckoutTag)" || return 1
+	branch="${branch:-${tag}}"
+
+	# Fetch the one tag ref into FETCH_HEAD: no destination refspec, so no local tag
+	# is written, and --no-tags keeps git from dragging in every other tag that
+	# points into the history it just downloaded.
+	echo "Fetching ${tag} from ${remote}..."
+	if ! git fetch --no-tags "${remote}" "refs/tags/${tag}"; then
+		echo "  ${remote} has no tag ${tag}." >&2
+		return 1
+	fi
+
+	local tag_commit branch_commit
+	tag_commit="$(git rev-parse FETCH_HEAD)" || return 1
+
+	# Every ref here is spelled out as refs/heads/<branch>, and the switch is
+	# `git switch` rather than `git checkout`, because the branch is normally named
+	# after the tag and the repo already holds that tag (79k of them in
+	# liferay-portal-ee): a bare name resolves to the TAG first (rev-parse tries
+	# refs/tags before refs/heads), and `git checkout <name>` warns that the refname
+	# is ambiguous. `git switch` only ever resolves a branch.
+	if git show-ref --verify -q "refs/heads/${branch}"; then
+		branch_commit="$(git rev-parse "refs/heads/${branch}")"
+		if [ "${branch_commit}" != "${tag_commit}" ]; then
+			echo "  ${branch} already exists at $(git rev-parse --short "${branch_commit}"), not at ${tag} ($(git rev-parse --short "${tag_commit}")); checking it out as it is." >&2
+			echo "  (to put it back on the tag: git reset --hard ${tag_commit})" >&2
+		fi
+		if [ "$(git symbolic-ref -q HEAD)" = "refs/heads/${branch}" ]; then
+			echo "  already on ${branch}."
+		else
+			git switch "${branch}" || return 1
+		fi
+	else
+		echo "  branching ${branch} off ${tag}..."
+		git switch -c "${branch}" "${tag_commit}" || return 1
+	fi
+
+	if [ "${push}" = 1 ]; then
+		local push_remote
+		push_remote="$(_lfrGitPushRemote "${branch}" "${remote}")"
+		echo "  pushing ${branch} to ${push_remote}..."
+		git push -u "${push_remote}" "refs/heads/${branch}:refs/heads/${branch}"
+	fi
+}
+
 # Short aliases.
 lfrgc() { lfrGitClean "$@"; }
 lfrgcd() { lfrGitCleanDry "$@"; }
@@ -450,3 +643,5 @@ lfrgse() { lfrGitSyncEE "$@"; }
 lfrgr() { lfrGitRebase "$@"; }
 lfrgro() { lfrGitRebaseOnto "$@"; }
 lfrgum() { lfrGitUpdateMaster "$@"; }
+lfrgub() { lfrGitUpdateBranch "$@"; }
+lfrgct() { lfrGitCheckoutTag "$@"; }

@@ -51,6 +51,9 @@ lfrTools() {
 		  lfrGitRebaseOnto  replay only this branch's own commits onto a target,
 		                    dropping the mirror history it was rebased onto
 		  lfrGitUpdateMaster  refresh master mirrors, optionally rebase your branch
+		  lfrGitUpdateBranch  update one branch (release-2026.q1) from upstream
+		                      and push it to your fork
+		  lfrGitCheckoutTag   check out a tag (2026.q1.8) on a local branch
 
 		Code
 		  lfrCodeView   pick a commit (or your local changes) and diff it
@@ -61,7 +64,7 @@ lfrTools() {
 
 		Every command has a short alias: lfrr, lfrw, lfrwr, lfrs, lfrb, lfrrb,
 		lfraa, lfrc, lfrcv, lfrp, lfrgc, lfrgcd, lfrgs, lfrgse, lfrgr, lfrgro,
-		lfrgum. Three expand to an lfrPulls subcommand: lfrpw (week), lfrps
-		(stats), lfrpt (ticket).
+		lfrgum, lfrgub, lfrgct. Three expand to an lfrPulls subcommand: lfrpw
+		(week), lfrps (stats), lfrpt (ticket).
 	EOF
 }
