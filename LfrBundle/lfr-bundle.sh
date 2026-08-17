@@ -39,15 +39,32 @@ _lfrBundlePorts() {
 		sort -nu | paste -sd' ' -
 }
 
+# Echo "<repo>@<branch>" for every repo pointing at the bundle <1>, comma
+# separated, marking the ones lfrShare repointed. <2> is the map from
+# _lfrBundleRepoBranches, passed in so a whole list costs one pass over the
+# repos. Nothing is echoed when no repo deploys into that bundle.
+_lfrBundleRepoLabel() {
+	printf '%s\n' "${2}" | awk -F'\t' -v bundle="$(readlink -m "${1}" 2>/dev/null)" '
+		$1 == bundle {
+			printf "%s%s@%s%s", separator, $2, $3, ($4 == "" ? "" : " (" $4 ")")
+			separator = ", "
+		}
+		END { if (separator != "") print "" }'
+}
+
 # Print the status table; sets the global _lfrBundleCount. Shows the full bundle
-# path so bundles that share a name across roots stay distinguishable.
+# path so bundles that share a name across roots stay distinguishable, and the
+# checkouts that deploy into it, so it is clear what the server is running.
 _lfrBundleList() {
-	local pid base dir ports n=0
+	local pid base dir ports repos map="" n=0
+	declare -F _lfrBundleRepoBranches >/dev/null 2>&1 && map="$(_lfrBundleRepoBranches)"
 	while IFS=$'\t' read -r pid base; do
 		[ -n "${pid}" ] || continue
 		dir="$(dirname "${base}")"
 		ports="$(_lfrBundlePorts "${pid}")"
+		repos="$(_lfrBundleRepoLabel "${dir}" "${map}")"
 		printf '  PID %-7s ports: %-22s %s\n' "${pid}" "${ports:-?}" "${dir}"
+		[ -n "${repos}" ] && printf '      <- %s\n' "${repos}"
 		n=$((n + 1))
 	done < <(_lfrBundleProcs)
 	_lfrBundleCount="${n}"
@@ -136,11 +153,12 @@ _lfrBundleResolve() {
 # Picker over every known bundle, each labelled with its current state; $1 is
 # the prompt. Echoes the chosen bundle path.
 _lfrBundlePickWithState() {
-	local prompt="${1}" running pid base entries epath ename pidfor state shared repos
+	local prompt="${1}" running pid base entries epath ename pidfor state repos map=""
 	if ! declare -F _lfrBundleEntries >/dev/null 2>&1; then
 		echo "lfrBundle: bundle list needs LfrCommon loaded; pass a bundle name." >&2
 		return 1
 	fi
+	map="$(_lfrBundleRepoBranches)"
 	running=""
 	while IFS=$'\t' read -r pid base; do
 		[ -n "${pid}" ] && running+="$(dirname "${base}")"$'\t'"${pid}"$'\n'
@@ -154,14 +172,12 @@ _lfrBundlePickWithState() {
 		else
 			state="stopped"
 		fi
-		# Flag a bundle some repo shares via lfrShare, so it is clear this is a
-		# deploy target before you stop it. Skipped if lfrShare is not loaded.
-		shared=""
-		if declare -F _lfrShareReposForBundle >/dev/null 2>&1; then
-			repos="$(_lfrShareReposForBundle "${epath}")"
-			[ -n "${repos}" ] && shared=", shared <- ${repos}"
-		fi
-		entries+="${epath}"$'\t'"${ename}  [${state}${shared}]"$'\n'
+		# Name the checkouts that deploy into this bundle, and the branch each one
+		# is on, since that is what says which ticket a bundle is for. A repo
+		# marked (shared) got here through lfrShare, so it is a deploy target of
+		# someone else's worktree before you stop it.
+		repos="$(_lfrBundleRepoLabel "${epath}" "${map}")"
+		entries+="${epath}"$'\t'"${ename}  [${state}]${repos:+  <- ${repos}}"$'\n'
 	done < <(_lfrBundleEntries)
 	[ -z "${entries}" ] && { echo "lfrBundle: no bundles found under: ${LFR_BUNDLES_DIRS[*]}" >&2; return 1; }
 	printf '%s' "${entries}" | _lfrPick "${prompt}"

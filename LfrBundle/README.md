@@ -245,9 +245,23 @@ bundle outside those roots. `status`/`ls`, `stop-all`/`stopall`, and
 `help`/`-h`/`--help` are synonyms. `lfrRunBundle` / `lfrrb` remain as
 back-compat aliases (they now toggle, like `lfrBundle`).
 
-A picker entry a repo shares via [lfrShare](../LfrShare/README.md) is tagged
-`shared <- <repo>`, so you can see a bundle is a deploy target before you stop
-it. The tag needs lfrShare loaded; without it the entry just shows its run state.
+Every entry names the checkouts that deploy into it and the branch each one has
+checked out, as `<- <repo>@<branch>`, so you can tell what a bundle is for
+without remembering which worktree built it:
+
+```
+liferay-bundle-master  (/media/.../bundles)  [RUNNING pid 2977484, ports: 8005 8080 11311 32763 42763]  <- liferay-portal@LPD-102542
+liferay-bundle-7.4.x   (/home/.../bundles)   [stopped]  <- liferay-portal-7.4.x@82daaa19f1c91, liferay-portal-ee@master-brian
+```
+
+A repo counts as pointing at a bundle when its
+`app.server.<user>.properties` resolves `app.server.parent.dir` there, so a
+bundle repointed with [lfrShare](../LfrShare/README.md) shows the sharing repo
+and is marked `(shared)`: you can see a bundle is someone else's deploy target
+before you stop it. A detached HEAD shows the short sha instead of a branch, and
+a bundle no repo points at (the downloaded `liferay-dxp-tomcat-*` ones) just
+shows its run state. `lfrBundle status` prints the same `<- ` line under each
+running bundle.
 
 ### JDK selection (older bundles need older JDKs)
 

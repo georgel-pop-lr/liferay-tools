@@ -71,6 +71,6 @@ database, search index, and OSGi state. Use it for branches of the same schema
 schema/upgrade mismatches. Deploying from one worktree overwrites whatever code
 was in the bundle.
 
-Other tools see the share: the `lfrBundle` picker tags a shared bundle with
-`shared <- <repo>`, and `lfrAntAll` refuses a full build into it until you
-`lfrShare reset` (or `--force`).
+Other tools see the share: the `lfrBundle` picker lists the sharing repo among
+the bundle's checkouts as `<- <repo>@<branch> (shared)`, and `lfrAntAll` refuses
+a full build into it until you `lfrShare reset` (or `--force`).
