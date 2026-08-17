@@ -13,11 +13,25 @@
 
 _lfr_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Kept (not unset below) so lfrReload can re-source this file by path.
+_lfrToolsEntry="${_lfr_root}/$(basename "${BASH_SOURCE[0]}")"
+
 for _lfr_script in "${_lfr_root}"/*/lfr-*.sh; do
 	[ -r "${_lfr_script}" ] && . "${_lfr_script}"
 done
 
 unset _lfr_root _lfr_script
+
+# lfrReload — pick up edits to any lfr-*.sh in the shell you are already in, so
+# changing a tool does not cost a new terminal or an `exec bash` (which would
+# throw away the shell's state). Re-sourcing redefines every function, so a
+# function you DELETED from a file stays defined until the shell restarts.
+lfrReload() {
+	. "${_lfrToolsEntry}" || return 1
+	echo "lfrTools reloaded from ${_lfrToolsEntry}"
+}
+
+lfrrl() { lfrReload; }
 
 # lfrTools — explain the tool commands loaded by this entry point.
 lfrTools() {
@@ -62,9 +76,13 @@ lfrTools() {
 		  lfrPulls      list open PRs on the Brian mirror; one ticket's pulls
 		                (lfrPulls LPD-12345); per-month stats
 
+		These tools
+		  lfrReload     re-source lfrTools.sh, so edits to any tool take effect
+		                in this shell (no new terminal needed)
+
 		Every command has a short alias: lfrr, lfrw, lfrwr, lfrs, lfrb, lfrrb,
 		lfraa, lfrc, lfrcv, lfrp, lfrgc, lfrgcd, lfrgs, lfrgse, lfrgr, lfrgro,
-		lfrgum, lfrgub, lfrgct. Three expand to an lfrPulls subcommand: lfrpw
-		(week), lfrps (stats), lfrpt (ticket).
+		lfrgum, lfrgub, lfrgct, lfrrl. Three expand to an lfrPulls subcommand:
+		lfrpw (week), lfrps (stats), lfrpt (ticket).
 	EOF
 }
