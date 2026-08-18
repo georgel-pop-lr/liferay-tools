@@ -55,14 +55,25 @@ Scans each directory in `LFR_REPO_ROOTS` for immediate subdirectories that
 contain a `.git` entry, then `cd`s into the one you pick. When
 [`fzf`](https://github.com/junegunn/fzf) is installed it drives an interactive
 fuzzy picker; otherwise it falls back to a numbered `select` menu. Each entry
-shows its root in parentheses, so repos that share a name across roots (such as
-two `liferay-portal` clones) stay distinguishable.
+shows the branch it has checked out and its root in parentheses, so repos that
+share a name across roots (such as two `liferay-portal` clones) stay
+distinguishable, and a worktree sitting on a branch other than the one its
+directory is named after is visible before you jump into it.
+
+```
+liferay-portal-LPD-98055    @LPD-100568   (/media/georgelpop/Data/liferay/repos)
+```
+
+The branch is part of what the picker searches, so `lfrRepo LPD-100568` finds
+the checkout above. A query that matches exactly one repo *name* still wins
+outright, so `lfrRepo master` goes to the `masterBrian` clone rather than
+opening a picker over every repo parked on `master`.
 
 | Invocation | Behavior |
 |---|---|
 | `lfrRepo` | Open the picker over every repo in all roots. |
 | `lfrRepo <name>` | Jump straight to the only match; with more than one match, open the picker prefiltered by `<name>` (fzf; the numbered fallback lists everything). |
-| `lfrRepo -l`, `lfrRepo --list` | List every repo and its root, without changing directory. |
+| `lfrRepo -l`, `lfrRepo --list` | List every repo with its branch and its root, without changing directory. |
 | `lfrRepo <prefix><Tab>` | Tab-complete repo names. |
 
 ```bash

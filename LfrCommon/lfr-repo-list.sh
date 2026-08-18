@@ -2,7 +2,8 @@
 #
 # Loaded via the root lfrTools.sh. Owns the per-user repo config and the two
 # helpers reused by lfrRepo, lfrWorktree, and lfrCache:
-#     _lfrRepoEntries    list git repos under the configured roots (tab-separated)
+#     _lfrRepoEntries    list git repos under the configured roots (tab-separated),
+#                        with --branch labelling each with its checked-out branch
 #     _lfrRepoPick [q]    pick one via fzf or a numbered menu; echoes its path
 #
 # Per-user settings live in repos.local.conf next to this file (gitignored).
@@ -19,8 +20,15 @@ LFR_WORKTREE_BASE="${LFR_WORKTREE_BASE:-upstream/master}"
 
 # Emit "<path>\t<name>  (<root>)" for every git repo under the configured roots,
 # with LFR_REPO_PRIORITY prefixes sorted first (stable within each rank).
+#
+# With --branch the label also carries the checked-out branch (or the short sha
+# when HEAD is detached), which is what tells two clones of the same repo apart
+# and shows when a worktree is not on the branch its directory is named after.
+# It costs a git call per repo, so callers that only need the names (the tab
+# completion, the bundle-to-repo map) leave it off.
 _lfrRepoEntries() {
-	local root dir name rank i seq=0
+	local root dir name rank i seq=0 branch label branches=0
+	[ "${1-}" = --branch ] && branches=1
 	{
 		for root in "${LFR_REPO_ROOTS[@]}"; do
 			[ -d "${root}" ] || continue
@@ -34,7 +42,13 @@ _lfrRepoEntries() {
 						break
 					fi
 				done
-				printf '%d\t%d\t%s\t%s  (%s)\n' "${rank}" "${seq}" "${dir%/}" "${name}" "${root}"
+				label="${name}  (${root})"
+				if [ "${branches}" = 1 ]; then
+					branch="$(git -C "${dir%/}" symbolic-ref --short -q HEAD ||
+						git -C "${dir%/}" rev-parse --short HEAD 2>/dev/null)"
+					label="$(printf '%-36s @%-24s (%s)' "${name}" "${branch:-?}" "${root}")"
+				fi
+				printf '%d\t%d\t%s\t%s\n' "${rank}" "${seq}" "${dir%/}" "${label}"
 				seq=$((seq + 1))
 			done
 		done
@@ -117,13 +131,28 @@ _lfrPick() {
 	return 1
 }
 
-# Pick a git repo (path) with the shared picker. Optional $1 prefilters.
+# Pick a git repo (path) with the shared picker, labelling each with the branch
+# it has checked out. Optional $1 prefilters.
+#
+# A query matching exactly one repo NAME takes that repo outright, so the branch
+# now in the label cannot turn a name that used to resolve on its own into a
+# picker over every repo that happens to sit on that branch (`lfrRepo master`
+# means the masterBrian clone, not the twenty repos parked on master).
 _lfrRepoPick() {
 	local query="${1:-}" entries
-	entries="$(_lfrRepoEntries)"
+	local -a matches=()
+	entries="$(_lfrRepoEntries --branch)"
 	if [ -z "${entries}" ]; then
 		echo "lfr: no git repos found under: ${LFR_REPO_ROOTS[*]}" >&2
 		return 1
+	fi
+	if [ -n "${query}" ]; then
+		mapfile -t matches < <(printf '%s\n' "${entries}" |
+			awk -F'\t' -v q="${query}" '{split($2, label, " "); if (index(label[1], q)) print $1}')
+		if [ "${#matches[@]}" -eq 1 ]; then
+			printf '%s\n' "${matches[0]}"
+			return 0
+		fi
 	fi
 	printf '%s\n' "${entries}" | _lfrPick 'repo> ' "${query}"
 }

@@ -6,7 +6,7 @@
 # Usage:
 #     lfrRepo            # picker over every repo under the configured roots
 #     lfrRepo portal     # jump to the single match; picker prefiltered otherwise
-#     lfrRepo -l         # list all repos and their roots, no cd
+#     lfrRepo -l         # list all repos, their branch and their roots, no cd
 
 lfrRepo() {
 	case "${1-}" in
@@ -17,14 +17,14 @@ lfrRepo() {
 			Usage:
 			  lfrRepo          open a picker over every repo under your roots
 			  lfrRepo <name>   jump to the match (picker if more than one matches)
-			  lfrRepo -l       list all repos and their roots, without changing dir
+			  lfrRepo -l       list all repos, their branch and their roots, no cd
 		EOF
 		return 0
 		;;
 	esac
 
 	if [ "$1" = "-l" ] || [ "$1" = "--list" ]; then
-		_lfrRepoEntries | cut -f2-
+		_lfrRepoEntries --branch | cut -f2-
 		return 0
 	fi
 

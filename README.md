@@ -20,7 +20,7 @@ and `lfrs` are interchangeable, and all accept `-h`/`--help`.
 
 | Command | Short | What it does | Folder |
 | --- | --- | --- | --- |
-| `lfrRepo` | `lfrr` | Jump between Liferay repos with a picker (or by name, with tab-completion); `-l` just lists them | `LfrRepo/` |
+| `lfrRepo` | `lfrr` | Jump between Liferay repos with a picker showing each one's checked-out branch (or by name, with tab-completion); `-l` just lists them | `LfrRepo/` |
 | `lfrWorktree` | `lfrw` | Create a git worktree off a base ref, wired to its own bundle and database (per-user props copied and repointed, bundle dir created with `portal-ext.properties` on `portal-<branch>`) | `LfrRepo/` |
 | `lfrWorktreeRemove` | `lfrwr` | Remove a worktree, its branch, its bundle dir when unused, and IntelliJ's project state (recent-projects entry, trusted path, index cache). Refuses while that bundle's Tomcat runs; never drops the database. Takes `[--force]` | `LfrRepo/` |
 | `lfrWorktreeIdeaClean` / `lfrWorktreeIdeaCleanDry` | | Make IntelliJ forget every `liferay-portal-<branch>` project whose directory is gone, and delete its caches: the leftovers of a worktree removed by hand or while an IDE was open. Refuses while IntelliJ runs | `LfrRepo/` |
