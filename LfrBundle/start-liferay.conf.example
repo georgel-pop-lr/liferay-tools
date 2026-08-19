@@ -24,6 +24,11 @@ JDK_11=""
 JDK_17=""
 JDK_21=""
 
+# Wipe the terminal (screen and scrollback) in the moment before Tomcat starts,
+# so what is left is only the new bundle's log. Set to 0 to leave the terminal
+# alone; --no-clear (-nc) does the same for a single run.
+CLEAR_SCREEN=1
+
 # Debug suspend default. In --debug mode, "y" makes the JVM wait for a debugger
 # to attach before startup continues; "n" (the default) starts without waiting.
 # The --suspend flag forces "y" for a single run.

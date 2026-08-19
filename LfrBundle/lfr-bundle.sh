@@ -300,6 +300,8 @@ lfrBundle() {
 			  -t,  --test         deploy the osgi/test bundles (Arquillian/DataGuard
 			                      connectors included), so testIntegration can run
 			                      against the live bundle
+			  -nc, --no-clear     leave the terminal as it is; by default it is
+			                      wiped at launch so only this boot's log is there
 		EOF
 		return 0
 		;;

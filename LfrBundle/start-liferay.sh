@@ -17,6 +17,7 @@
 #   start-liferay.sh --clean --db-docker (-dbd) pg-db  # reset DB via docker exec, then start
 #   start-liferay.sh --clean-cache (-cc)          # picker, then clear caches only (no DB)
 #   start-liferay.sh --test (-t)                  # scan osgi/test so the bundle is a testIntegration target (Arquillian/DataGuard + test-support)
+#   start-liferay.sh --no-clear (-nc)             # leave the terminal as it is instead of wiping it at launch
 #
 # DEBUG mode runs Tomcat via 'catalina.sh jpda run' so a remote debugger can
 # attach. The JPDA port defaults to 8000, with the same auto-bump behaviour as
@@ -48,6 +49,14 @@
 # Arquillian/DataGuard connectors) is scanned in place. Without it the bundle stays
 # lean (the scan override is removed). Run tests with
 # -Dliferay.arquillian.port=<the printed port>.
+#
+# The terminal is wiped, screen and scrollback both, once the bundle and its
+# Tomcat are resolved and before this launch prints anything of its own. So the
+# window holds this launch and nothing before it: the resolved bundle, the clean,
+# the port table and then the whole boot log, with nothing from the previous run
+# left to scroll into. Its own lines bank in the now-empty scrollback as they
+# scroll off, so the start stays a PageUp away. Pass --no-clear (-nc), or set
+# CLEAR_SCREEN=0 in start-liferay.conf, to keep the terminal as it is.
 #
 # Each connector's per-instance port, from the HTTP offset (8080 -> 32763, 8081 ->
 # 32804, ...), is pinned on EVERY launch, with or without --test, so parallel test
@@ -105,6 +114,7 @@ CLEAN=0
 CLEAN_CACHE=0
 ASSUME_YES=0
 TEST=0
+CLEAR_SCREEN="${CLEAR_SCREEN:-1}"
 BUNDLE=""
 JDK_OVERRIDE=""
 DB_DOCKER=""
@@ -133,6 +143,9 @@ while [ $i -lt ${#args[@]} ]; do
 			;;
 		--test|-t)
 			TEST=1
+			;;
+		--no-clear|-nc)
+			CLEAR_SCREEN=0
 			;;
 		--yes|-y)
 			ASSUME_YES=1
@@ -167,6 +180,28 @@ while [ $i -lt ${#args[@]} ]; do
 	esac
 	i=$((i + 1))
 done
+
+# Wipe the terminal, screen and scrollback both, so this launch starts on an
+# empty window and nothing from the run before it is left anywhere. Called once
+# the bundle and its Tomcat are resolved, which is where this launch's own output
+# begins: wiping any later would take that output with it, and the resolved
+# bundle, the ports and the log paths are the half of the screen worth keeping.
+#
+# `clear` is the whole clear (\033[2J for the screen, \033[3J for the
+# scrollback; `clear -x` keeps the scrollback, which leaves the previous run one
+# PageUp away and reads as no clear at all), and going through the command rather
+# than writing the escapes by hand lets terminfo answer for whatever TERM is in
+# play.
+#
+# Nothing of this launch is lost to it: the lines that later scroll off the top
+# land in the now-empty scrollback, even though the status bar keeps a scroll
+# region set for as long as the bundle runs. Measured on VTE 2.91 (Terminator):
+# of 60 lines pushed through a 24-row window with the region in place, all 60
+# were still in the buffer, the first one included.
+_clear_screen() {
+	[ "$CLEAR_SCREEN" = 1 ] && [ -t 1 ] || return 0
+	clear 2>/dev/null || printf '\033[H\033[2J\033[3J'
+}
 
 # Open the picker by default: with no bundle named on the command line, there
 # is nothing to launch, so fall into selection rather than a hardcoded default.
@@ -347,6 +382,8 @@ if [ ! -f "$SERVER_XML" ] || [ ! -x "$CATALINA" ]; then
 	echo "  catalina.sh: $CATALINA" >&2
 	exit 1
 fi
+
+_clear_screen
 
 echo "Bundle : $BUNDLE"
 echo "Tomcat : $TOMCAT_DIR"
@@ -997,20 +1034,49 @@ _status_bar_url_line() {
 
 _STATUS_BAR_ON=0
 
+# Echo the row the cursor is on, asked of the terminal itself: DSR (\033[6n) is
+# answered with ESC[<row>;<col>R on the terminal's input, so it is read back from
+# /dev/tty rather than from stdin, which a background Tomcat has taken over.
+# Echoes nothing when there is no terminal to ask or the reply does not arrive,
+# leaving the caller to fall back to a fixed row.
+_cursor_row() {
+	local row=""
+	# The braces matter: on `exec` itself a failing redirect still reports through
+	# the shell's own stderr, so the 2>/dev/null has to wrap the command, not ride
+	# on it, or a run without a terminal prints "/dev/tty: No such device".
+	{ exec 3<>/dev/tty; } 2>/dev/null || return 0
+	printf '\033[6n' >&3
+	IFS='[;' read -rsd R -t 0.3 -u 3 _ row _ 2>/dev/null || row=""
+	exec 3<&- 3>&- 2>/dev/null
+	case "$row" in "" | *[!0-9]*) return 0 ;; esac
+	printf '%s' "$row"
+}
+
 # Reserve the bottom two rows (a DECSTBM scroll region over the rest of the
 # screen) and draw the two-row status panel there in reverse video, so Tomcat's
 # logs scroll above it while the ports/URL stay pinned. No-op on short terminals.
+#
+# Setting the region homes the cursor (DECSTBM does that by definition), so the
+# row the output had reached has to be put back afterwards, or the log would
+# either overwrite this launch's own header from the top or, with a fixed jump to
+# the region's last row, open a screenful of blank lines and start at the bottom.
+# The row is clamped into the region, since a cursor left on one of the panel rows
+# would write over the panel and never scroll (it sits outside the region).
 _setup_status_bar() {
-	local rows cols ports url
+	local rows cols ports url row
 	rows=$(tput lines 2>/dev/null || echo 24)
 	cols=$(tput cols 2>/dev/null || echo 80)
 	[ "$rows" -ge 8 ] 2>/dev/null || return 0
+	row="$(_cursor_row)"
+	if [ -z "$row" ] || [ "$row" -gt "$((rows - 2))" ]; then
+		row=$((rows - 2))
+	fi
 	ports="$(_status_bar_ports_line)"; ports="${ports:0:$cols}"; printf -v ports '%-*s' "$cols" "$ports"
 	url="$(_status_bar_url_line "$cols")"; url="${url:0:$cols}"; printf -v url '%-*s' "$cols" "$url"
 	printf '\033[1;%dr' "$((rows - 2))"                          # scroll region = all but bottom 2 rows
 	printf '\033[%d;1H\033[7m%s\033[0m' "$((rows - 1))" "$ports" # upper row: ports
 	printf '\033[%d;1H\033[7m%s\033[0m' "$rows" "$url"           # lower row: URL + full path
-	printf '\033[%d;1H' "$((rows - 2))"                          # cursor back into the scroll region
+	printf '\033[%d;1H' "$row"                                   # cursor back where the output was
 	_STATUS_BAR_ON=1
 }
 

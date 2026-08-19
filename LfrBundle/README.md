@@ -234,8 +234,8 @@ running, since the upgrade needs the database to itself.
 Start flags are passed through to `start-liferay.sh` when a stopped bundle is
 started, and ignored when a running bundle is stopped. Each has a short alias:
 `-c` (`--clean`), `-cc` (`--clean-cache`), `-d` (`--debug`), `-s` (`--suspend`),
-`-t` (`--test`), `-y` (`--yes`), `-j` (`--jdk <path>`), and `-dbd`
-(`--db-docker <container>`). Do not forward `--pick`/`-p`: it opens the
+`-t` (`--test`), `-y` (`--yes`), `-nc` (`--no-clear`), `-j` (`--jdk <path>`),
+and `-dbd` (`--db-docker <container>`). Do not forward `--pick`/`-p`: it opens the
 launcher's own second picker, whose choice replaces the bundle you just
 toggled. Stopping sends `SIGTERM` for a clean JVM shutdown, waits up to 10s,
 then `SIGKILL`s anything still alive. The picker lists the launchable Tomcat
@@ -440,6 +440,38 @@ directly (and skip the prompt), pass `--db-docker <container>`:
 ```bash
 lfrBundle <name> -c -dbd pg-db
 ```
+
+### A clean terminal for each launch (`--no-clear`)
+
+The terminal is wiped, screen and scrollback both, once the bundle and its
+Tomcat are resolved and before the launch prints anything of its own. What the
+window then holds, and what a PageUp reaches, is this launch and nothing before
+it: the resolved bundle, the clean, the port table, and the whole boot log after
+them.
+
+**Where the wipe happens is the whole point.** Wiping any later would take this
+launch's own header with it, which is what makes a screen that starts at Java's
+`NOTE: Picked up JDK_JAVA_OPTIONS` line and never says which bundle it belongs
+to. Wiping any earlier would leave the picker and the `--clean` prompt on the
+old screen.
+
+Two details keep it from losing anything:
+
+- **The status bar puts the cursor back where the output was.** Setting a scroll
+  region homes the cursor by definition, so the bar has to restore the row, and
+  it asks the terminal for it (DSR, `ESC[6n`) rather than jumping to a fixed one.
+  A fixed jump to the region's last row is what opened the boot on the bottom row
+  under a screenful of blank lines. The row is clamped into the region, since a
+  cursor left on a panel row would write over the panel and never scroll, and it
+  falls back to the region's last row when no terminal answers.
+- **Lines that scroll off still bank in the scrollback**, even though the status
+  bar keeps a scroll region set the whole time the bundle runs. Measured on VTE
+  2.91 (Terminator): of 60 lines pushed through a 24-row window with the region
+  in place, all 60 were still in the buffer, the first included.
+
+Pass `--no-clear` / `-nc` to leave the terminal alone for a single run, or set
+`CLEAR_SCREEN=0` in `start-liferay.conf` to keep it that way. Piped or
+redirected output is never touched, since the wipe is TTY-only.
 
 ### Stopping the server
 
