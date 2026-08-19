@@ -15,6 +15,13 @@
 # enforced; a stale lock from a dead build is reclaimed automatically. Any extra
 # args are forwarded to `ant all`.
 #
+# Once the guards pass, the terminal is wiped (screen and scrollback) and the
+# build announces what it is building, so the window holds this build and nothing
+# before it: `ant all` prints thousands of lines and the run before it is only in
+# the way. A guard that refuses never wipes, so its message stays where you can
+# read it. Pass --no-clear / -nc, or set LFR_CLEAR_SCREEN=0, to keep the
+# terminal as it is.
+#
 # Bundle detection (_lfrBundleProcs / _lfrBundleList / _lfrBundlePidForDir) comes
 # from LfrBundle; the shared-bundle lookup (_lfrShareReposForBundle) from LfrShare.
 
@@ -61,16 +68,20 @@ lfrAntAll() {
 			  lfrAntAll [ant-args]  run `ant all`; extra args are forwarded to ant
 			  lfrAntAll -f          bypass the running-server and shared-bundle guards
 			                        (--force); the one-at-a-time lock still applies
+			  lfrAntAll -nc         keep the terminal as it is (--no-clear); by
+			                        default it is wiped once the guards pass, so only
+			                        this build's output is there
 		EOF
 		return 0
 		;;
 	esac
 
-	local force=0 a
+	local force=0 clear=1 a
 	local -a antargs=()
 	for a in "$@"; do
 		case "${a}" in
 		-f | --force) force=1 ;;
+		-nc | --no-clear) clear=0 ;;
 		*) antargs+=("${a}") ;;
 		esac
 	done
@@ -110,7 +121,7 @@ lfrAntAll() {
 	# Guard 3: one `ant all` at a time, machine-wide per user. A mkdir lock (not a
 	# held-open flock fd, which a lingering Gradle daemon could inherit and never
 	# release); a stale lock whose holder has died is reclaimed.
-	local lockdir="${TMPDIR:-/tmp}/lfr-ant-all.${USER}.lock.d"
+	local lockdir="${TMPDIR:-/tmp}/lfr-ant-all.${USER}.lock.d" notice=""
 	if ! mkdir "${lockdir}" 2>/dev/null; then
 		local holder
 		holder="$(cat "${lockdir}/pid" 2>/dev/null)"
@@ -119,10 +130,21 @@ lfrAntAll() {
 			[ -f "${lockdir}/info" ] && sed 's/^/  /' "${lockdir}/info" >&2
 			return 3
 		fi
-		echo "lfrAntAll: clearing a stale ant-all lock (holder ${holder:-?} is gone)." >&2
+		notice="lfrAntAll: cleared a stale ant-all lock (holder ${holder:-?} was gone)."
 		rm -rf "${lockdir}"
 		mkdir "${lockdir}" 2>/dev/null || { echo "lfrAntAll: could not acquire lock ${lockdir}" >&2; return 1; }
 	fi
+
+	# Past every guard and holding the lock, so this build is going to happen: wipe
+	# the terminal and say what is being built, the way the bundle launcher does.
+	# Wiping here and not earlier is what keeps a guard's refusal readable, and the
+	# stale-lock notice is held back to here for the same reason.
+	[ "${clear}" = 1 ] && declare -F _lfrClearScreen >/dev/null 2>&1 && _lfrClearScreen
+	[ -n "${notice}" ] && echo "${notice}" >&2
+	echo "Repo   : ${PWD}"
+	echo "Bundle : ${mine:-unresolved}"
+	echo "Command: ant all${antargs[*]:+ ${antargs[*]}}"
+	echo
 
 	# Run under the lock in a subshell so its cleanup trap is local and fires on
 	# normal exit or interrupt, releasing the lock either way.

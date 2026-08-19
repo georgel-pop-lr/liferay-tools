@@ -7,7 +7,7 @@ Build helpers for Liferay repos. Loaded as shell functions via the root
 
 | Command | Short | What it does |
 | --- | --- | --- |
-| `lfrAntAll [--force] [ant args]` | `lfraa` | Run `ant all` in the current repo, with guards against a running server, a shared target bundle, and a concurrent build. |
+| `lfrAntAll [--force] [--no-clear] [ant args]` | `lfraa` | Run `ant all` in the current repo, with guards against a running server, a shared target bundle, and a concurrent build. |
 
 `lfrAntAll` guards a full build three ways:
 
@@ -33,6 +33,28 @@ Build helpers for Liferay repos. Loaded as shell functions via the root
 `--force` / `-f` (accepted anywhere in the arguments, and consumed rather than
 forwarded) bypasses guards 1 and 2 only. All other arguments are forwarded to
 `ant all`. `-h`/`--help` prints usage.
+
+## A clean terminal for each build
+
+Once every guard has passed and the lock is held, so the build is certainly going
+to run, the terminal is wiped (screen and scrollback, through
+`_lfrClearScreen` from `LfrCommon`) and the build prints what it is building:
+
+```
+Repo   : /media/georgelpop/Data/liferay/repos/liferay-portal
+Bundle : /media/georgelpop/Data/liferay/bundles/liferay-bundle-master
+Command: ant all
+```
+
+`ant all` prints thousands of lines, and the run before it is only in the way
+when you scroll back through them. Wiping at that point rather than earlier is
+what keeps a guard's refusal on screen where you can read it; the stale-lock
+notice is held back and printed after the wipe for the same reason.
+
+`--no-clear` / `-nc` keeps the terminal as it is for a single build, and
+`LFR_CLEAR_SCREEN=0` (in `repos.local.conf`, or exported) keeps it for good. The
+wipe is a no-op off a TTY, so piped or redirected output is never touched. The
+bundle launcher does the same thing at its own launch (see `LfrBundle`).
 
 Bundle detection is shared with `LfrBundle` (`_lfrBundleProcs`,
 `_lfrBundlePidForDir`, `_lfrBundleList`); the shared-bundle lookup with

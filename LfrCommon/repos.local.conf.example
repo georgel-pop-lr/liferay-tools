@@ -25,3 +25,9 @@ LFR_BUNDLES_DIRS=(
 # Bundle-name prefixes floated to the top of the bundle picker, in order (same
 # matching as LFR_REPO_PRIORITY). Defaults float the master bundle first.
 LFR_BUNDLES_PRIORITY=("liferay-bundle-master" "liferay-bundle")
+
+# Wipe the terminal (screen and scrollback) when a tool takes it over for a long
+# run, so only that run's output is there. Applies to lfrAntAll; the bundle
+# launcher has its own CLEAR_SCREEN in start-liferay.conf. Set to 0 to keep the
+# terminal as it is.
+LFR_CLEAR_SCREEN=1
