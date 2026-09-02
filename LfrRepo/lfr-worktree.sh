@@ -249,9 +249,25 @@ _lfrWorktreeIdeaHash() {
 
 # True while an IntelliJ is running. It rewrites its options from memory on exit, so an
 # edit made now would be undone (and a forgotten project put back) the moment it closes.
+#
+# Two shapes to catch. Up to 2024.1 the IDE is a JVM whose command line ends in
+# com.intellij.idea.Main. From 2024.2 it is a native launcher that loads the JVM
+# in-process, so that class name never reaches the process list at all and the launcher
+# is only findable by its own name. Matching just the first left the guard dead on
+# 2024.3, and a dead guard is worse than no guard: the clean reports success and the IDE
+# writes every project back the moment it closes.
+#
+# pgrep -x goes on the process name rather than the command line, so a command that
+# merely mentions the launcher's path cannot trip it. The grep can be tripped that way,
+# and is left as it is regardless: a false positive only refuses the clean and says to
+# close the IDE, while a false negative loses the work silently, so the two are not
+# worth trading against each other.
+#
 # Matching escaped dots is what keeps the pattern from finding this very grep in the ps
 # output.
 _lfrWorktreeIdeaRunning() {
+	pgrep -x idea >/dev/null 2>&1 && return 0
+
 	ps -eo args | grep --quiet -- 'com\.intellij\.idea\.Main'
 }
 
