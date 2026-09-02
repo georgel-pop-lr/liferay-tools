@@ -218,6 +218,7 @@ configuration holds nothing but a host and a port.
 | `lfrWorktreeIdeaInit` | Set up the worktree you are in. |
 | `lfrWorktreeIdeaInit <branch\|dir>` | Set up that worktree. |
 | `lfrWorktreeIdeaInit <branch\|dir> <src>` | Copy the project from that clone instead. |
+| `lfrWorktreeIdeaInit <branch\|dir> --redo` | Replace the project it already has. Without this it refuses rather than write over one. |
 
 ```bash
 lfrWorktree LPD-12345                  # create the worktree
@@ -236,12 +237,20 @@ model itself takes); the shelf, which holds the source clone's own shelved
 changes; a template or throwaway run configuration; and any run configuration
 bound to a registered application server (the Tomcat ones), since that
 registration names the source clone's bundle and would start the wrong one.
-Nothing already in the target is overwritten, so the handful of tracked `.idea`
-files and `.iml` files keep the branch's own version, and IntelliJ still indexes
-the project the first time it opens it.
+The files the target tracks in git keep the branch's own version, and every other
+`.iml` the source has is overwritten, so a `--redo` off a different clone really
+replaces the project instead of merging the two. An `.iml` only the previous
+source had is left where it is, unreferenced by the new `modules.xml` and ignored.
+IntelliJ still indexes the project the first time it opens it.
 
 The source defaults to `LFR_IDEA_TEMPLATE`, else `liferay-portal` in the worktree
-root.
+root. Set `LFR_IDEA_TEMPLATE` whenever the clone sitting in that root is not the
+one carrying your run configurations, which is the whole point of the copy: with
+`LFR_WORKTREE_ROOT` on a second drive the fallback picks that drive's clone, and a
+clone you have never set run configurations up in copies none.
+
+The `.iml` scan takes the best part of a minute on a Liferay tree, so the command
+says what it is doing before each slow step rather than going silent.
 
 All five commands accept `-h`/`--help`.
 
