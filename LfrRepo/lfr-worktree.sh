@@ -517,30 +517,59 @@ lfrWorktreeRemove() {
 			lfrWorktreeRemove — remove a worktree, its branch, and its bundle.
 
 			Usage:
-			  lfrWorktreeRemove <branch>          remove the worktree, delete the
-			                                      branch, and delete the bundle dir
-			                                      when it holds nothing but the
-			                                      portal-ext.properties lfrWorktree
-			                                      created
-			  lfrWorktreeRemove <branch> --force  also when the worktree has changes
-			                                      or the branch is unmerged
+			  lfrWorktreeRemove <branch>                remove the worktree, delete
+			                                            the branch, and delete the
+			                                            bundle dir, built or not
+			  lfrWorktreeRemove <branch> --force        also when the worktree has
+			                                            changes or the branch is
+			                                            unmerged
+			  lfrWorktreeRemove <branch> --keep-bundle  leave the bundle dir in
+			                                            place
+
+			The bundle goes with the worktree because it belongs to that checkout
+			alone: with the worktree and the branch gone nothing can deploy into it
+			again, and adopting a built bundle from another branch is a defect, not a
+			saving. Pass --keep-bundle when the logs or the data are still wanted.
 
 			Also makes IntelliJ forget the project (Welcome screen entry, trusted
 			path, index cache), unless it is running, which lfrWorktreeIdeaClean
 			then cleans up later. Refuses while the bundle's Tomcat is running.
-			Never drops the database. Run from inside any liferay-portal clone.
+			Never drops the database; it prints the dropdb command instead. Run from
+			inside any liferay-portal clone.
 		EOF
 		return 0
 		;;
 	esac
 
 	local branch="${1}"
-	local force="${2:-}"
 
 	if [ -z "${branch}" ]; then
-		echo "usage: lfrWorktreeRemove <branch> [--force]" >&2
+		echo "usage: lfrWorktreeRemove <branch> [--force] [--keep-bundle]" >&2
 		return 1
 	fi
+
+	shift
+
+	local force=""
+	local keep_bundle=""
+
+	while [ "$#" -gt 0 ]; do
+		case "${1}" in
+		--force)
+			force="--force"
+			;;
+		--keep-bundle)
+			keep_bundle="--keep-bundle"
+			;;
+		*)
+			echo "lfrWorktreeRemove: unknown option ${1}" >&2
+			echo "usage: lfrWorktreeRemove <branch> [--force] [--keep-bundle]" >&2
+			return 1
+			;;
+		esac
+
+		shift
+	done
 
 	if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
 		echo "lfrWorktreeRemove: not inside a git repo" >&2
@@ -621,25 +650,28 @@ lfrWorktreeRemove() {
 		_lfrWorktreeRemoveIdeaProject "${dir}" lfrWorktreeRemove
 	fi
 
-	# Only the stub lfrWorktree created is disposable. Anything else (a built bundle,
-	# its data, its logs) stays, whatever --force says: it is not this command's work.
+	# The bundle belongs to this worktree alone, so it goes with it. A built one is
+	# derived output, not work product: with the checkout and the branch gone nothing
+	# can deploy into it again, and adopting it from another branch is a defect rather
+	# than a saving, so keeping it only leaks its gigabytes silently. --keep-bundle is
+	# there for the logs or the data. The database is the real exception, since
+	# dropping one cannot be undone.
 	if [ -z "${bundle_dir}" ] || [ ! -d "${bundle_dir}" ]; then
 		return 0
 	fi
 
-	local -a entries=()
-	mapfile -t entries < <(ls -A "${bundle_dir}")
+	local bundle_size
+	bundle_size="$(du -sh "${bundle_dir}" 2>/dev/null | cut -f1)"
 
-	if [ "${#entries[@]}" -eq 0 ] ||
-		{ [ "${#entries[@]}" -eq 1 ] && [ "${entries[0]}" = portal-ext.properties ]; }; then
-		rm -rf "${bundle_dir}" || return 1
-		echo "lfrWorktreeRemove: deleted the unused bundle ${bundle_dir}" >&2
+	if [ -n "${keep_bundle}" ]; then
+		echo "lfrWorktreeRemove: kept ${bundle_dir} (${bundle_size:-unknown size}) as asked" >&2
 	else
-		echo "lfrWorktreeRemove: kept ${bundle_dir}; it holds a built bundle, delete it yourself" >&2
+		rm -rf "${bundle_dir}" || return 1
+		echo "lfrWorktreeRemove: deleted the bundle ${bundle_dir} (${bundle_size:-unknown size})" >&2
 	fi
 
 	if [ -n "${db}" ]; then
-		echo "lfrWorktreeRemove: left the ${db} database alone" >&2
+		echo "lfrWorktreeRemove: left the ${db} database alone; drop it with dropdb ${db}" >&2
 	fi
 }
 
