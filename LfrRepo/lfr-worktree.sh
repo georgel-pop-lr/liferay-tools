@@ -225,9 +225,9 @@ lfrWorktree() {
 }
 
 # IntelliJ keeps a project's state outside the project directory, so removing a worktree
-# leaves it behind: the Welcome screen still offers the path that is gone, and the
-# project's index cache (6 MB for a Liferay worktree) stays on disk. The helpers below
-# clear that state; the state that lives inside the worktree (.idea, *.iml) goes with it.
+# leaves it behind: the Welcome screen still offers the path that is gone, and around
+# 26 MB of caches for a Liferay worktree stay on disk. The helpers below clear that
+# state; the state that lives inside the worktree (.idea, *.iml) goes with it.
 #
 # A cache directory is named <project>.<hash>, where the hash is Java's String.hashCode
 # of the project's absolute path in hex, so it is computed here rather than guessed by
@@ -352,6 +352,98 @@ _lfrWorktreeRemoveIdeaEntry() {
 	printf '%s\n' "${id}"
 }
 
+# Drop the path $2 from the "file.chooser.recent.files" list in the IntelliJ options
+# file $1 (other.xml), which is the Open File dialog's own history and is not covered by
+# the Welcome screen entry. Returns 1 when the list holds no such path.
+#
+# That list is JSON inside an XML text node, so dropping its last element would leave
+# the new last one carrying a trailing comma, and IntelliJ would then fail to parse the
+# whole file and lose every setting in it. The block is therefore buffered and its
+# commas written afresh, rather than filtered a line at a time.
+_lfrWorktreeRemoveIdeaRecentFile() {
+	local file="${1}" key="${2}"
+	local tmp
+
+	[ -f "${file}" ] || return 1
+
+	local trailing_newline=1
+	if [ -n "$(tail -c 1 "${file}")" ]; then
+		trailing_newline=0
+	fi
+
+	tmp="$(mktemp)" || return 1
+
+	if ! awk -v key="${key}" -v out="${tmp}" '
+		function trim(line) {
+			sub(/^[[:space:]]+/, "", line)
+			sub(/[[:space:]]+$/, "", line)
+
+			return line
+		}
+
+		BEGIN {
+			target = "&quot;" key "&quot;"
+		}
+
+		!inlist {
+			print >out
+
+			if (trim($0) == "&quot;file.chooser.recent.files&quot;: [") {
+				inlist = 1
+			}
+
+			next
+		}
+
+		trim($0) ~ /^\]/ {
+			for (i = 1; i <= n; i++) {
+				print buffer[i] (i < n ? "," : "") >out
+			}
+
+			inlist = 0
+			n = 0
+
+			print >out
+
+			next
+		}
+
+		{
+			line = $0
+
+			sub(/,[[:space:]]*$/, "", line)
+
+			if (trim(line) == target) {
+				removed = 1
+
+				next
+			}
+
+			buffer[++n] = line
+		}
+
+		END {
+			exit removed ? 0 : 1
+		}
+	' "${file}"; then
+		rm -f "${tmp}"
+
+		return 1
+	fi
+
+	cat "${tmp}" >"${file}" || {
+		rm -f "${tmp}"
+
+		return 1
+	}
+
+	rm -f "${tmp}"
+
+	if [ "${trailing_newline}" -eq 0 ]; then
+		truncate -s -1 "${file}"
+	fi
+}
+
 # Make every IntelliJ forget the project at $1 and delete its caches. $2 is the calling
 # command, used only to prefix the messages. Each IDE version keeps its own state, so
 # this walks all of them.
@@ -366,6 +458,12 @@ _lfrWorktreeRemoveIdeaProject() {
 	case "${dir}" in
 	"${HOME}"/*) keys+=("\$USER_HOME\$/${dir#"${HOME}"/}") ;;
 	esac
+
+	# The task-management plugin keys its state by the project's directory name with
+	# every non-alphanumeric turned into an underscore, the one piece of per-project
+	# state addressable by neither the path nor the hash.
+	local slug="${dir##*/}"
+	slug="${slug//[^[:alnum:]]/_}"
 
 	local cache config_dir id key recent size
 	for recent in "${config_root}"/*/options/recentProjects.xml; do
@@ -385,20 +483,28 @@ _lfrWorktreeRemoveIdeaProject() {
 			fi
 
 			_lfrWorktreeRemoveIdeaEntry "${config_dir}/options/trusted-paths.xml" "${key}" >/dev/null
+			_lfrWorktreeRemoveIdeaRecentFile "${config_dir}/options/other.xml" "${key}"
 		done
+
+		rm -f "${config_dir}/tasks/${slug}.tasks.zip" "${config_dir}/tasks/${slug}.contexts.zip"
 	done
 
+	# Every per-project cache carries the hash in its own name, whatever directory it
+	# sits in: projects, compiler, editor, fileHistory, conversion, frameworks/detection,
+	# index/index-file-filters, index/dirty-file-queues, log/indexing-diagnostic,
+	# Maven/Projects, semantic-search, testHistory, vcs-log, vcs-users, and whatever a
+	# later IDE version adds. So match on the hash rather than listing the directories,
+	# which is what used to leave index-file-filters behind, 3.5 MB a project and the
+	# largest of them. -prune keeps the walk out of a cache already matched, so a file
+	# inside one is never deleted on its own account.
 	local hash
 	hash="$(_lfrWorktreeIdeaHash "${dir}")"
 
-	for cache in "${cache_root}"/*/projects/*."${hash}" \
-		"${cache_root}"/*/log/indexing-diagnostic/*."${hash}"; do
-		[ -d "${cache}" ] || continue
-
+	while IFS= read -r cache; do
 		size="$(du -sh "${cache}" | cut -f1)"
 
 		rm -rf "${cache}" && echo "${caller}: deleted the IntelliJ cache ${cache} (${size})" >&2
-	done
+	done < <(find "${cache_root}" -maxdepth 6 -name "*${hash}*" -prune -print 2>/dev/null)
 }
 
 # List the worktree projects IntelliJ still offers whose directory is gone: the leftovers
@@ -531,9 +637,11 @@ lfrWorktreeRemove() {
 			again, and adopting a built bundle from another branch is a defect, not a
 			saving. Pass --keep-bundle when the logs or the data are still wanted.
 
-			Also makes IntelliJ forget the project (Welcome screen entry, trusted
-			path, index cache), unless it is running, which lfrWorktreeIdeaClean
-			then cleans up later. Refuses while the bundle's Tomcat is running.
+			Also makes IntelliJ forget the project: the Welcome screen entry, the
+			trusted path, the Open File history, the task state, and every cache
+			keyed by the project's path hash. Unless it is running, which
+			lfrWorktreeIdeaClean then cleans up later. Refuses while the bundle's
+			Tomcat is running.
 			Never drops the database; it prints the dropdb command instead. Run from
 			inside any liferay-portal clone.
 		EOF

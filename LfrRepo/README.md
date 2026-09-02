@@ -155,16 +155,28 @@ database is always left alone, its name printed so you can drop it yourself
 
 A worktree's `.idea` and `*.iml` go with the directory, but IntelliJ keeps the
 rest of a project's state elsewhere, so removing a worktree used to leave it
-behind: the Welcome screen kept offering a path that no longer exists, and the
-project's index cache (about 6 MB per Liferay worktree) stayed on disk.
-`lfrWorktreeRemove` now clears all of it per IDE version: the `recentProjects.xml`
-entry, its `trusted-paths.xml` entry, the `workspace/<id>.xml` that entry names,
-and the `projects/` plus `log/indexing-diagnostic/` caches.
+behind: the Welcome screen kept offering a path that no longer exists, and about
+26 MB of caches per Liferay worktree stayed on disk. `lfrWorktreeRemove` now
+clears all of it per IDE version. From the config: the `recentProjects.xml`
+entry, the `trusted-paths.xml` entry, the `workspace/<id>.xml` that entry names,
+the path's line in `other.xml`'s `file.chooser.recent.files` (the Open File
+dialog's own history), and the `tasks/<name>.{tasks,contexts}.zip` pair.
 
-A cache directory is found by hash, not by name: it is `<project>.<hash>`, where
-the hash is Java's `String.hashCode` of the project's absolute path in hex. Two
-projects can share a name (a `liferay-portal` clone plus another one on a second
-drive), and only the hash tells their caches apart.
+A cache is found by hash, not by name: the hash is Java's `String.hashCode` of
+the project's absolute path in hex, and every per-project cache carries it in its
+own name whatever directory it sits in. Two projects can share a name (a
+`liferay-portal` clone plus another one on a second drive), and only the hash
+tells their caches apart. Matching on the hash rather than on a list of
+directories is also what stopped this missing the ones nobody had thought to
+list: `projects`, `compiler`, `editor`, `fileHistory`, `conversion`,
+`frameworks/detection`, `index/index-file-filters` (3.5 MB a project, the largest
+of them), `index/dirty-file-queues`, `log/indexing-diagnostic`, `Maven/Projects`,
+`semantic-search`, `testHistory`, `vcs-log` and `vcs-users` are all covered by
+the one rule, along with whatever a later IDE version adds.
+
+The task state is the exception, keyed by the project's directory name with every
+non-alphanumeric turned into an underscore, so it is addressable by neither the
+path nor the hash.
 
 The one case `lfrWorktreeRemove` skips is a running IntelliJ, which rewrites its
 options from memory on exit and would put the entry straight back. It says so and
