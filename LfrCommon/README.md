@@ -27,9 +27,10 @@ cp repos.local.conf.example repos.local.conf
 | `LFR_REPO_PRIORITY` | `liferay-portal` | Repo-name prefixes floated to the top of the picker. |
 | `LFR_WORKTREE_ROOT` | `$HOME/liferay/repos` | Where `lfrWorktree` creates new worktrees. |
 | `LFR_WORKTREE_BASE` | `upstream/master` | Default base ref for new branches (also `lfrCodeView`'s default compare base). |
+| `LFR_IDEA_TEMPLATE` | `liferay-portal` in `LFR_WORKTREE_ROOT` | The clone `lfrWorktreeIdeaInit` copies the IntelliJ project from. |
 | `LFR_BUNDLES_DIRS` | `$HOME/liferay/bundles`, `/media/$USER/Data/liferay/bundles` | Directories scanned for bundles (`lfrShare`, `lfrBundle`). |
 | `LFR_BUNDLES_PRIORITY` | `liferay-bundle-master`, `liferay-bundle` | Bundle-name prefixes floated to the top of the bundle picker. |
 
-`LFR_WORKTREE_ROOT` and `LFR_WORKTREE_BASE` also honor an exported environment
+`LFR_WORKTREE_ROOT`, `LFR_WORKTREE_BASE` and `LFR_IDEA_TEMPLATE` also honor an exported environment
 value when the config does not set them; the four array variables are
 config-file-only.

@@ -45,6 +45,8 @@ lfrTools() {
 		                        IntelliJ's project state (--keep-bundle keeps it)
 		  lfrWorktreeIdeaClean  make IntelliJ forget worktree projects that are
 		                        gone (lfrWorktreeIdeaCleanDry previews it)
+		  lfrWorktreeIdeaInit   give a worktree the IntelliJ project (and the debug
+		                        profiles) a clone already has
 		  lfrShare              point a repo at an already-built bundle (no rebuild)
 
 		Server bundle

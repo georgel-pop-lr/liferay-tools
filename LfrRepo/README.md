@@ -16,7 +16,7 @@ script runs in a subshell and its `cd` would not reach your interactive shell.
 | File | Purpose |
 |---|---|
 | `lfr-repo.sh` | Defines the `lfrRepo` switcher and its tab-completion. |
-| `lfr-worktree.sh` | Defines the `lfrWorktree` creator, the `lfrWorktreeRemove` remover, and `lfrWorktreeIdeaClean` for IntelliJ leftovers. |
+| `lfr-worktree.sh` | Defines the `lfrWorktree` creator, the `lfrWorktreeRemove` remover, `lfrWorktreeIdeaClean` for IntelliJ leftovers, and `lfrWorktreeIdeaInit` for giving a worktree an IntelliJ project. |
 
 The repo list, picker, and per-user config live in the shared module
 `../LfrCommon/lfr-repo-list.sh` (config in `../LfrCommon/repos.local.conf`),
@@ -200,7 +200,50 @@ clone itself. And that root is mounted: with the Data drive unmounted every
 project on it is missing, and forgetting all of them over an unmounted drive is
 the one failure this command must not have.
 
-All four commands accept `-h`/`--help`.
+### `lfrWorktreeIdeaInit`: give a worktree the IntelliJ project a clone has
+
+The mirror of the command above. A fresh worktree opens in IntelliJ as a bare
+directory, because almost none of the project model is tracked: of the 3862
+`.iml` files a configured `liferay-portal` carries, 10 are in git, and `/.idea`
+is gitignored outright. This copies the model across from a clone that already
+has one, so the worktree opens configured.
+
+What travels is path-independent, which is why this works at all: `modules.xml`
+is written in `$PROJECT_DIR$` terms, the `.iml` files in `$MODULE_DIR$` ones, the
+libraries point at the shared `~/.gradle` caches, and a `Remote` debug
+configuration holds nothing but a host and a port.
+
+| Invocation | Behavior |
+|---|---|
+| `lfrWorktreeIdeaInit` | Set up the worktree you are in. |
+| `lfrWorktreeIdeaInit <branch\|dir>` | Set up that worktree. |
+| `lfrWorktreeIdeaInit <branch\|dir> <src>` | Copy the project from that clone instead. |
+
+```bash
+lfrWorktree LPD-12345                  # create the worktree
+lfrWorktreeIdeaInit                    # and give it the project
+```
+
+The run configurations are written to `.idea/runConfigurations`, one file each,
+which is IntelliJ's shared form: it reads them from there and shows them in the
+picker, so nothing has to be written into the `workspace.xml` the IDE owns and
+rewrites from memory. The `Debugg portal 8000` profile is the one to attach with,
+8000 being the JPDA port `start-liferay.sh --debug` takes first.
+
+Left out on purpose: the data sources and their cached schema, which point at the
+source bundle's database and are most of the size (38 MB against the 6.6 MB the
+model itself takes); the shelf, which holds the source clone's own shelved
+changes; a template or throwaway run configuration; and any run configuration
+bound to a registered application server (the Tomcat ones), since that
+registration names the source clone's bundle and would start the wrong one.
+Nothing already in the target is overwritten, so the handful of tracked `.idea`
+files and `.iml` files keep the branch's own version, and IntelliJ still indexes
+the project the first time it opens it.
+
+The source defaults to `LFR_IDEA_TEMPLATE`, else `liferay-portal` in the worktree
+root.
+
+All five commands accept `-h`/`--help`.
 
 ## Configuration
 
@@ -214,3 +257,4 @@ honor an environment override when the config does not set them.
 | `LFR_REPO_PRIORITY` | `liferay-portal` | no | Name prefixes floated to the top of the picker, in order. |
 | `LFR_WORKTREE_ROOT` | `$HOME/liferay/repos` | yes | Where new worktrees are created. |
 | `LFR_WORKTREE_BASE` | `upstream/master` | yes | Default base ref for new branches. |
+| `LFR_IDEA_TEMPLATE` | `liferay-portal` in `LFR_WORKTREE_ROOT` | yes | The clone `lfrWorktreeIdeaInit` copies the IntelliJ project from. |

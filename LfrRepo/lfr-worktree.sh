@@ -1,5 +1,5 @@
 # lfr-worktree.sh — create and remove Liferay git worktrees (the lfrWorktree,
-# lfrWorktreeRemove and lfrWorktreeIdeaClean commands).
+# lfrWorktreeRemove, lfrWorktreeIdeaClean and lfrWorktreeIdeaInit commands).
 #
 # Worktree root and base ref come from the shared per-user config
 # (LFR_WORKTREE_ROOT, LFR_WORKTREE_BASE), owned by LfrCommon/lfr-repo-list.sh.
@@ -802,3 +802,301 @@ lfrWorktreeRemove() {
 # Short aliases.
 lfrw() { lfrWorktree "$@"; }
 lfrwr() { lfrWorktreeRemove "$@"; }
+
+# Write the source project's run configurations into $2/.idea/runConfigurations, one
+# file each. That is IntelliJ's shared form, the one meant to travel with a project, so
+# the configurations show up in the picker without anything being written into the
+# workspace.xml the IDE owns and rewrites from memory.
+#
+# Three kinds are left out because they would not travel. A template (default="true")
+# and a throwaway the IDE minted from a green arrow (temporary="true") are not
+# configurations anyone chose. And a type starting with # is an application-server
+# factory, Tomcat among them, whose APPLICATION_SERVER_NAME points at a server
+# registered against the source clone's own bundle, so it would start the wrong one.
+_lfrWorktreeIdeaRunConfigurations() {
+	local src="${1}" dir="${2}"
+	local out="${dir}/.idea/runConfigurations"
+	local workspace="${src}/.idea/workspace.xml"
+	local written
+
+	[ -f "${workspace}" ] || return 0
+
+	mkdir -p "${out}" || return 1
+
+	written="$(awk -v out="${out}" '
+		function trim(line) {
+			sub(/^[[:space:]]+/, "", line)
+			sub(/[[:space:]]+$/, "", line)
+
+			return line
+		}
+
+		function emit(   file, slug) {
+			if (keep) {
+				slug = name
+
+				gsub(/[^[:alnum:]]/, "_", slug)
+
+				file = out "/" slug ".xml"
+
+				printf "%s", header block footer >file
+
+				close(file)
+
+				if (!(slug in written)) {
+					written[slug] = 1
+					count++
+				}
+			}
+
+			block = ""
+		}
+
+		BEGIN {
+			header = "<component name=\"ProjectRunConfigurationManager\">\n"
+			footer = "</component>\n"
+		}
+
+		# A <configuration> element does not belong to the run configurations alone: the
+		# debugger writes its watch groups as one too. Only the RunManager component
+		# holds the ones this is after.
+		!inrunmanager {
+			if ($0 ~ /<component name="RunManager"/) {
+				match($0, /^[[:space:]]*/)
+
+				component_close = substr($0, 1, RLENGTH) "</component>"
+				inrunmanager = 1
+			}
+
+			next
+		}
+
+		$0 == component_close {
+			inrunmanager = 0
+
+			next
+		}
+
+		!block {
+			if (trim($0) !~ /^<configuration[ >]/) {
+				next
+			}
+
+			match($0, /^[[:space:]]*/)
+
+			indent = substr($0, 1, RLENGTH)
+			close_tag = indent "</configuration>"
+			block = $0 "\n"
+			keep = 1
+			name = ""
+
+			if ($0 ~ /default="true"/ || $0 ~ /temporary="true"/ || $0 ~ /type="#/) {
+				keep = 0
+			}
+
+			if (match($0, /name="[^"]*"/)) {
+				name = substr($0, RSTART + 6, RLENGTH - 7)
+			}
+
+			if (name == "") {
+				keep = 0
+			}
+
+			if (trim($0) ~ /\/>$/) {
+				emit()
+			}
+
+			next
+		}
+
+		{
+			block = block $0 "\n"
+
+			if ($0 == close_tag) {
+				emit()
+			}
+		}
+
+		END {
+			print count + 0
+		}
+	' "${workspace}")" || return 1
+
+	if [ "${written}" -eq 0 ]; then
+		rmdir "${out}" 2>/dev/null
+
+		echo "lfrWorktreeIdeaInit: ${src} has no run configuration to copy; point LFR_IDEA_TEMPLATE at the clone that has them" >&2
+
+		return 0
+	fi
+
+	echo "lfrWorktreeIdeaInit: wrote ${written} run configurations to ${out}" >&2
+}
+
+_lfrWorktreeIdeaInitHelp() {
+	cat <<-'EOF'
+		lfrWorktreeIdeaInit — give a worktree the IntelliJ project a clone already has.
+
+		Usage:
+		  lfrWorktreeIdeaInit                     the worktree you are in
+		  lfrWorktreeIdeaInit <branch|dir>        that worktree
+		  lfrWorktreeIdeaInit <branch|dir> <src>  copy the project from that clone
+		  lfrWorktreeIdeaInit <branch|dir> --redo replace the project it already has
+
+		Copies the project model (modules.xml, libraries, code style, inspections,
+		copyright) and every .iml, so the worktree opens as a configured project
+		instead of a bare directory, and writes the source's run configurations into
+		.idea/runConfigurations, which is what puts the Debugg profiles in the picker.
+		All of it is path-independent: modules.xml is written in $PROJECT_DIR$ terms,
+		the .iml files in $MODULE_DIR$ ones, and a Remote debug configuration holds
+		nothing but a host and a port.
+
+		Left out on purpose: the data sources and their cached schema, which point at
+		the source bundle's database and are most of the size; the shelf, which holds
+		the source clone's own shelved changes; and any run configuration bound to a
+		registered application server (the Tomcat ones), since that registration names
+		the source clone's bundle and would start the wrong one. Attach to your own
+		bundle with Debugg portal 8000 instead, the port start-liferay.sh --debug
+		takes first.
+
+		The source defaults to LFR_IDEA_TEMPLATE, else liferay-portal in the worktree
+		root. Set LFR_IDEA_TEMPLATE when the clone sitting in that root is not the one
+		carrying the run configurations, which is the whole point of copying. The .iml
+		files the target tracks in git keep the branch's own version, and every other
+		one the source has is overwritten, so a --redo off a different clone really
+		replaces the project. An .iml only the previous source had is left where it is,
+		unreferenced by the new modules.xml and ignored. IntelliJ still indexes the
+		project the first time it opens it.
+	EOF
+}
+
+lfrWorktreeIdeaInit() {
+	case "${1-}" in -h | --help) _lfrWorktreeIdeaInitHelp; return 0 ;; esac
+
+	local wt_root="${LFR_WORKTREE_ROOT:-${HOME}/liferay/repos}"
+	local dir=""
+	local redo=""
+	local src=""
+
+	while [ "$#" -gt 0 ]; do
+		case "${1}" in
+		--redo)
+			redo="--redo"
+			;;
+		-*)
+			echo "lfrWorktreeIdeaInit: unknown option ${1}" >&2
+			echo "usage: lfrWorktreeIdeaInit [<branch|dir>] [<src>] [--redo]" >&2
+
+			return 1
+			;;
+		*)
+			if [ -z "${dir}" ]; then
+				dir="${1}"
+			elif [ -z "${src}" ]; then
+				src="${1}"
+			else
+				echo "lfrWorktreeIdeaInit: too many arguments" >&2
+
+				return 1
+			fi
+			;;
+		esac
+
+		shift
+	done
+
+	src="${src:-${LFR_IDEA_TEMPLATE:-${wt_root}/liferay-portal}}"
+
+	if [ -z "${dir}" ]; then
+		if ! dir="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+			echo "lfrWorktreeIdeaInit: not inside a git repo; name the worktree" >&2
+
+			return 1
+		fi
+	elif [ ! -d "${dir}" ]; then
+		dir="${wt_root}/liferay-portal-${dir}"
+	fi
+
+	if [ ! -d "${dir}" ]; then
+		echo "lfrWorktreeIdeaInit: ${dir} does not exist" >&2
+
+		return 1
+	fi
+
+	if [ ! -f "${src}/.idea/modules.xml" ]; then
+		echo "lfrWorktreeIdeaInit: ${src} has no IntelliJ project to copy" >&2
+
+		return 1
+	fi
+
+	dir="$(cd "${dir}" && pwd)" || return 1
+	src="$(cd "${src}" && pwd)" || return 1
+
+	if [ "${dir}" = "${src}" ]; then
+		echo "lfrWorktreeIdeaInit: ${dir} is the source; name another worktree" >&2
+
+		return 1
+	fi
+
+	if [ -f "${dir}/.idea/modules.xml" ]; then
+		if [ -z "${redo}" ]; then
+			echo "lfrWorktreeIdeaInit: ${dir} already has an IntelliJ project; pass --redo to replace it" >&2
+
+			return 1
+		fi
+
+		rm -rf "${dir}/.idea" || return 1
+
+		echo "lfrWorktreeIdeaInit: replacing the project already in ${dir}" >&2
+	fi
+
+	mkdir -p "${dir}/.idea" || return 1
+
+	# --ignore-existing so the few .idea files the repo tracks keep the branch's own
+	# version. The excludes are the state that belongs to the source clone alone, and
+	# workspace.xml with them: the run configurations worth having are pulled out of it
+	# below, and the rest of it is that clone's open editors and window layout.
+	echo "lfrWorktreeIdeaInit: copying the project model from ${src}..." >&2
+
+	rsync --archive --ignore-existing \
+		--exclude=dataSources --exclude='dataSources*.xml' --exclude=easycode \
+		--exclude=shelf --exclude=workspace.xml \
+		"${src}/.idea/" "${dir}/.idea/" || return 1
+
+	echo "lfrWorktreeIdeaInit: copied the project model into ${dir}/.idea" >&2
+
+	# modules.xml is nothing without the .iml files it points at, and only a handful of
+	# them are tracked, so a fresh worktree has almost none. The tracked ones are held
+	# out of the copy so they keep the branch's own version; everything else is
+	# overwritten, which is what makes a --redo off a different clone a real replacement
+	# rather than a merge of the two.
+	local list tracked
+	list="$(mktemp)" || return 1
+	tracked="$(mktemp)" || return 1
+
+	git -C "${dir}" ls-files '*.iml' 2>/dev/null | sort >"${tracked}"
+
+	# Walking a Liferay tree for these takes the best part of a minute, and a run that
+	# says nothing for that long reads as a hang, so say what is happening first.
+	echo "lfrWorktreeIdeaInit: scanning ${src} for .iml files (the slow part)..." >&2
+
+	(cd "${src}" && find . -name '*.iml' -not -path '*/node_modules/*' -printf '%P\n') |
+		sort | comm -23 - "${tracked}" >"${list}"
+
+	if [ -s "${list}" ]; then
+		echo "lfrWorktreeIdeaInit: copying $(wc -l <"${list}") .iml files..." >&2
+
+		tar --create --directory="${src}" --files-from="${list}" --file=- |
+			tar --extract --directory="${dir}" --file=- || {
+			rm -f "${list}" "${tracked}"
+
+			return 1
+		}
+
+		echo "lfrWorktreeIdeaInit: copied $(wc -l <"${list}") .iml files" >&2
+	fi
+
+	rm -f "${list}" "${tracked}"
+
+	_lfrWorktreeIdeaRunConfigurations "${src}" "${dir}"
+}

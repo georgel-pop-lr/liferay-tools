@@ -16,6 +16,11 @@ LFR_REPO_PRIORITY=("liferay-portal")
 LFR_WORKTREE_ROOT="${HOME}/liferay/repos"
 LFR_WORKTREE_BASE="upstream/master"
 
+# The clone lfrWorktreeIdeaInit copies the IntelliJ project from. Defaults to
+# liferay-portal in LFR_WORKTREE_ROOT, which is wrong whenever the clone sitting
+# there is not the one carrying your run configurations.
+LFR_IDEA_TEMPLATE="${HOME}/liferay/repos/liferay-portal"
+
 # Bundle config, used by lfrShare and lfrBundle. Roots searched for bundles:
 LFR_BUNDLES_DIRS=(
 	"${HOME}/liferay/bundles"
