@@ -544,9 +544,29 @@ redirected, it just `exec`s Tomcat.)
    only when at least one port differs from what's already in the file.
    Re-running on the same setup leaves `server.xml` untouched.
 5. **Starts Tomcat**, prints the resolved HTTP URL and the `catalina.out` path,
-   and on a TTY pins a two-row status panel to the bottom (ports on the upper
-   row, the editor URL, the flags this launch was given and the full bundle path
-   on the lower row) that stays put while the logs scroll.
+   and on a TTY pins a three-row status panel to the bottom that stays put while
+   the logs scroll: the bundle path on the upper row, the ports on the middle row,
+   the editor URL, this launch's flags and the stop hint on the lower one.
+
+```
+ /media/georgelpop/Data/liferay/bundles/liferay-bundle-LPD-104387
+ HTTP 8080  HTTPS 8443  OSGI 11311  ES 9301  GR 4000  ARQ 32763  DBG 8000
+ http://192.168.40.213:8080/   |   -d -t -c   |   Ctrl+C stop, +f force
+```
+
+   The flags are worth the space because they say what the running server actually
+   is: `-c` wiped its database, `-t` made it a testIntegration target. They ride on
+   the bottom row rather than beside the path because a bundle path is long and
+   anything put next to it comes straight out of the field that identifies the
+   server. Measured: with the flags on the path row, a 60-column terminal loses
+   twelve more characters of path. The three fields on the bottom row are all short
+   and fixed, so they cost it nothing.
+
+   Every row degrades rather than being cut off. The path is truncated from the
+   left, behind a leading `...`, so the bundle folder survives and not the generic
+   leading directories. A port is appended only when the whole of it fits, so a
+   narrow terminal drops trailing ports rather than cutting one mid-number. On the
+   bottom row the hint goes first and the flags second, leaving the URL.
 
 ### Sample output (defaults free)
 

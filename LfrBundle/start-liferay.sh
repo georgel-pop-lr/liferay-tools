@@ -1015,44 +1015,65 @@ set_terminal_title() {
 	printf '\033]0;%s\007' "$*"
 }
 
-# The two status-bar rows, all ASCII so the field width stays byte-accurate.
-# Upper row: ports only (trailing ones drop first on a narrow terminal; they are
-# also in the table above).
+# The three status-bar rows, all ASCII so the field width stays byte-accurate.
+# Upper row: the bundle path and nothing else. A bundle path is long, so anything put
+# beside it comes straight out of the only field that says which server this window
+# belongs to: with the flags on this row a 60-column terminal loses twelve more
+# characters of it. Truncated left, behind a leading "...", so the identifying tail
+# (the bundle folder) survives rather than the generic leading directories.
+_status_bar_path_line() {
+	local cols="$1"
+	local path="$BUNDLE"
+
+	if [ "$cols" -ge 5 ] && [ "${#path}" -gt "$((cols - 1))" ]; then
+		path="...${path: -$((cols - 4))}"
+	fi
+
+	printf ' %s' "$path"
+}
+
+# Middle row: the ports. A field is appended only when the whole of it fits, so a
+# narrow terminal drops trailing fields rather than cutting one mid-number. The dropped
+# ones are all in the table above anyway.
 _status_bar_ports_line() {
+	local cols="${1:-9999}"
 	local text=" HTTP $HTTP_PORT  HTTPS $HTTPS_PORT  OSGI $OSGI_CONSOLE_PORT"
-	[ -n "$ES_TRANSPORT_PORT" ] && text="$text  ES $ES_TRANSPORT_PORT"
-	[ -n "$GLOWROOT_PORT" ] && text="$text  GR $GLOWROOT_PORT"
-	[ -n "$ARQUILLIAN_PORT" ] && text="$text  ARQ $ARQUILLIAN_PORT"
-	[ -n "$JPDA_PORT" ] && text="$text  DBG $JPDA_PORT"
+	local field
+
+	for field in \
+		"${ES_TRANSPORT_PORT:+  ES $ES_TRANSPORT_PORT}" \
+		"${GLOWROOT_PORT:+  GR $GLOWROOT_PORT}" \
+		"${ARQUILLIAN_PORT:+  ARQ $ARQUILLIAN_PORT}" \
+		"${JPDA_PORT:+  DBG $JPDA_PORT}"; do
+		[ -n "$field" ] || continue
+		[ "$((${#text} + ${#field}))" -le "$cols" ] || continue
+		text="$text$field"
+	done
+
 	printf '%s' "$text"
 }
 
-# Lower row: editor URL, the flags this launch was given, then the bundle path, then a
-# stop hint. The URL uses the LAN IP (so it works both on this machine and from another
-# device on the same network) and falls back to localhost when the IP cannot be
-# resolved. If the line would overflow, the path is left-truncated with a leading "..."
-# so the identifying tail (the bundle folder) stays visible, not the generic leading
-# directories; the optional fields go first when space is tight, the hint before the
-# flags, because the path is what says which server this window belongs to.
+# Lower row: the editor URL, the flags this launch was given, then the stop hint. The
+# flags ride here rather than beside the path because all three fields on this row are
+# short and fixed, so they cost the path nothing. The URL uses the LAN IP (so it works
+# both on this machine and from another device on the same network) and falls back to
+# localhost when the IP cannot be resolved. As space runs out the hint goes first and
+# the flags second, leaving the URL, which is the one always worth keeping.
 _status_bar_url_line() {
 	local cols="$1"
-	local url=" http://${LAN_IP:-localhost}:$HTTP_PORT/   |   "
-	local flags="${LAUNCH_FLAGS:+$LAUNCH_FLAGS   |   }"
+	local url=" http://${LAN_IP:-localhost}:$HTTP_PORT/"
+	local flags="${LAUNCH_FLAGS:+   |   $LAUNCH_FLAGS}"
 	local suffix="   |   Ctrl+C stop, +f force "
-	local path="$BUNDLE" budget
-	budget=$((cols - ${#url} - ${#flags} - ${#suffix}))
-	if [ "$budget" -lt 12 ]; then
+
+	if [ "$((${#url} + ${#flags} + ${#suffix}))" -gt "$cols" ]; then
 		suffix=""
-		budget=$((cols - ${#url} - ${#flags}))
 	fi
-	if [ "$budget" -lt 12 ]; then
+
+	if [ "$((${#url} + ${#flags}))" -gt "$cols" ]; then
 		flags=""
-		budget=$((cols - ${#url}))
 	fi
-	if [ "$budget" -ge 4 ] && [ "${#path}" -gt "$budget" ]; then
-		path="...${path: -$((budget - 3))}"
-	fi
-	printf '%s%s%s%s' "$url" "$flags" "$path" "$suffix"
+
+	printf '%s%s%s' "$url" "$flags" "$suffix"
 }
 
 _STATUS_BAR_ON=0
@@ -1075,9 +1096,10 @@ _cursor_row() {
 	printf '%s' "$row"
 }
 
-# Reserve the bottom two rows (a DECSTBM scroll region over the rest of the
-# screen) and draw the two-row status panel there in reverse video, so Tomcat's
-# logs scroll above it while the ports/URL stay pinned. No-op on short terminals.
+# Reserve the bottom three rows (a DECSTBM scroll region over the rest of the
+# screen) and draw the three-row status panel there in reverse video, so Tomcat's
+# logs scroll above it while the bundle, the ports and the URL stay pinned. No-op on
+# short terminals, where three reserved rows would leave too little to read.
 #
 # Setting the region homes the cursor (DECSTBM does that by definition), so the
 # row the output had reached has to be put back afterwards, or the log would
@@ -1086,30 +1108,32 @@ _cursor_row() {
 # The row is clamped into the region, since a cursor left on one of the panel rows
 # would write over the panel and never scroll (it sits outside the region).
 _setup_status_bar() {
-	local rows cols ports url row
+	local rows cols ports path url row
 	rows=$(tput lines 2>/dev/null || echo 24)
 	cols=$(tput cols 2>/dev/null || echo 80)
-	[ "$rows" -ge 8 ] 2>/dev/null || return 0
+	[ "$rows" -ge 9 ] 2>/dev/null || return 0
 	row="$(_cursor_row)"
-	if [ -z "$row" ] || [ "$row" -gt "$((rows - 2))" ]; then
-		row=$((rows - 2))
+	if [ -z "$row" ] || [ "$row" -gt "$((rows - 3))" ]; then
+		row=$((rows - 3))
 	fi
-	ports="$(_status_bar_ports_line)"; ports="${ports:0:$cols}"; printf -v ports '%-*s' "$cols" "$ports"
+	ports="$(_status_bar_ports_line "$cols")"; ports="${ports:0:$cols}"; printf -v ports '%-*s' "$cols" "$ports"
+	path="$(_status_bar_path_line "$cols")"; path="${path:0:$cols}"; printf -v path '%-*s' "$cols" "$path"
 	url="$(_status_bar_url_line "$cols")"; url="${url:0:$cols}"; printf -v url '%-*s' "$cols" "$url"
-	printf '\033[1;%dr' "$((rows - 2))"                          # scroll region = all but bottom 2 rows
-	printf '\033[%d;1H\033[7m%s\033[0m' "$((rows - 1))" "$ports" # upper row: ports
-	printf '\033[%d;1H\033[7m%s\033[0m' "$rows" "$url"           # lower row: URL + full path
+	printf '\033[1;%dr' "$((rows - 3))"                          # scroll region = all but bottom 3 rows
+	printf '\033[%d;1H\033[7m%s\033[0m' "$((rows - 2))" "$path"  # upper row: bundle path + launch flags
+	printf '\033[%d;1H\033[7m%s\033[0m' "$((rows - 1))" "$ports" # middle row: the ports
+	printf '\033[%d;1H\033[7m%s\033[0m' "$rows" "$url"           # lower row: URL + stop hint
 	printf '\033[%d;1H' "$row"                                   # cursor back where the output was
 	_STATUS_BAR_ON=1
 }
 
 # Undo _setup_status_bar: restore the full-screen scroll region and clear the
-# two panel rows so the returning shell prompt sees a clean terminal.
+# three panel rows so the returning shell prompt sees a clean terminal.
 _teardown_status_bar() {
 	[ "$_STATUS_BAR_ON" = 1 ] || return 0
 	local rows
 	rows=$(tput lines 2>/dev/null || echo 24)
-	printf '\033[r\033[%d;1H\033[J\n' "$((rows - 1))"
+	printf '\033[r\033[%d;1H\033[J\n' "$((rows - 2))"
 }
 
 # Read current ports out of server.xml so we know whether we need to write.
@@ -1310,7 +1334,7 @@ _watch_connector_ready() {
 catalina_args=(run)
 [ "$DEBUG" = "1" ] && catalina_args=(jpda run)
 
-# On a TTY, pin the two-row status panel to the bottom while Tomcat's logs scroll
+# On a TTY, pin the three-row status panel to the bottom while Tomcat's logs scroll
 # above it. Tomcat runs in the background (not exec) so this shell stays alive
 # to (a) redraw the bar on window resize via SIGWINCH and (b) restore the
 # terminal through the EXIT trap, leaving the prompt clean even after Ctrl+C.
