@@ -538,7 +538,7 @@ _lfrWorktreeRemoveIdeaProject() {
 # trying not to corrupt.
 _lfrWorktreeIdeaCloseOrRefuse() {
 	local caller="${1}"
-	local pid reply waited
+	local pid waited
 	local -a pids=()
 
 	_lfrWorktreeIdeaRunning || return 0
@@ -551,16 +551,11 @@ _lfrWorktreeIdeaCloseOrRefuse() {
 		return 1
 	fi
 
-	read -r -p "${caller}: IntelliJ is running and would write the projects back on exit. Close it now? [y/N] " reply
-
-	case "${reply}" in
-	[yY] | [yY][eE][sS]) ;;
-	*)
+	if ! _lfrConfirm "${caller}: IntelliJ is running and would write the projects back on exit. Close it now?"; then
 		echo "${caller}: leaving IntelliJ alone; run lfrWorktreeIdeaClean once you close it" >&2
 
 		return 1
-		;;
-	esac
+	fi
 
 	# The bracketed letter keeps the pattern from finding this very pgrep, the same
 	# trick the detector uses with its escaped dots.

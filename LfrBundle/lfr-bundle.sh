@@ -146,7 +146,7 @@ _lfrBundleStopLines() {
 
 # Stop every running bundle, after confirming.
 _lfrBundleStopAll() {
-	local procs ans
+	local procs
 	procs="$(_lfrBundleProcs)"
 	if [ -z "${procs}" ]; then
 		echo "No running Liferay bundles."
@@ -154,12 +154,11 @@ _lfrBundleStopAll() {
 	fi
 	echo "Running Liferay bundles:"
 	_lfrBundleList
-	printf 'Stop all %s? [y/N] ' "${_lfrBundleCount}"
-	read -r ans
-	case "${ans}" in
-	y | Y | yes) printf '%s\n' "${procs}" | _lfrBundleStopLines ;;
-	*) echo "cancelled." ;;
-	esac
+	if ! _lfrConfirm "Stop all ${_lfrBundleCount}?"; then
+		echo "cancelled."
+		return 0
+	fi
+	printf '%s\n' "${procs}" | _lfrBundleStopLines
 }
 
 # Echo the pid of the bundle running from <dir> (parent of its catalina.base),

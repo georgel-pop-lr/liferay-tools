@@ -183,7 +183,7 @@ its options from memory on exit and would put the entry straight back. Both now 
 to close it rather than only refusing:
 
 ```
-lfrWorktreeRemove: IntelliJ is running and would write the projects back on exit. Close it now? [y/N]
+lfrWorktreeRemove: IntelliJ is running and would write the projects back on exit. Close it now? [y/n]
 ```
 
 Answer yes and it sends SIGTERM, never SIGKILL, so the IDE shuts down the way its own
@@ -191,10 +191,11 @@ menu item does and saves open files, then waits for the process to actually disa
 That wait is the real barrier, since the options are written before the exit. It gives
 up after 60 seconds, which usually means the IDE is asking about unsaved work.
 
-Answer no, or press Enter, and nothing of IntelliJ's is touched; `lfrWorktreeRemove`
-still removes the worktree, the branch and the bundle, and `lfrWorktreeIdeaClean`
-finishes the other half whenever you close the IDE. With no terminal to ask at, a
-script or a pipe, there is no prompt and both fall back to refusing.
+Answer no and nothing of IntelliJ's is touched; `lfrWorktreeRemove` still removes the
+worktree, the branch and the bundle, and `lfrWorktreeIdeaClean` finishes the other half
+whenever you close the IDE. Only `y` and `n` count, so a bare Enter or a typo asks
+again rather than deciding for you. With no terminal to ask at, a script or a pipe,
+there is no prompt and both fall back to refusing.
 
 `lfrWorktreeRemove` asks before it removes anything, since the useful answer can be
 "let me close it myself first" and being asked that once the worktree is gone is no
