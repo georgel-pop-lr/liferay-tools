@@ -40,7 +40,9 @@ lfrTools() {
 
 		Repos and worktrees
 		  lfrRepo               jump to a Liferay repo (picker, or by name)
-		  lfrWorktree           create a git worktree + branch for a ticket
+		  lfrWorktree           create a git worktree + branch for a ticket,
+		                        wired to its own bundle, offering the IntelliJ
+		                        project at the end
 		  lfrWorktreeRemove     remove a worktree, its branch, its bundle, and
 		                        IntelliJ's project state (--keep-bundle keeps it)
 		  lfrWorktreeIdeaClean  make IntelliJ forget worktree projects that are

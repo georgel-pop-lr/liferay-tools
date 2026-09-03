@@ -152,6 +152,18 @@ and its data, so reset it with `lfrBundle -c` or drop it with `dropdb`. Only
 at it is reused, which is what every run before the prompt did, and the lines
 above are printed as the warning that was missing.
 
+Last, once you are standing in the worktree, it offers `lfrWorktreeIdeaInit`:
+
+```
+lfrWorktree: create the IntelliJ project too, with the debug profiles (about 17s)? [y/n]
+```
+
+The copy stays a command of its own because a worktree you only build from
+should not pay those seconds, so the question is asked rather than answered
+either way. Set `LFR_WORKTREE_IDEA=1` to always run it and `0` to never ask,
+which is also what a scripted run needs, since with no terminal the prompt is
+skipped and the command is named instead.
+
 ### `lfrWorktreeRemove`: remove a worktree
 
 Undoes an `lfrWorktree`: removes the worktree, deletes its branch, deletes the

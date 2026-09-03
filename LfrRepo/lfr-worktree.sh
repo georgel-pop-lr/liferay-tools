@@ -21,6 +21,10 @@
 # you, so the two bundles never share one database. A bundle already sitting there,
 # which is what an lfrWorktreeRemove --keep-bundle leaves behind, is reported and you
 # are asked whether to reuse it rather than adopted in silence.
+#
+# Last, it offers to run lfrWorktreeIdeaInit, since a fresh worktree has no IntelliJ
+# project of its own. Set LFR_WORKTREE_IDEA to answer that in advance (1 runs it, 0
+# skips it).
 
 # Create the bundle's database when it is not there yet. Pointing jdbc.default.url at
 # a name does not bring the database into being, so without this the first boot dies
@@ -214,6 +218,45 @@ _lfrWorktreeBundleConfig() {
 	_lfrWorktreeCreateDatabase "${dst_bundle}/portal-ext.properties" "${db_name}"
 }
 
+# A fresh worktree has nothing for IntelliJ to open, so offer lfrWorktreeIdeaInit once
+# the worktree is wired and you are standing in it. It stays a command of its own because
+# the copy takes about 17 seconds, which a worktree you only build from should not pay,
+# so this asks rather than deciding either way. Set LFR_WORKTREE_IDEA to answer it in
+# advance for a scripted run: 1 runs it, 0 skips it.
+#
+# Never fails the caller. The worktree is already made by the time this runs, so an
+# IntelliJ project that did not get copied is worth a line, not a failed lfrWorktree.
+_lfrWorktreeIdeaInitPrompt() {
+	case "${LFR_WORKTREE_IDEA-}" in
+	1 | [yY] | [yY][eE][sS])
+		lfrWorktreeIdeaInit
+
+		return 0
+		;;
+	0 | [nN] | [nN][oO])
+		return 0
+		;;
+	esac
+
+	# No terminal to ask at (a script, a pipe), so name the command instead of blocking on
+	# a prompt nobody can answer.
+	if [ ! -t 0 ]; then
+		echo "lfrWorktree: run lfrWorktreeIdeaInit here to create the IntelliJ project" >&2
+
+		return 0
+	fi
+
+	if ! _lfrConfirm "lfrWorktree: create the IntelliJ project too, with the debug profiles (about 17s)?"; then
+		echo "lfrWorktree: skipped; run lfrWorktreeIdeaInit here when you want it" >&2
+
+		return 0
+	fi
+
+	lfrWorktreeIdeaInit
+
+	return 0
+}
+
 lfrWorktree() {
 	case "${1-}" in
 	-h | --help)
@@ -233,11 +276,16 @@ lfrWorktree() {
 			(portal-<branch>), which is created for you when PostgreSQL is reachable.
 			Run from inside any liferay-portal clone.
 
+			Two questions, both answered y or n:
+
 			A bundle dir already there (what lfrWorktreeRemove --keep-bundle leaves) is
-			reported with its size, its config's age and drift, and its database, and
-			you say whether to reuse it, y or n. Answer n and it is moved aside as
-			<dir>.old-<stamp> and a fresh one is wired; its database is left for you to
-			reset.
+			reported with its size, its config's age and drift, and its database, and you
+			say whether to reuse it. Answer n and it is moved aside as <dir>.old-<stamp>
+			and a fresh one is wired; its database is left for you to reset.
+
+			Then whether to run lfrWorktreeIdeaInit, which gives the worktree the
+			IntelliJ project and the debug profiles in about 17 seconds. Set
+			LFR_WORKTREE_IDEA=1 to always run it, 0 to never ask.
 		EOF
 		return 0
 		;;
@@ -318,6 +366,8 @@ lfrWorktree() {
 	_lfrWorktreeBundleConfig "${src_root}" "${dir}" "${bundle_suffix}"
 
 	cd "${dir}" || return 1
+
+	_lfrWorktreeIdeaInitPrompt
 }
 
 # IntelliJ keeps a project's state outside the project directory, so removing a worktree
