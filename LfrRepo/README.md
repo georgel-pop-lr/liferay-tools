@@ -172,22 +172,26 @@ it from any other worktree of the same repo.
 
 | Invocation | Behavior |
 |---|---|
-| `lfrWorktreeRemove <branch>` | Remove the worktree, delete the branch, and delete the bundle when it is empty or holds nothing but the `portal-ext.properties` `lfrWorktree` created. |
+| `lfrWorktreeRemove <branch>` | Remove the worktree, delete the branch, and delete the bundle directory, built or not, reporting the space it freed. |
 | `lfrWorktreeRemove <branch> --force` | Same, but also when the worktree has changes or the branch is unmerged. |
+| `lfrWorktreeRemove <branch> --keep-bundle` | Same, but keep the bundle directory, for the rare case where its logs or data are still wanted. Both flags take any order. |
 
 ```bash
-lfrWorktreeRemove LPD-12345            # remove worktree, branch, unused bundle
-lfrWorktreeRemove LPD-12345 --force    # discard changes and delete unmerged
+lfrWorktreeRemove LPD-12345                # remove worktree, branch and bundle
+lfrWorktreeRemove LPD-12345 --force        # discard changes and delete unmerged
+lfrWorktreeRemove LPD-12345 --keep-bundle  # keep the bundle dir
 ```
 
 Every deletion here is destructive, so it is deliberately cautious. It finds
 the worktree by the branch it has checked out rather than by guessing the path,
 and refuses when a Tomcat is running out of that bundle, when the branch looks
 like a `master` branch, or when the branch is the one checked out where you ran
-it. A bundle holding more than that one properties file is kept and reported,
-`--force` included, since a built bundle is work this command never did. The
-database is always left alone, its name printed so you can drop it yourself
-(e.g. `dropdb portal-<branch>`).
+it. The bundle goes with the worktree because it belongs to that checkout
+alone: with the worktree and the branch gone nothing can deploy into it, and
+adopting a built bundle from another branch is a defect rather than a saving.
+`--keep-bundle` is the way out, and recreating that worktree later asks before
+reusing what it kept. The database is always left alone, its name printed so
+you can drop it yourself (e.g. `dropdb portal-<branch>`).
 
 ### `lfrWorktreeIdeaClean`: forget worktree projects that are gone
 

@@ -833,15 +833,15 @@ lfrWorktreeIdeaClean() {
 
 # Undo an lfrWorktree: remove the worktree, delete its branch, and delete the bundle
 # dir that came with it, and make IntelliJ forget the project. Deliberately conservative,
-# since all of it is destructive: it refuses while that bundle's Tomcat runs, keeps a
-# bundle that holds more than the portal-ext.properties lfrWorktree put there (a built
-# bundle is real work), and never touches the database — it prints the name so you can
-# drop it yourself.
+# since all of it is destructive: it refuses while that bundle's Tomcat runs, keeps the
+# bundle when --keep-bundle asks for it, and never touches the database — it prints the
+# name so you can drop it yourself.
 #
 # Usage:
-#     lfrWorktreeRemove LPD-12345         # remove the worktree, branch, stub bundle
-#     lfrWorktreeRemove LPD-12345 --force # also when the worktree is dirty or the
-#                                         # branch is unmerged
+#     lfrWorktreeRemove LPD-12345               # remove the worktree, branch, bundle
+#     lfrWorktreeRemove LPD-12345 --force       # also when the worktree is dirty or
+#                                               # the branch is unmerged
+#     lfrWorktreeRemove LPD-12345 --keep-bundle # leave the bundle dir in place
 lfrWorktreeRemove() {
 	case "${1-}" in
 	-h | --help)
