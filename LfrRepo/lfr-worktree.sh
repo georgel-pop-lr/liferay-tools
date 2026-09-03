@@ -523,6 +523,77 @@ _lfrWorktreeRemoveIdeaProject() {
 	done < <(find "${cache_root}" -maxdepth 6 -name "*${hash}*" -prune -print 2>/dev/null)
 }
 
+# Deal with a running IntelliJ before touching its state: offer to close it, and say
+# what happens if it stays. $1 is the calling command, used to prefix the messages.
+# Returns 0 when IntelliJ is not running any more and its state is safe to edit, 1 when
+# it is still up and has to be left alone.
+#
+# Closing it is the useful answer rather than a courtesy. IntelliJ writes its options
+# from memory on exit, so the only order that works is close, wait for it to be gone,
+# then edit; an edit made first is undone the moment it closes. Waiting for the process
+# to disappear is the whole barrier, since the write happens before the exit.
+#
+# SIGTERM, never SIGKILL: the IDE traps it and shuts down the way the menu item does,
+# saving open files and flushing its state. A kill would lose exactly the state this is
+# trying not to corrupt.
+_lfrWorktreeIdeaCloseOrRefuse() {
+	local caller="${1}"
+	local pid reply waited
+	local -a pids=()
+
+	_lfrWorktreeIdeaRunning || return 0
+
+	# No terminal to ask at (a script, a pipe), so fall back to the old refusal rather
+	# than blocking on a prompt nobody can answer.
+	if [ ! -t 0 ]; then
+		echo "${caller}: IntelliJ is running; close it first, or it will write the projects back on exit" >&2
+
+		return 1
+	fi
+
+	read -r -p "${caller}: IntelliJ is running and would write the projects back on exit. Close it now? [y/N] " reply
+
+	case "${reply}" in
+	[yY] | [yY][eE][sS]) ;;
+	*)
+		echo "${caller}: leaving IntelliJ alone; run lfrWorktreeIdeaClean once you close it" >&2
+
+		return 1
+		;;
+	esac
+
+	# The bracketed letter keeps the pattern from finding this very pgrep, the same
+	# trick the detector uses with its escaped dots.
+	mapfile -t pids < <({
+		pgrep -x idea
+		pgrep -f 'com\.intellij\.idea\.[M]ain'
+	} | sort -u)
+
+	if [ "${#pids[@]}" -eq 0 ]; then
+		return 0
+	fi
+
+	echo "${caller}: asking IntelliJ to close (pid ${pids[*]})..." >&2
+
+	for pid in "${pids[@]}"; do
+		kill -TERM "${pid}" 2>/dev/null
+	done
+
+	waited=0
+	while _lfrWorktreeIdeaRunning; do
+		if [ "${waited}" -ge 60 ]; then
+			echo "${caller}: IntelliJ is still up after 60s, most likely asking about unsaved work; finish that and run lfrWorktreeIdeaClean" >&2
+
+			return 1
+		fi
+
+		sleep 1
+		waited=$((waited + 1))
+	done
+
+	echo "${caller}: IntelliJ closed after ${waited}s" >&2
+}
+
 # List the worktree projects IntelliJ still offers whose directory is gone: the leftovers
 # of a worktree removed by hand, by an older lfrWorktreeRemove, or while an IDE was open.
 # Echoes one path per line.
@@ -575,7 +646,9 @@ _lfrWorktreeIdeaCleanHelp() {
 		lfrWorktreeRemove already does this for the worktree it removes, so this is
 		for leftovers: a worktree removed by hand, or one removed while IntelliJ was
 		running (it rewrites its options on exit, so nothing is touched then).
-		Close IntelliJ before running it.
+
+		When IntelliJ is running it offers to close it and waits for it to go,
+		since that is the only order that works. Decline and nothing is touched.
 	EOF
 }
 
@@ -600,11 +673,7 @@ lfrWorktreeIdeaCleanDry() {
 lfrWorktreeIdeaClean() {
 	case "${1-}" in -h | --help) _lfrWorktreeIdeaCleanHelp; return 0 ;; esac
 
-	if _lfrWorktreeIdeaRunning; then
-		echo "lfrWorktreeIdeaClean: IntelliJ is running; close it first, or it will write the projects back on exit" >&2
-
-		return 1
-	fi
+	_lfrWorktreeIdeaCloseOrRefuse lfrWorktreeIdeaClean || return 1
 
 	local -a orphans=()
 	mapfile -t orphans < <(_lfrWorktreeIdeaOrphans)
@@ -655,9 +724,10 @@ lfrWorktreeRemove() {
 
 			Also makes IntelliJ forget the project: the Welcome screen entry, the
 			trusted path, the Open File history, the task state, and every cache
-			keyed by the project's path hash. Unless it is running, which
-			lfrWorktreeIdeaClean then cleans up later. Refuses while the bundle's
-			Tomcat is running.
+			keyed by the project's path hash. When IntelliJ is running it offers
+			to close it first, before anything is removed, since it would write
+			the projects back on exit; decline and lfrWorktreeIdeaClean finishes
+			that half later. Refuses while the bundle's Tomcat is running.
 			Never drops the database; it prints the dropdb command instead. Run from
 			inside any liferay-portal clone.
 		EOF
@@ -752,6 +822,13 @@ lfrWorktreeRemove() {
 	done < <([ -n "${bundle_dir}" ] && ps -eo args |
 		grep --only-matching -- "-Dcatalina\.base=[^ ]*" | sed "s/-Dcatalina.base=//")
 
+	# Asked here, before anything is removed, because the answer can be "no, let me close
+	# it myself first", and being asked that once the worktree is already gone is no use.
+	local idea_clear=""
+	if _lfrWorktreeIdeaCloseOrRefuse lfrWorktreeRemove; then
+		idea_clear=yes
+	fi
+
 	if [ "${force}" = "--force" ]; then
 		git worktree remove --force "${dir}" || return 1
 		git branch -D "${branch}" || return 1
@@ -768,10 +845,10 @@ lfrWorktreeRemove() {
 
 	echo "lfrWorktreeRemove: removed worktree ${dir} and branch ${branch}" >&2
 
-	if _lfrWorktreeIdeaRunning; then
-		echo "lfrWorktreeRemove: IntelliJ is running, so it still lists ${dir}; run lfrWorktreeIdeaClean once it is closed" >&2
-	else
+	if [ -n "${idea_clear}" ]; then
 		_lfrWorktreeRemoveIdeaProject "${dir}" lfrWorktreeRemove
+	else
+		echo "lfrWorktreeRemove: IntelliJ still lists ${dir}; run lfrWorktreeIdeaClean once it is closed" >&2
 	fi
 
 	# The bundle belongs to this worktree alone, so it goes with it. A built one is

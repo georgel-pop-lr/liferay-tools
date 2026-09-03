@@ -178,14 +178,37 @@ The task state is the exception, keyed by the project's directory name with ever
 non-alphanumeric turned into an underscore, so it is addressable by neither the
 path nor the hash.
 
-The one case `lfrWorktreeRemove` skips is a running IntelliJ, which rewrites its
-options from memory on exit and would put the entry straight back. It says so and
-leaves the state alone; this command is how you finish the job afterwards.
+A running IntelliJ is the one thing that stops either command, because it rewrites
+its options from memory on exit and would put the entry straight back. Both now offer
+to close it rather than only refusing:
+
+```
+lfrWorktreeRemove: IntelliJ is running and would write the projects back on exit. Close it now? [y/N]
+```
+
+Answer yes and it sends SIGTERM, never SIGKILL, so the IDE shuts down the way its own
+menu item does and saves open files, then waits for the process to actually disappear.
+That wait is the real barrier, since the options are written before the exit. It gives
+up after 60 seconds, which usually means the IDE is asking about unsaved work.
+
+Answer no, or press Enter, and nothing of IntelliJ's is touched; `lfrWorktreeRemove`
+still removes the worktree, the branch and the bundle, and `lfrWorktreeIdeaClean`
+finishes the other half whenever you close the IDE. With no terminal to ask at, a
+script or a pipe, there is no prompt and both fall back to refusing.
+
+`lfrWorktreeRemove` asks before it removes anything, since the useful answer can be
+"let me close it myself first" and being asked that once the worktree is gone is no
+use.
+
+Worth knowing why this is new: the check used to look for `com.intellij.idea.Main` in
+the process list, and from 2024.2 the IDE is a native launcher that loads the JVM
+in-process, so that string never appears. The guard was dead on 2024.3 and every
+removal quietly had its work undone on the next IDE exit.
 
 | Invocation | Behavior |
 |---|---|
 | `lfrWorktreeIdeaCleanDry` | List every worktree project IntelliJ still offers whose directory is gone. Deletes nothing. |
-| `lfrWorktreeIdeaClean` | Clear the state of those projects. Refuses while IntelliJ is running. |
+| `lfrWorktreeIdeaClean` | Clear the state of those projects. Offers to close IntelliJ first when it is running. |
 
 ```bash
 lfrWorktreeIdeaCleanDry                # preview the leftovers
