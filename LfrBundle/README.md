@@ -263,12 +263,18 @@ back-compat aliases (they now toggle, like `lfrBundle`).
 
 Every entry names the checkouts that deploy into it and the branch each one has
 checked out, as `<- <repo>@<branch>`, so you can tell what a bundle is for
-without remembering which worktree built it:
+without remembering which worktree built it. A running one also carries the flags
+it was launched with and how long it has been up, since that is what says whether
+its database was wiped or whether it is a testIntegration target:
 
 ```
-liferay-bundle-master  (/media/.../bundles)  [RUNNING pid 2977484, ports: 8005 8080 11311 32763 42763]  <- liferay-portal@LPD-102542
+liferay-bundle-master  (/media/.../bundles)  [RUNNING pid 2977484, ports: 8005 8080 11311 32763 42763, -c -t, up 17:07:23]  <- liferay-portal@LPD-102542
 liferay-bundle-7.4.x   (/home/.../bundles)   [stopped]  <- liferay-portal-7.4.x@82daaa19f1c91, liferay-portal-ee@master-brian
 ```
+
+The picker uses a brief form of that, without the JDK: its line already carries the
+name, the pid, the ports and the checkouts, and the JDK is the same for every bundle.
+`lfrBundle status` has the room, so it shows the JDK too.
 
 A repo counts as pointing at a bundle when its
 `app.server.<user>.properties` resolves `app.server.parent.dir` there, so a

@@ -53,7 +53,7 @@ _lfrBundlePorts() {
 # Absolute paths are dropped from the flags: the bundle path is already on the line
 # above, and --jdk's path is shown resolved instead.
 _lfrBundleLaunchLabel() {
-	local pid="${1}"
+	local pid="${1}" brief="${2:-}"
 	local args java jdk launcher parent uptime
 
 	parent="$(awk '/^PPid:/ { print $2 }' "/proc/${pid}/status" 2>/dev/null)"
@@ -77,7 +77,13 @@ _lfrBundleLaunchLabel() {
 	uptime="$(ps -o etime= -p "${pid}" 2>/dev/null | tr -d ' ')"
 
 	printf '%s' "${args:-no flags}"
-	[ -n "${jdk}" ] && [ "${jdk}" != "/" ] && printf ', jdk %s' "${jdk}"
+
+	# The picker asks for the brief form: its line already carries the name, the pid,
+	# the ports and the checkouts, and the JDK is the same for every bundle anyway.
+	if [ -z "${brief}" ]; then
+		[ -n "${jdk}" ] && [ "${jdk}" != "/" ] && printf ', jdk %s' "${jdk}"
+	fi
+
 	[ -n "${uptime}" ] && printf ', up %s' "${uptime}"
 	printf '\n'
 }
@@ -198,7 +204,7 @@ _lfrBundleResolve() {
 # Picker over every known bundle, each labelled with its current state; $1 is
 # the prompt. Echoes the chosen bundle path.
 _lfrBundlePickWithState() {
-	local prompt="${1}" running pid base entries epath ename pidfor state repos map=""
+	local prompt="${1}" running pid base entries epath ename launch pidfor state repos map=""
 	if ! declare -F _lfrBundleEntries >/dev/null 2>&1; then
 		echo "lfrBundle: bundle list needs LfrCommon loaded; pass a bundle name." >&2
 		return 1
@@ -214,6 +220,12 @@ _lfrBundlePickWithState() {
 		pidfor="$(printf '%s' "${running}" | awk -F'\t' -v p="${epath}" '$1==p{print $2; exit}')"
 		if [ -n "${pidfor}" ]; then
 			state="RUNNING pid ${pidfor}, ports: $(_lfrBundlePorts "${pidfor}")"
+
+			# The flags say what the running server actually is, which is the thing
+			# worth knowing before picking one to stop: -c wiped its database, -t made
+			# it a testIntegration target.
+			launch="$(_lfrBundleLaunchLabel "${pidfor}" brief)"
+			[ -n "${launch}" ] && state="${state}, ${launch}"
 		else
 			state="stopped"
 		fi
