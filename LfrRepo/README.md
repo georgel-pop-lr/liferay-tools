@@ -126,6 +126,32 @@ no `psql`, or an unreachable server it prints a note and leaves it to the first
 startup. Slashes in a branch name become dashes in both the bundle directory
 and the database name.
 
+A bundle directory already sitting at that path is what an
+`lfrWorktreeRemove --keep-bundle` leaves behind, and it used to be adopted in
+silence: its `portal-ext.properties` was left alone however stale it had become,
+and its database was reused with the previous incarnation's data in it, so the
+fresh checkout booted on old data. It is now reported and put to you:
+
+```
+lfrWorktree: /media/.../bundles/liferay-bundle-LPD-12345 already holds a bundle from an earlier worktree
+  Size     : 3,4G, built (tomcat-10.1.57)
+  Config   : portal-ext.properties written 2026-08-11 09:12, differs from /home/.../liferay-bundle-master in 3 properties
+  Database : portal-lpd-12345, still holding that bundle's data
+lfrWorktree: reuse it as it is? (n moves it aside and wires a fresh one) [y/n]
+```
+
+The drift count compares the two `portal-ext.properties` files sorted and
+without the two properties that are meant to differ per bundle,
+`jdbc.default.url` and `portal.instance.inet.socket.address`, and counts by
+property, so one whose value changed counts once. Answer `y` and it is reused as
+before. Answer `n` and it is moved to `<dir>.old-<timestamp>`, so nothing is
+deleted, and a fresh bundle is wired in its place; the database keeps that name
+and its data, so reset it with `lfrBundle -c` or drop it with `dropdb`. Only
+`y` and `n` are accepted and anything else asks again, through the shared
+`_lfrConfirm`. With no terminal to ask
+at it is reused, which is what every run before the prompt did, and the lines
+above are printed as the warning that was missing.
+
 ### `lfrWorktreeRemove`: remove a worktree
 
 Undoes an `lfrWorktree`: removes the worktree, deletes its branch, deletes the

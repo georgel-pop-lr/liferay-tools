@@ -18,7 +18,9 @@
 #
 # That bundle dir is created too, with the invoking bundle's portal-ext.properties
 # copied in and its JDBC URL pointed at a database of its own, which is created for
-# you, so the two bundles never share one database.
+# you, so the two bundles never share one database. A bundle already sitting there,
+# which is what an lfrWorktreeRemove --keep-bundle leaves behind, is reported and you
+# are asked whether to reuse it rather than adopted in silence.
 
 # Create the bundle's database when it is not there yet. Pointing jdbc.default.url at
 # a name does not bring the database into being, so without this the first boot dies
@@ -75,6 +77,92 @@ _lfrWorktreeCreateDatabase() {
 	fi
 }
 
+# The database name in a bundle's portal-ext.properties, read out of jdbc.default.url.
+_lfrWorktreeBundleDatabase() {
+	sed -nE 's#^[[:space:]]*jdbc\.default\.url=jdbc:[a-z]+://[^/]+/([^?[:space:]]+).*#\1#p' \
+		"${1}" | head -1
+}
+
+# A bundle directory outlives its worktree after an lfrWorktreeRemove --keep-bundle, and
+# recreating the worktree used to adopt it in silence: its portal-ext.properties was left
+# alone however stale it had become, and its database was reused with the previous
+# incarnation's data in it, so the fresh checkout booted on old data. Say what was found
+# and let the answer decide. Returns 0 when the bundle is kept, 1 once it has been moved
+# aside for a fresh one to take its place.
+_lfrWorktreeKeepSurvivingBundle() {
+	local src_bundle="${1}" dst_bundle="${2}"
+	local aside database db_name drift properties size tomcat written
+
+	db_name="$(_lfrWorktreeBundleDatabase "${dst_bundle}/portal-ext.properties")"
+
+	# Counted by property rather than by diff line, so a property whose value changed
+	# counts once instead of twice.
+	drift="$(diff <(_lfrWorktreeBundleComparable "${src_bundle}/portal-ext.properties") \
+		<(_lfrWorktreeBundleComparable "${dst_bundle}/portal-ext.properties") |
+		sed -nE 's/^[<>][[:space:]]*([^=]+)=.*/\1/p' | sort -u | wc -l)"
+
+	size="$(du -sh "${dst_bundle}" 2>/dev/null | cut -f1)"
+	tomcat="$(ls -d "${dst_bundle}"/tomcat-* 2>/dev/null | head -1)"
+	tomcat="${tomcat##*/}"
+	written="$(date -r "${dst_bundle}/portal-ext.properties" '+%Y-%m-%d %H:%M' 2>/dev/null)"
+
+	properties="properties"
+
+	if [ "${drift}" = 1 ]; then
+		properties="property"
+	fi
+
+	database="none named in its config"
+
+	if [ -n "${db_name}" ]; then
+		database="${db_name}, still holding that bundle's data"
+	fi
+
+	echo "lfrWorktree: ${dst_bundle} already holds a bundle from an earlier worktree" >&2
+	echo "  Size     : ${size:-unknown}${tomcat:+, built (${tomcat})}" >&2
+	echo "  Config   : portal-ext.properties written ${written:-unknown}, differs from ${src_bundle} in ${drift} ${properties}" >&2
+	echo "  Database : ${database}" >&2
+
+	# No terminal to ask at (a script, a pipe), so keep it, which is what every run before
+	# this prompt existed did. The lines above are the warning that used to be missing.
+	if [ ! -t 0 ]; then
+		echo "lfrWorktree: keeping it, since there is no terminal to ask at" >&2
+
+		return 0
+	fi
+
+	if _lfrConfirm "lfrWorktree: reuse it as it is? (n moves it aside and wires a fresh one)"; then
+		return 0
+	fi
+
+	aside="${dst_bundle}.old-$(date '+%Y%m%d-%H%M%S')"
+
+	# Keep it rather than delete it: it is only here because --keep-bundle asked for it,
+	# and a failed move means the directory is still in place, so reuse is the answer.
+	if ! mv "${dst_bundle}" "${aside}"; then
+		echo "lfrWorktree: cannot move ${dst_bundle} aside; keeping it" >&2
+
+		return 0
+	fi
+
+	echo "lfrWorktree: moved the old bundle to ${aside}" >&2
+
+	if [ -n "${db_name}" ]; then
+		echo "lfrWorktree: the ${db_name} database still holds its data; reset it with lfrBundle -c, or drop it with dropdb ${db_name}" >&2
+	fi
+
+	return 1
+}
+
+# A bundle's portal-ext.properties without the two properties that are meant to differ
+# between bundles, sorted so a reordered file is not reported as drift. jdbc.default.url
+# names the bundle's own database, and portal.instance.inet.socket.address is rewritten by
+# start-liferay.sh on every launch with whichever port it claimed.
+_lfrWorktreeBundleComparable() {
+	grep -vE '^[[:space:]]*(jdbc\.default\.url|portal\.instance\.inet\.socket\.address)=' \
+		"${1}" | sort
+}
+
 # Give the worktree's bundle its own portal-ext.properties on its own database.
 # $1 is the invoking clone's root, $2 the new worktree, $3 the bundle suffix.
 # Resolves both bundle dirs the way `ant all` does (_lfrRepoBundleDir), creates the
@@ -98,13 +186,11 @@ _lfrWorktreeBundleConfig() {
 	# canonicalize here now that it does, keeping the messages below readable.
 	dst_bundle="$(cd "${dst_bundle}" && pwd)" || return 1
 
-	if [ -e "${dst_bundle}/portal-ext.properties" ]; then
-		echo "lfrWorktree: ${dst_bundle}/portal-ext.properties exists; leaving it alone" >&2
-
+	if [ -e "${dst_bundle}/portal-ext.properties" ] &&
+			_lfrWorktreeKeepSurvivingBundle "${src_bundle}" "${dst_bundle}"; then
 		# Still make sure its database is there. A bundle configured by an earlier run
 		# that predates database creation would otherwise stay broken forever.
-		db_name="$(sed -nE 's#^[[:space:]]*jdbc\.default\.url=jdbc:[a-z]+://[^/]+/([^?[:space:]]+).*#\1#p' \
-			"${dst_bundle}/portal-ext.properties" | head -1)"
+		db_name="$(_lfrWorktreeBundleDatabase "${dst_bundle}/portal-ext.properties")"
 
 		if [ -n "${db_name}" ]; then
 			_lfrWorktreeCreateDatabase "${dst_bundle}/portal-ext.properties" "${db_name}"
@@ -112,6 +198,10 @@ _lfrWorktreeBundleConfig() {
 
 		return 0
 	fi
+
+	# Recreate the directory, since the path that moves a surviving bundle aside leaves
+	# nothing behind. A no-op on every other path, where the mkdir above made it.
+	mkdir -p "${dst_bundle}" || return 1
 
 	# Lowercased so the database name needs no quoting outside the psql calls.
 	db_name="portal-${bundle_suffix,,}"
@@ -142,6 +232,12 @@ lfrWorktree() {
 			created with your portal-ext.properties copied in, on a database of its own
 			(portal-<branch>), which is created for you when PostgreSQL is reachable.
 			Run from inside any liferay-portal clone.
+
+			A bundle dir already there (what lfrWorktreeRemove --keep-bundle leaves) is
+			reported with its size, its config's age and drift, and its database, and
+			you say whether to reuse it, y or n. Answer n and it is moved aside as
+			<dir>.old-<stamp> and a fresh one is wired; its database is left for you to
+			reset.
 		EOF
 		return 0
 		;;
