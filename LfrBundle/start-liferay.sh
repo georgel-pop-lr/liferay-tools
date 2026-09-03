@@ -181,6 +181,23 @@ while [ $i -lt ${#args[@]} ]; do
 	i=$((i + 1))
 done
 
+# The flags this launch was invoked with, kept for the status bar. Worth having on
+# screen because they decide what the running server actually is: -c wiped its
+# database, -t made it a testIntegration target, -d opened a debug port. An hour later
+# the log tells you none of that, and neither does the JVM, which only carries --debug
+# as -agentlib:jdwp.
+#
+# Absolute paths are dropped: the bundle path is on the same row already, and --jdk's
+# path would push everything else off a narrow terminal while the JDK is named in the
+# summary above anyway.
+LAUNCH_FLAGS=""
+for arg in "${args[@]}"; do
+	case "$arg" in
+		/*|--jdk|-j) continue ;;
+	esac
+	LAUNCH_FLAGS="${LAUNCH_FLAGS:+$LAUNCH_FLAGS }$arg"
+done
+
 # Wipe the terminal, screen and scrollback both, so this launch starts on an
 # empty window and nothing from the run before it is left anywhere. Called once
 # the bundle and its Tomcat are resolved, which is where this launch's own output
@@ -1010,26 +1027,32 @@ _status_bar_ports_line() {
 	printf '%s' "$text"
 }
 
-# Lower row: editor URL, then the bundle path, then a stop hint. The URL uses the
-# LAN IP (so it works both on this machine and from another device on the same
-# network) and falls back to localhost when the IP cannot be resolved. If the
-# line would overflow, the path is left-truncated with a leading "..." so the
-# identifying tail (the bundle folder) stays visible, not the generic leading
-# directories; the hint is dropped first when space is very tight.
+# Lower row: editor URL, the flags this launch was given, then the bundle path, then a
+# stop hint. The URL uses the LAN IP (so it works both on this machine and from another
+# device on the same network) and falls back to localhost when the IP cannot be
+# resolved. If the line would overflow, the path is left-truncated with a leading "..."
+# so the identifying tail (the bundle folder) stays visible, not the generic leading
+# directories; the optional fields go first when space is tight, the hint before the
+# flags, because the path is what says which server this window belongs to.
 _status_bar_url_line() {
 	local cols="$1"
-	local prefix=" http://${LAN_IP:-localhost}:$HTTP_PORT/   |   "
+	local url=" http://${LAN_IP:-localhost}:$HTTP_PORT/   |   "
+	local flags="${LAUNCH_FLAGS:+$LAUNCH_FLAGS   |   }"
 	local suffix="   |   Ctrl+C stop, +f force "
 	local path="$BUNDLE" budget
-	budget=$((cols - ${#prefix} - ${#suffix}))
+	budget=$((cols - ${#url} - ${#flags} - ${#suffix}))
 	if [ "$budget" -lt 12 ]; then
 		suffix=""
-		budget=$((cols - ${#prefix}))
+		budget=$((cols - ${#url} - ${#flags}))
+	fi
+	if [ "$budget" -lt 12 ]; then
+		flags=""
+		budget=$((cols - ${#url}))
 	fi
 	if [ "$budget" -ge 4 ] && [ "${#path}" -gt "$budget" ]; then
 		path="...${path: -$((budget - 3))}"
 	fi
-	printf '%s%s%s' "$prefix" "$path" "$suffix"
+	printf '%s%s%s%s' "$url" "$flags" "$path" "$suffix"
 }
 
 _STATUS_BAR_ON=0

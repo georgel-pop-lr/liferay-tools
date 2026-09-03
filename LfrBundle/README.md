@@ -539,8 +539,8 @@ redirected, it just `exec`s Tomcat.)
    Re-running on the same setup leaves `server.xml` untouched.
 5. **Starts Tomcat**, prints the resolved HTTP URL and the `catalina.out` path,
    and on a TTY pins a two-row status panel to the bottom (ports on the upper
-   row, the editor URL and full bundle path on the lower row) that stays put
-   while the logs scroll.
+   row, the editor URL, the flags this launch was given and the full bundle path
+   on the lower row) that stays put while the logs scroll.
 
 ### Sample output (defaults free)
 
