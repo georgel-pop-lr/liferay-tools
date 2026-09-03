@@ -214,7 +214,23 @@ lfrBundle                # picker over every known bundle with its state; select
 lfrBundle <name>         # toggle that bundle directly, no picker
 lfrBundle <name> -c      # start-flags (here --clean) are forwarded to start-liferay.sh, but only when starting
 lfrBundle <name> -t      # start as a testIntegration target (exposes the test connectors)
-lfrBundle status         # just list running bundles and their ports
+lfrBundle status         # list running bundles, their ports, and how each was launched
+
+Each running bundle also gets a `run` line naming the flags it was started with,
+the JDK it resolved to, and how long it has been up:
+
+```
+  PID 1008717 ports: 8005 8080 11311 32763 42763 /media/.../liferay-bundle-LPD-104387
+      <- liferay-portal-LPD-104387@LPD-104387
+      run -t -c, jdk zulu17.54.21-ca-jdk17.0.13-linux_x64, up 02:05:01
+```
+
+That comes from the launcher shell, not from anything written to disk. `catalina.sh`
+execs java, so the JVM keeps the pid `start-liferay.sh` backgrounded and the launcher
+stays its parent for the life of the bundle, still holding the arguments in its own
+command line. Only `--debug` survives into the JVM itself, as `-agentlib:jdwp`, so the
+parent is the only place the rest of them exist. A bundle started outside
+`start-liferay.sh` has no such parent and gets no `run` line.
 lfrBundle stop-all       # stop every running bundle (asks to confirm)
 lfrBundle cd [<name>]    # cd to a bundle's Liferay home; never starts or stops anything
 lfrBundle upgrade [<name>] [args]   # run a stopped bundle's database upgrade tool

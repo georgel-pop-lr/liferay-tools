@@ -6,7 +6,7 @@
 #                                       (forwarding start-flags to start-liferay.sh),
 #                                       stop it if running. With no <bundle> a
 #                                       picker shows every bundle's state; Esc cancels.
-#   lfrBundle status                    list the running bundles and their ports
+#   lfrBundle status                    list the running bundles, their ports, and how each was launched
 #   lfrBundle stop-all                  stop every running bundle (confirms)
 #   lfrBundle cd [<bundle>]             jump to a bundle's Liferay home, no start
 #   lfrBundle upgrade [<bundle>]        run the bundle's database upgrade tool
@@ -39,6 +39,49 @@ _lfrBundlePorts() {
 		sort -nu | paste -sd' ' -
 }
 
+# Echo how the bundle running as pid <1> was launched: the flags, the JDK it resolved
+# to, and how long it has been up. Nothing is echoed when it was not started by
+# start-liferay.sh.
+#
+# Read from the launcher shell rather than from a file it writes, because there is
+# nothing to keep in step and it works for bundles already running. catalina.sh execs
+# java, so the JVM keeps the pid the launcher backgrounded and the launcher stays its
+# parent for the life of the bundle, still carrying the arguments in its own command
+# line. Only --debug survives into the JVM itself, as -agentlib:jdwp, so the parent is
+# the only place the rest of them exist.
+#
+# Absolute paths are dropped from the flags: the bundle path is already on the line
+# above, and --jdk's path is shown resolved instead.
+_lfrBundleLaunchLabel() {
+	local pid="${1}"
+	local args java jdk launcher parent uptime
+
+	parent="$(awk '/^PPid:/ { print $2 }' "/proc/${pid}/status" 2>/dev/null)"
+	[ -r "/proc/${parent}/cmdline" ] || return 0
+
+	launcher="$(tr '\0' '\n' <"/proc/${parent}/cmdline" 2>/dev/null |
+		grep -m1 -- 'start-liferay\.sh$')"
+	[ -n "${launcher}" ] || return 0
+
+	args="$(tr '\0' '\n' <"/proc/${parent}/cmdline" 2>/dev/null |
+		awk -v launcher="${launcher}" '
+			found && $0 !~ /^\// && $0 != "--jdk" && $0 != "-j" {
+				printf "%s%s", separator, $0
+				separator = " "
+			}
+			$0 == launcher { found = 1 }
+			END { print "" }')"
+
+	java="$(tr '\0' '\n' <"/proc/${pid}/cmdline" 2>/dev/null | head -1)"
+	jdk="$(basename "$(dirname "$(dirname "${java}")")" 2>/dev/null)"
+	uptime="$(ps -o etime= -p "${pid}" 2>/dev/null | tr -d ' ')"
+
+	printf '%s' "${args:-no flags}"
+	[ -n "${jdk}" ] && [ "${jdk}" != "/" ] && printf ', jdk %s' "${jdk}"
+	[ -n "${uptime}" ] && printf ', up %s' "${uptime}"
+	printf '\n'
+}
+
 # Echo "<repo>@<branch>" for every repo pointing at the bundle <1>, comma
 # separated, marking the ones lfrShare repointed. <2> is the map from
 # _lfrBundleRepoBranches, passed in so a whole list costs one pass over the
@@ -56,15 +99,17 @@ _lfrBundleRepoLabel() {
 # path so bundles that share a name across roots stay distinguishable, and the
 # checkouts that deploy into it, so it is clear what the server is running.
 _lfrBundleList() {
-	local pid base dir ports repos map="" n=0
+	local pid base dir launch ports repos map="" n=0
 	declare -F _lfrBundleRepoBranches >/dev/null 2>&1 && map="$(_lfrBundleRepoBranches)"
 	while IFS=$'\t' read -r pid base; do
 		[ -n "${pid}" ] || continue
 		dir="$(dirname "${base}")"
 		ports="$(_lfrBundlePorts "${pid}")"
 		repos="$(_lfrBundleRepoLabel "${dir}" "${map}")"
+		launch="$(_lfrBundleLaunchLabel "${pid}")"
 		printf '  PID %-7s ports: %-22s %s\n' "${pid}" "${ports:-?}" "${dir}"
 		[ -n "${repos}" ] && printf '      <- %s\n' "${repos}"
+		[ -n "${launch}" ] && printf '      run %s\n' "${launch}"
 		n=$((n + 1))
 	done < <(_lfrBundleProcs)
 	_lfrBundleCount="${n}"
@@ -280,7 +325,8 @@ lfrBundle() {
 			  lfrBundle                    pick a bundle from a list, then toggle it
 			  lfrBundle <bundle>           toggle the named bundle (by name or path)
 			  lfrBundle <bundle> -d        start it with the flags below
-			  lfrBundle status             list the running bundles and their ports
+			  lfrBundle status             list the running bundles, their ports, and
+			                               the flags each was launched with
 			  lfrBundle stop-all           stop every running bundle (asks first)
 			  lfrBundle cd [<bundle>]      cd to a bundle's Liferay home; never
 			                               starts or stops anything
