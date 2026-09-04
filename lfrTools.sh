@@ -77,8 +77,11 @@ lfrTools() {
 		  lfrCodeView   pick a commit (or your local changes) and diff it
 
 		Pull requests
-		  lfrPulls      list open PRs on the Brian mirror; one ticket's pulls
-		                (lfrPulls LPD-12345); per-month stats
+		  lfrPulls      the three queues a pull travels: yours on the Brian
+		                mirror, your team's fork, and your own fork. Name a
+		                team or user for theirs (lfrPulls frontend); also
+		                one ticket's pulls (lfrPulls LPD-12345), the team
+		                list (lfrPulls teams), and per-month stats
 
 		These tools
 		  lfrReload     re-source lfrTools.sh, so edits to any tool take effect
@@ -86,7 +89,8 @@ lfrTools() {
 
 		Every command has a short alias: lfrr, lfrw, lfrwr, lfrs, lfrb, lfrrb,
 		lfraa, lfrc, lfrcv, lfrp, lfrgc, lfrgcd, lfrgs, lfrgse, lfrgr, lfrgro,
-		lfrgum, lfrgub, lfrgct, lfrrl. Three expand to an lfrPulls subcommand:
-		lfrpw (week), lfrps (stats), lfrpt (ticket).
+		lfrgum, lfrgub, lfrgct, lfrrl. Five expand to an lfrPulls subcommand:
+		lfrpw (week), lfrps (stats), lfrpt (ticket), lfrpf (a team or user's
+		fork), lfrpteams (the team list).
 	EOF
 }

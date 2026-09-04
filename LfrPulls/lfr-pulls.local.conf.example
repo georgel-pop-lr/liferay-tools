@@ -16,6 +16,14 @@ LFR_PULLS_MINE_ORG="your-team-fork-org"
 # LFR_PULLS_MINE_ORG or authored by LFR_PULLS_USER.
 LFR_PULLS_USER="your-github-login"
 
+# Your team's GitHub account, whose fork bare lfrPulls shows as its second
+# section. Defaults to LFR_PULLS_MINE_ORG. Run `lfrPulls teams` for the list.
+#LFR_PULLS_TEAM="liferay-page-management"
+
+# The fork repo name used for a team or user section (<owner>/<name>). Defaults
+# to the name part of LFR_PULLS_REPO, i.e. liferay-portal.
+#LFR_PULLS_FORK_REPO="liferay-portal"
+
 # Local clone whose history is grepped for merged titles (stats mine, week, and
 # ticket's landing footer). Defaults to the repo you run the command from.
 #LFR_PULLS_MASTER_REPO="${HOME}/liferay/repos/liferay-portal"
