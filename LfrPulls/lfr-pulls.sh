@@ -13,7 +13,7 @@
 # A PR on the mirror repo is either forwarded by the CI bot (author is the bot,
 # head branch encodes the source fork owner as `...-sender-<owner>`) or opened
 # directly (author is you, plain head branch). "Yours" matches either: a
-# forwarded PR from your fork (LFR_PULLS_MINE_ORG, default LFR_GIT_FORK_ORG), or
+# forwarded PR from your fork (LFR_PULLS_MINE_ORG, default your own login), or
 # a direct PR authored by you (LFR_PULLS_USER, default the gh-authenticated user).
 #
 # Per-user settings live in lfr-pulls.local.conf next to this file. It is
@@ -24,8 +24,12 @@ _lfrPullsDir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 : "${LFR_PULLS_REPO:=brianchandotcom/liferay-portal}"
 : "${LFR_PULLS_MASTER_REF:=brian/master}"
-: "${LFR_PULLS_TEAM:=${LFR_PULLS_MINE_ORG:-${LFR_GIT_FORK_ORG:-}}}"
+: "${LFR_PULLS_TEAM:=${LFR_GIT_FORK_ORG:-${LFR_PULLS_MINE_ORG:-}}}"
 : "${LFR_PULLS_FORK_REPO:=${LFR_PULLS_REPO##*/}}"
+
+# The stand-in for your own login in a person argument, resolved to the real
+# login only when a listing needs it, so no command pays a gh call to say mine.
+: "${LFR_PULLS_AUTHOR_ME:=::me::}"
 
 # Where a backport goes. A backport pull is opened straight on the EE repo
 # rather than travelling the fork-then-mirror road the other three sections
@@ -44,26 +48,39 @@ _lfrPullsHelp() {
 
 		Usage (each command has a short form and an alias):
 		  lfrPulls                         the four queues, in order: yours on the
-		                                   mirror, your team's fork, your own fork
-		                                   (teammates waiting on your review), and
-		                                   your backports on the EE repo
+		                                   mirror, your team's fork (narrowed, see
+		                                   below), your own fork (teammates waiting
+		                                   on your review), and your backports on
+		                                   the EE repo
 		  lfrPulls [mine|all]              the mirror alone (yours, or every PR)
-		  lfrPulls ee [mine|all]  (lfrpe)  backports on liferay/liferay-portal-ee,
+		  lfrPulls ee [mine|all|<login>]  (lfrpe)
+		                                   backports on liferay/liferay-portal-ee,
 		                                   yours by default
-		  lfrPulls <team|user> [mine]  (lfrpf)
+		  lfrPulls <team|user|owner/repo> [mine|all|<login>]  (lfrpf)
 		                                   open PRs on that fork, e.g.
 		                                   lfrPulls liferay-frontend, lfrPulls
 		                                   headless, lfrPulls experience, or any
-		                                   GitHub username. mine keeps only yours
+		                                   GitHub username. All of them by
+		                                   default; a second word keeps one
+		                                   person's, either mine or any login, so
+		                                   lfrPulls page-management achaparro
+		                                   asks the same question about somebody
+		                                   else. A first word with a slash is a
+		                                   whole repo, which is how any other
+		                                   one is reached: lfrPulls
+		                                   liferay/liferay-portal-ee mariuo.
+		                                   With no slash the repo is
+		                                   liferay-portal
 		  lfrPulls teams  (lfrpteams)      the product teams and their open counts
 		  lfrPulls ticket <LPD-12345>  (t, lfrpt)
 		                                   every pull ever opened for that ticket,
 		                                   oldest first, then what the ticket has
 		                                   landed on the master ref. A bare ticket
 		                                   works too: lfrPulls LPD-12345
-		  lfrPulls week [days]  (w, lfrpw) your pulls closed in the last days
+		  lfrPulls week [days] [<login>]  (w, lfrpw)
+		                                   your pulls closed in the last days
 		                                   (default 7): PR / SENDER / STATUS / TITLE
-		  lfrPulls stats [mine|all] [months]  (s, lfrps)
+		  lfrPulls stats [mine|all|<login>] [months]  (s, lfrps)
 		                                   per-month counts of PRs sent, merged, and
 		                                   rejected for you (mine); sent and closed
 		                                   for the whole repo (all); months default 12
@@ -106,6 +123,22 @@ _lfrPullsHelp() {
 		pull is not yours to pick up, so it stays "-". A pull of yours that
 		another person is reviewing is not on you.
 
+		Anywhere mine is accepted a GitHub login works in its place, and the
+		whole question is then asked about that person: lfrPulls stats nikki-pru
+		gives their month table and their four queues, lfrPulls week 30
+		nikki-pru their closed pulls, lfrPulls <team> <login> one fork of
+		theirs, lfrPulls ee <login> their backports. ON YOU keeps answering for
+		you, so it still says what a pull of theirs needs from you. The one
+		exception is the mirror-alone form, where a bare word already names a
+		fork: lfrPulls <login> lists that person's fork, and their mirror pulls
+		come from lfrPulls stats <login>.
+
+		The team fork is the one queue carrying everybody, so bare lfrPulls keeps
+		only what concerns you: the pulls you wrote, the ones ON YOU speaks for,
+		and the ones with no workflow label at all, which is itself the finding
+		since nobody has triaged them. The count line still gives the section
+		total ("3 of 9 open pull(s)"), and lfrPulls <team> lists all of them.
+
 		Teams are the accounts that own code in .github/CODEOWNERS. Name one in
 		full (liferay-frontend), without the prefix (frontend), or by any unique
 		part of it (experience, page, headless); a name matching no team is used
@@ -143,13 +176,17 @@ _lfrPullsHelp() {
 
 		Config (lfr-pulls.local.conf):
 		  LFR_PULLS_REPO         repo to list (default brianchandotcom/liferay-portal)
-		  LFR_PULLS_MINE_ORG     your fork owner (default LFR_GIT_FORK_ORG)
+		  LFR_PULLS_MINE_ORG     the owner in the -sender-<owner> of a pull you
+		                         forwarded, so your own fork (default your login)
 		  LFR_PULLS_USER         your GitHub login (default the gh-authed user)
-		  LFR_PULLS_TEAM         your team's account (default LFR_PULLS_MINE_ORG)
-		  LFR_PULLS_FORK_REPO    fork repo name (default the name in LFR_PULLS_REPO)
+		  LFR_PULLS_TEAM         your team's account (default LFR_GIT_FORK_ORG)
+		  LFR_PULLS_FORK_REPO    the repo an owner with no slash means (default
+		                         liferay-portal, the name in LFR_PULLS_REPO)
 		  LFR_PULLS_EE_REPO      backports repo (default liferay/liferay-portal-ee)
 		  LFR_PULLS_MASTER_REPO  local clone to grep for merges (default: cwd repo)
 		  LFR_PULLS_MASTER_REF   master ref to grep (default brian/master)
+		  LFR_PULLS_LINKS        on|off|auto (default auto): make each #number a
+		                         clickable link on a terminal, plain when piped
 	EOF
 }
 
@@ -199,7 +236,7 @@ _lfrPullsStatsTable() {
 # Your per-month PR stats, deciding merged/rejected by whether each PR's exact
 # title landed on LFR_PULLS_MASTER_REF (same signal as `lfrPulls week`).
 _lfrPullsStatsMine() {
-	local months="${1}" mineUser="${2}" dir
+	local months="${1}" person="${2}" dir
 	dir="$(_lfrPullsMasterDir)" || return 1
 
 	local windowStart sinceDate json
@@ -207,8 +244,8 @@ _lfrPullsStatsMine() {
 	# Buffer a month before the window so a pull closed early in it whose merge
 	# commit is dated slightly later is still matched.
 	sinceDate="$(date -d "${windowStart}-01 -1 month" +%Y-%m-%d)"
-	echo "Counting your PRs on ${LFR_PULLS_REPO}, matching titles against ${LFR_PULLS_MASTER_REF}..." >&2
-	json="$(gh pr list --repo "${LFR_PULLS_REPO}" --author "${mineUser}" \
+	echo "Counting PRs by ${person} on ${LFR_PULLS_REPO}, matching titles against ${LFR_PULLS_MASTER_REF}..." >&2
+	json="$(gh pr list --repo "${LFR_PULLS_REPO}" --author "${person}" \
 		--state all --limit 500 --json number,title,state,createdAt,closedAt)" || return 1
 
 	local -A masterSubjects=()
@@ -272,7 +309,8 @@ _lfrPullsStats() {
 		mine | -m | --mine) scope="mine" ;;
 		all | -a | --all) scope="all" ;;
 		-h | --help) _lfrPullsHelp; return 0 ;;
-		'' | *[!0-9]*) echo "lfrPulls stats: unknown argument '${a}' (want mine|all|<months>)." >&2; return 1 ;;
+		'') ;;
+		*[!0-9]*) scope="${a#@}" ;;
 		*) months="${a}" ;;
 		esac
 	done
@@ -280,12 +318,11 @@ _lfrPullsStats() {
 	if [ "${scope}" = "all" ]; then
 		_lfrPullsStatsAll "${months}"
 	else
-		local mineUser="${LFR_PULLS_USER:-$(gh api user --jq '.login' 2>/dev/null)}"
-		if [ -z "${mineUser}" ]; then
-			echo "lfrPulls stats: set LFR_PULLS_USER in ${_lfrPullsDir}/lfr-pulls.local.conf, or pass 'all'." >&2
-			return 1
+		local person="${scope}"
+		if [ "${person}" = "mine" ]; then
+			person="$(_lfrPullsMineUser stats)" || return 1
 		fi
-		_lfrPullsStatsMine "${months}" "${mineUser}" || return 1
+		_lfrPullsStatsMine "${months}" "${person}" || return 1
 	fi
 
 	# What the months table cannot say: where each pull open right now is stuck.
@@ -308,20 +345,19 @@ _lfrPullsLoadMasterSubjects() {
 # List your pulls closed in the last <days> (default 7), as PR / SENDER / STATUS
 # / TITLE, where STATUS is MERGED (ticket on the master ref) or REJECTED.
 _lfrPullsWeek() {
-	local days=7 a
+	local days=7 person="" a
 	for a in "$@"; do
 		case "${a}" in
 		-h | --help) _lfrPullsHelp; return 0 ;;
-		'' | *[!0-9]*) echo "lfrPulls week: unknown argument '${a}' (want <days>)." >&2; return 1 ;;
+		'') ;;
+		*[!0-9]*) person="${a#@}" ;;
 		*) days="${a}" ;;
 		esac
 	done
 
-	local mineUser dir since json rows sender title status
-	mineUser="${LFR_PULLS_USER:-$(gh api user --jq '.login' 2>/dev/null)}"
-	if [ -z "${mineUser}" ]; then
-		echo "lfrPulls week: set LFR_PULLS_USER in ${_lfrPullsDir}/lfr-pulls.local.conf." >&2
-		return 1
+	local dir since json rows sender title status
+	if [ -z "${person}" ]; then
+		person="$(_lfrPullsMineUser week)" || return 1
 	fi
 	dir="$(_lfrPullsMasterDir)" || return 1
 	since="$(date -u -d "${days} days ago" +%Y-%m-%dT%H:%M:%SZ)"
@@ -329,7 +365,7 @@ _lfrPullsWeek() {
 	local -A masterSubjects=()
 	_lfrPullsLoadMasterSubjects "${dir}" "$(date -d "${days} days ago -1 month" +%Y-%m-%d)" masterSubjects
 
-	json="$(gh pr list --repo "${LFR_PULLS_REPO}" --author "${mineUser}" \
+	json="$(gh pr list --repo "${LFR_PULLS_REPO}" --author "${person}" \
 		--state closed --limit 200 --json number,title,headRefName,author,closedAt)" || return 1
 
 	rows=""
@@ -347,10 +383,11 @@ _lfrPullsWeek() {
 			"#\(.number)\t\(if (.headRefName | test("-sender-")) then (.headRefName | sub(".*-sender-"; "")) else .author.login end)\t\(.title)"' 2>/dev/null)
 
 	if [ -z "${rows}" ]; then
-		echo "No pulls of yours closed in the last ${days} day(s) on ${LFR_PULLS_REPO}."
+		echo "No pulls by ${person} closed in the last ${days} day(s) on ${LFR_PULLS_REPO}."
 		return 0
 	fi
-	printf 'PR\tSENDER\tSTATUS\tTITLE\n%s' "${rows}" | column -t -s $'\t'
+	printf 'PR\tSENDER\tSTATUS\tTITLE\n%s' "${rows}" | column -t -s $'\t' |
+		_lfrPullsLinkify "${LFR_PULLS_REPO}"
 }
 # Every pull ever opened on the mirror for one ticket, oldest first, then what that
 # ticket has landed on the master ref.
@@ -390,7 +427,8 @@ _lfrPullsTicket() {
 	if [ -z "${rows}" ]; then
 		echo "No pull on ${LFR_PULLS_REPO} has ${ticket} in its title."
 	else
-		printf 'PR\tSENDER\tSTATE\tCREATED\tCLOSED\tTITLE\n%s\n' "${rows}" | column -t -s $'\t'
+		printf 'PR\tSENDER\tSTATE\tCREATED\tCLOSED\tTITLE\n%s\n' "${rows}" | column -t -s $'\t' |
+			_lfrPullsLinkify "${LFR_PULLS_REPO}"
 		printf '\n%s pull(s) for %s: %s open, %s closed.\n' \
 			"$(printf '%s' "${json}" | jq 'length')" "${ticket}" \
 			"$(printf '%s' "${json}" | jq '[.[] | select(.state == "OPEN")] | length')" \
@@ -557,7 +595,36 @@ _LFR_PULLS_JQ='
 		elif ($yours == "true") and $unclaimed and ($status == "REVIEW") then "review"
 		else "-" end;
 	def age: ((now - (.createdAt | fromdate)) / 86400 | floor | tostring) + "d";
+	# Whether a pull is worth a place on the dashboard, which shows your own
+	# queues and drops what belongs to somebody else. Three ways in:
+	#   you wrote it, so it is yours however healthy it looks
+	#   ON YOU says something, so it is waiting on you or free for you to take
+	#   it carries no workflow label at all, which is itself the finding: nobody
+	#     has triaged it, so it is sitting on the fork with no state
+	def relevant:
+		(.author.login == $me) or (onYou != "-") or ((workflowLabels | length) == 0);
 '
+
+# Make each row's #<number> a clickable link to its pull. The URL rides in an
+# OSC 8 escape and the visible text stays "#12345", so no column grows and
+# `column -t` cannot be thrown off: this runs AFTER the table is laid out, for
+# the same reason the emoji are stripped from LABELS.
+#
+# On a terminal by default, never when the output is piped or redirected, since
+# a file full of escapes is worse than no links. LFR_PULLS_LINKS forces it
+# either way: `on` even when piped, `off` never.
+_lfrPullsLinkify() {
+	local repo="${1}" links="${LFR_PULLS_LINKS:-auto}" esc
+
+	case "${links}" in
+	off) cat; return ;;
+	on) ;;
+	*) if [ ! -t 1 ]; then cat; return; fi ;;
+	esac
+
+	esc=$'\033'
+	sed -E "s|^([[:space:]]*)#([0-9]+)|\1${esc}]8;;https://github.com/${repo}/pull/\2${esc}\\\\#\2${esc}]8;;${esc}\\\\|"
+}
 
 # The open pulls on a repo, with everything STATUS is derived from.
 _lfrPullsOpenJson() {
@@ -572,7 +639,7 @@ _lfrPullsForkSection() {
 	local repo="${1}" filter="${2}" heading="${3}" detail="${4:-}" json rows total header row
 	local me="${LFR_PULLS_USER:-$(gh api user --jq '.login' 2>/dev/null)}" yours="false"
 	case "${repo}" in
-	"${me}"/* | "${LFR_PULLS_TEAM:-::none::}"/* | "${LFR_PULLS_EE_REPO}" | "${LFR_PULLS_REPO}") yours="true" ;;
+	"${me}"/* | "${LFR_PULLS_TEAM:-${LFR_GIT_FORK_ORG:-::none::}}"/* | "${LFR_PULLS_EE_REPO}" | "${LFR_PULLS_REPO}") yours="true" ;;
 	esac
 
 	printf '\n%s\n' "${heading}"
@@ -603,7 +670,8 @@ _lfrPullsForkSection() {
 		fi
 		return 0
 	fi
-	printf "${header}"'\n%s\n' "${rows}" | column -t -s $'\t' | sed 's/^/  /'
+	printf "${header}"'\n%s\n' "${rows}" | column -t -s $'\t' | sed 's/^/  /' |
+		_lfrPullsLinkify "${repo}"
 	printf '  %s of %s open pull(s).\n' "$(printf '%s\n' "${rows}" | grep -c .)" "${total}"
 }
 
@@ -613,14 +681,25 @@ _lfrPullsMirrorSection() {
 	local mode="${1}" detail="${2:-}" filter='.' json rows header row
 	local me="${LFR_PULLS_USER:-$(gh api user --jq '.login' 2>/dev/null)}"
 
+	# A pull is one person's when they authored it directly or when the bot
+	# forwarded it from their fork, which the head branch records as
+	# -sender-<owner>. For you the sender owner can be overridden, since a
+	# forward from an org fork carries the org: LFR_PULLS_MINE_ORG. For anybody
+	# else it is their login.
+	local person="" senderOwner=""
 	if [ "${mode}" = "mine" ]; then
-		local mineOrg="${LFR_PULLS_MINE_ORG:-${LFR_GIT_FORK_ORG:-}}"
-		local mineUser="${LFR_PULLS_USER:-$(gh api user --jq '.login' 2>/dev/null)}"
-		if [ -z "${mineOrg}" ] && [ -z "${mineUser}" ]; then
-			echo "lfrPulls: set LFR_PULLS_MINE_ORG or LFR_PULLS_USER in ${_lfrPullsDir}/lfr-pulls.local.conf, or pass 'all'." >&2
-			return 1
-		fi
-		filter="[.[] | select((.headRefName | test(\"-sender-${mineOrg}$\")) or (.author.login == \"${mineUser}\"))]"
+		person="${me}"
+		senderOwner="${LFR_PULLS_MINE_ORG:-${me}}"
+	elif [ "${mode}" != "all" ]; then
+		person="${mode}"
+		senderOwner="${mode}"
+	fi
+
+	if [ -n "${person}" ]; then
+		filter="[.[] | select((.headRefName | test(\"-sender-${senderOwner}$\")) or (.author.login == \"${person}\"))]"
+	elif [ "${mode}" != "all" ]; then
+		echo "lfrPulls: set LFR_PULLS_USER in ${_lfrPullsDir}/lfr-pulls.local.conf, or pass 'all'." >&2
+		return 1
 	fi
 
 	json="$(_lfrPullsOpenJson "${LFR_PULLS_REPO}")" || return 1
@@ -646,46 +725,63 @@ _lfrPullsMirrorSection() {
 	if [ -z "${rows}" ]; then
 		printf '  none of the %s open pull(s).\n' "${total}"
 	else
-		printf "${header}"'\n%s\n' "${rows}" | column -t -s $'\t' | sed 's/^/  /'
+		printf "${header}"'\n%s\n' "${rows}" | column -t -s $'\t' | sed 's/^/  /' |
+			_lfrPullsLinkify "${LFR_PULLS_REPO}"
 		printf '  %s of %s open pull(s).\n' "$(printf '%s\n' "${rows}" | grep -c .)" "${total}"
 	fi
 	printf '  %s\n' "$(_lfrPullsLastActiveLine)"
 }
 
 # One fork's open pulls: `lfrPulls liferay-frontend`, `lfrPulls headless`, or a
-# GitHub username. All of them by default; `mine` keeps only the ones you opened.
+# GitHub username. All of them by default; a second word keeps one person's,
+# either `mine` or any login, so `lfrPulls page-management achaparro` asks the
+# same question about somebody else.
+#
+# A first word carrying a slash is taken as a whole owner/repo and used as it
+# stands, which is how any other repo is reached: `lfrPulls
+# liferay/liferay-portal-ee mariuo`. Without a slash it is an owner, and the
+# repo is LFR_PULLS_FORK_REPO, because a bare word cannot be told apart from a
+# team or a login.
 _lfrPullsFork() {
-	local owner="" mode="all" detail="" a
+	local repo="" author="" detail="" a
 	for a in "$@"; do
 		case "${a}" in
-		mine | -m | --mine) mode="mine" ;;
-		all | -a | --all) mode="all" ;;
+		mine | -m | --mine) author="${LFR_PULLS_AUTHOR_ME}" ;;
+		all | -a | --all) author="" ;;
 		detail | -d | --detail) detail="detail" ;;
 		-h | --help) _lfrPullsHelp; return 0 ;;
 		*)
-			if [ -n "${owner}" ]; then
-				echo "lfrPulls: unknown argument '${a}' (want a team or user, then mine|all)." >&2
+			if [ -z "${repo}" ]; then
+				case "${a}" in
+				*/*) repo="${a}" ;;
+				*) repo="$(_lfrPullsResolveOwner "${a}")/${LFR_PULLS_FORK_REPO}" || return 1 ;;
+				esac
+			elif [ -z "${author}" ]; then
+				author="${a#@}"
+			else
+				echo "lfrPulls: unknown argument '${a}' (want a team or user, then a login, mine, or all)." >&2
 				return 1
 			fi
-			owner="$(_lfrPullsResolveOwner "${a}")" || return 1
 			;;
 		esac
 	done
 
-	if [ -z "${owner}" ]; then
-		echo "lfrPulls team: pass a team or a GitHub user, e.g. lfrPulls liferay-frontend. See lfrPulls teams." >&2
+	if [ -z "${repo}" ]; then
+		echo "lfrPulls team: pass a team, a GitHub user, or an owner/repo, e.g. lfrPulls liferay-frontend. See lfrPulls teams." >&2
 		return 1
 	fi
 
-	local filter='.'
-	if [ "${mode}" = "mine" ]; then
-		local mineUser
-		mineUser="$(_lfrPullsMineUser fork)" || return 1
-		filter="[.[] | select(.author.login == \"${mineUser}\")]"
+	local filter='.' scope="all"
+	if [ "${author}" = "${LFR_PULLS_AUTHOR_ME}" ]; then
+		author="$(_lfrPullsMineUser fork)" || return 1
+	fi
+	if [ -n "${author}" ]; then
+		filter="[.[] | select(.author.login == \"${author}\")]"
+		scope="${author}"
 	fi
 
-	_lfrPullsForkSection "${owner}/${LFR_PULLS_FORK_REPO}" "${filter}" \
-		"${owner}/${LFR_PULLS_FORK_REPO} open pulls (${mode})" "${detail}"
+	_lfrPullsForkSection "${repo}" "${filter}" \
+		"${repo} open pulls (${scope})" "${detail}"
 }
 
 # The product teams, with how many pulls each has open on its fork right now.
@@ -724,27 +820,29 @@ _lfrPullsTeams() {
 # Your backports on the EE repo. Yours by default, since everybody's backports
 # share that one repo; `all` shows the rest.
 _lfrPullsEE() {
-	local mode="mine" detail="" a
+	local author="${LFR_PULLS_AUTHOR_ME}" detail="" a
 	for a in "$@"; do
 		case "${a}" in
-		mine | -m | --mine) mode="mine" ;;
-		all | -a | --all) mode="all" ;;
+		mine | -m | --mine) author="${LFR_PULLS_AUTHOR_ME}" ;;
+		all | -a | --all) author="" ;;
 		detail | -d | --detail) detail="detail" ;;
 		'') ;;
 		-h | --help) _lfrPullsHelp; return 0 ;;
-		*) echo "lfrPulls ee: unknown argument '${a}' (want mine|all)." >&2; return 1 ;;
+		*) author="${a#@}" ;;
 		esac
 	done
 
-	local filter='.'
-	if [ "${mode}" = "mine" ]; then
-		local mineUser
-		mineUser="$(_lfrPullsMineUser ee)" || return 1
-		filter="[.[] | select(.author.login == \"${mineUser}\")]"
+	local filter='.' scope="all"
+	if [ "${author}" = "${LFR_PULLS_AUTHOR_ME}" ]; then
+		author="$(_lfrPullsMineUser ee)" || return 1
+	fi
+	if [ -n "${author}" ]; then
+		filter="[.[] | select(.author.login == \"${author}\")]"
+		scope="${author}"
 	fi
 
 	_lfrPullsForkSection "${LFR_PULLS_EE_REPO}" "${filter}" \
-		"${LFR_PULLS_EE_REPO} open pulls, backports (${mode})" "${detail}"
+		"${LFR_PULLS_EE_REPO} open pulls, backports (${scope})" "${detail}"
 }
 
 # The four queues a change of yours passes through, in the order it travels:
@@ -752,19 +850,43 @@ _lfrPullsEE() {
 # reviewed, your own fork where teammates are waiting on you, and the EE repo,
 # which a backport goes to instead of travelling that road.
 _lfrPullsDashboard() {
-	local detail="${1:-}" mirrorMode="${2:-mine}" mineUser
+	local detail="${1:-}" mirrorMode="${2:-mine}" person="" forkUser
+
+	case "${mirrorMode}" in
+	mine | all) ;;
+	*) person="${mirrorMode}" ;;
+	esac
 
 	_lfrPullsMirrorSection "${mirrorMode}" "${detail}" || return 1
 
-	if [ -n "${LFR_PULLS_TEAM}" ]; then
-		_lfrPullsForkSection "${LFR_PULLS_TEAM}/${LFR_PULLS_FORK_REPO}" '.' \
-			"${LFR_PULLS_TEAM}/${LFR_PULLS_FORK_REPO} open pulls (your team)" "${detail}"
+	# The team fork is the one queue that carries everybody, so on `mine` it is
+	# narrowed to what concerns you: your own pulls, the ones ON YOU speaks for,
+	# and the untriaged ones. The count line still gives the section total, and
+	# `all` widens it back to every pull.
+	local teamFilter='.' teamScope="yours, plus reviews and untriaged"
+	if [ "${mirrorMode}" = "all" ]; then
+		teamScope="all"
+	elif [ -n "${person}" ]; then
+		teamFilter="[.[] | select(.author.login == \"${person}\")]"
+		teamScope="${person}"
+	else
+		teamFilter='[.[] | select(relevant)]'
 	fi
 
-	mineUser="${LFR_PULLS_USER:-$(gh api user --jq '.login' 2>/dev/null)}"
-	if [ -n "${mineUser}" ] && [ "${mineUser}" != "${LFR_PULLS_TEAM}" ]; then
-		_lfrPullsForkSection "${mineUser}/${LFR_PULLS_FORK_REPO}" '.' \
-			"${mineUser}/${LFR_PULLS_FORK_REPO} open pulls (on your fork)" "${detail}"
+	# Resolved here, not at source time: LfrGit's conf can load after this file,
+	# and LFR_GIT_FORK_ORG is where the team fork comes from.
+	local team="${LFR_PULLS_TEAM:-${LFR_GIT_FORK_ORG:-}}"
+	if [ -n "${team}" ]; then
+		_lfrPullsForkSection "${team}/${LFR_PULLS_FORK_REPO}" "${teamFilter}" \
+			"${team}/${LFR_PULLS_FORK_REPO} open pulls (your team: ${teamScope})" "${detail}"
+	fi
+
+	forkUser="${person:-${LFR_PULLS_USER:-$(gh api user --jq '.login' 2>/dev/null)}}"
+	if [ -n "${forkUser}" ] && [ "${forkUser}" != "${team}" ]; then
+		local forkHeading="on your fork"
+		[ -n "${person}" ] && forkHeading="on the fork of ${person}"
+		_lfrPullsForkSection "${forkUser}/${LFR_PULLS_FORK_REPO}" '.' \
+			"${forkUser}/${LFR_PULLS_FORK_REPO} open pulls (${forkHeading})" "${detail}"
 	fi
 
 	[ -n "${LFR_PULLS_EE_REPO}" ] && _lfrPullsEE "${mirrorMode}" "${detail}"
