@@ -285,6 +285,7 @@ configuration holds nothing but a host and a port.
 | `lfrWorktreeIdeaInit <branch\|dir>` | Set up that worktree. |
 | `lfrWorktreeIdeaInit <branch\|dir> <src>` | Copy the project from that clone instead. |
 | `lfrWorktreeIdeaInit <branch\|dir> --redo` | Replace the project it already has. Without this it refuses rather than write over one. |
+| `lfrWorktreeIdeaInit <branch\|dir> --recent` | Only put it back in IntelliJ's recent projects, copying nothing. |
 
 ```bash
 lfrWorktree LPD-12345                  # create the worktree
@@ -317,6 +318,23 @@ clone you have never set run configurations up in copies none.
 
 The `.iml` scan takes the best part of a minute on a Liferay tree, so the command
 says what it is doing before each slow step rather than going silent.
+
+Last, the worktree goes into IntelliJ's recent projects, at the top of the welcome
+screen. That is the only way in, in practice: `File > Open` reads the IDE's cached
+VFS, so a worktree created after IntelliJ last looked at the parent directory is
+missing from the chooser, its refresh button included, until the IDE restarts. Every
+`IntelliJIdea*` profile under `~/.config/JetBrains` gets the entry, since each version
+keeps its own state, the same reason `lfrWorktreeIdeaClean` walks all of them, and one
+already carrying the project is left alone.
+
+A running IntelliJ gets no entry, only the command to paste. It owns
+`recentProjects.xml` the way it owns `workspace.xml`, writing it back from memory when
+it closes, so an entry written underneath it is gone before the restart that would
+show it. Opening the project once is the only registration a live IDE keeps, and that
+is the launcher line printed instead, leaving the first indexing pass yours to
+schedule. `--recent` runs this step alone, which is how a project you removed from the
+welcome screen comes back without a `--redo` wiping `.idea` and re-copying every `.iml`
+to write one line of XML.
 
 All five commands accept `-h`/`--help`.
 

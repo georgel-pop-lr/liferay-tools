@@ -48,7 +48,9 @@ lfrTools() {
 		  lfrWorktreeIdeaClean  make IntelliJ forget worktree projects that are
 		                        gone (lfrWorktreeIdeaCleanDry previews it)
 		  lfrWorktreeIdeaInit   give a worktree the IntelliJ project (and the debug
-		                        profiles) a clone already has (--redo replaces one)
+		                        profiles) a clone already has, then list it in
+		                        IntelliJ's recent projects (--redo replaces the
+		                        project, --recent only lists it again)
 		  lfrShare              point a repo at an already-built bundle (no rebuild)
 
 		Server bundle

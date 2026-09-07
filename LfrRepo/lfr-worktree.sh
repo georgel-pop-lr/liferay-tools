@@ -1151,15 +1151,137 @@ _lfrWorktreeIdeaRunConfigurations() {
 	echo "lfrWorktreeIdeaInit: wrote ${written} run configurations to ${out}" >&2
 }
 
+# Put $1 in IntelliJ's recent projects, so the worktree is one click away on the welcome
+# screen. That is the only way in, in practice: File > Open reads the IDE's cached VFS,
+# so a worktree created after IntelliJ last looked at the parent directory is missing
+# from the chooser, its refresh button included, until the IDE restarts.
+#
+# Each IDE version keeps its own state, so this walks all of them, the way the clean
+# above makes all of them forget a project. The entry is stamped with the current time
+# because the list is ordered by activationTimestamp, and a worktree just created belongs
+# at the top of it.
+#
+# A running IntelliJ gets the launcher line printed instead of an entry. recentProjects.xml
+# is one of the files the IDE owns and writes back from memory when it closes, which is
+# the same reason lfrWorktreeIdeaClean refuses to run while it is up, so an entry written
+# underneath it would be gone before the restart that would show it. Opening the project
+# once is the only registration a live IDE keeps, and whether to pay that project's first
+# indexing pass now is yours to decide.
+_lfrWorktreeIdeaRecentProject() {
+	local dir="${1}"
+	local config_root="${XDG_CONFIG_HOME:-${HOME}/.config}/JetBrains"
+	local config_dir idea key now pid recent tmp trailing_newline
+
+	# A path under the home directory is stored through IntelliJ's $USER_HOME$ macro, so
+	# write that form or the same project goes in twice, once under each spelling.
+	key="${dir}"
+
+	case "${dir}" in
+	"${HOME}"/*) key="\$USER_HOME\$/${dir#"${HOME}"/}" ;;
+	esac
+
+	if _lfrWorktreeIdeaRunning; then
+		pid="$(pgrep -x idea 2>/dev/null | head -1)"
+		idea="$(tr '\0' '\n' <"/proc/${pid}/cmdline" 2>/dev/null | head -1)"
+
+		[ -x "${idea}" ] || idea="idea"
+
+		echo "lfrWorktreeIdeaInit: IntelliJ is running and would write its recent projects back over the entry, so open the project once instead, which needs no File > Open:" >&2
+		echo "lfrWorktreeIdeaInit:   ${idea} ${dir}" >&2
+
+		return 0
+	fi
+
+	now="$(($(date +%s) * 1000))"
+
+	for recent in "${config_root}"/IntelliJIdea*/options/recentProjects.xml; do
+		[ -f "${recent}" ] || continue
+
+		config_dir="${recent%/options/recentProjects.xml}"
+
+		if grep -qF "<entry key=\"${key}\">" "${recent}"; then
+			echo "lfrWorktreeIdeaInit: ${config_dir##*/} already lists the project ${dir}" >&2
+
+			continue
+		fi
+
+		# IntelliJ writes these files without a trailing newline, which awk's print would
+		# add. tail strips newlines, so output here means the last byte is not one.
+		trailing_newline=1
+
+		if [ -n "$(tail -c 1 "${recent}")" ]; then
+			trailing_newline=0
+		fi
+
+		tmp="$(mktemp)" || return 1
+
+		awk -v key="${key}" -v now="${now}" -v title="${dir##*/}" '
+			!inserted && /^[[:space:]]*<\/map>[[:space:]]*$/ {
+				printf "        <entry key=\"%s\">\n", key
+				print "          <value>"
+				printf "            <RecentProjectMetaInfo frameTitle=\"%s\">\n", title
+				printf "              <option name=\"activationTimestamp\" value=\"%s\" />\n", now
+				print "              <option name=\"productionCode\" value=\"IU\" />"
+				printf "              <option name=\"projectOpenTimestamp\" value=\"%s\" />\n", now
+				print "            </RecentProjectMetaInfo>"
+				print "          </value>"
+				print "        </entry>"
+
+				inserted = 1
+			}
+
+			{ print }
+
+			END {
+				exit !inserted
+			}
+		' "${recent}" >"${tmp}" || {
+			rm -f "${tmp}"
+
+			echo "lfrWorktreeIdeaInit: ${config_dir##*/} holds no recent projects map; left it alone" >&2
+
+			continue
+		}
+
+		# The file is the live configuration of an IDE that is merely closed, so prove the
+		# edit parses before it lands rather than after.
+		if command -v python3 >/dev/null 2>&1 &&
+			! python3 -c 'import sys, xml.dom.minidom; xml.dom.minidom.parse(sys.argv[1])' "${tmp}" >/dev/null 2>&1; then
+			rm -f "${tmp}"
+
+			echo "lfrWorktreeIdeaInit: the edited ${recent} would not parse; left it alone" >&2
+
+			return 1
+		fi
+
+		# Written back through the existing file to keep its mode and owner, the way the
+		# entry removal above does.
+		cat "${tmp}" >"${recent}" || {
+			rm -f "${tmp}"
+
+			return 1
+		}
+
+		rm -f "${tmp}"
+
+		if [ "${trailing_newline}" -eq 0 ]; then
+			truncate -s -1 "${recent}"
+		fi
+
+		echo "lfrWorktreeIdeaInit: ${config_dir##*/} now lists the project ${dir}" >&2
+	done
+}
+
 _lfrWorktreeIdeaInitHelp() {
 	cat <<-'EOF'
 		lfrWorktreeIdeaInit — give a worktree the IntelliJ project a clone already has.
 
 		Usage:
-		  lfrWorktreeIdeaInit                     the worktree you are in
-		  lfrWorktreeIdeaInit <branch|dir>        that worktree
-		  lfrWorktreeIdeaInit <branch|dir> <src>  copy the project from that clone
-		  lfrWorktreeIdeaInit <branch|dir> --redo replace the project it already has
+		  lfrWorktreeIdeaInit                       the worktree you are in
+		  lfrWorktreeIdeaInit <branch|dir>          that worktree
+		  lfrWorktreeIdeaInit <branch|dir> <src>    copy the project from that clone
+		  lfrWorktreeIdeaInit <branch|dir> --redo   replace the project it already has
+		  lfrWorktreeIdeaInit <branch|dir> --recent only the recent projects entry
 
 		Copies the project model (modules.xml, libraries, code style, inspections,
 		copyright) and every .iml, so the worktree opens as a configured project
@@ -1185,6 +1307,27 @@ _lfrWorktreeIdeaInitHelp() {
 		replaces the project. An .iml only the previous source had is left where it is,
 		unreferenced by the new modules.xml and ignored. IntelliJ still indexes the
 		project the first time it opens it.
+
+		Last, the worktree goes into IntelliJ's recent projects, at the top of the
+		welcome screen, because File > Open cannot reach it: that chooser reads the
+		IDE's cached VFS, so a worktree created after IntelliJ last looked at the
+		parent directory stays missing from the dialog, refresh button included, until
+		the IDE restarts. Every IntelliJIdea* profile under ~/.config/JetBrains gets the
+		entry, since each version keeps its own state, and the one already carrying the
+		project is left alone.
+
+		A running IntelliJ gets no entry, only the command to paste. It owns that file
+		the same way it owns workspace.xml, writing it back from memory when it closes,
+		so an entry written underneath it is gone before the restart that would show
+		it. Opening the project once is the only registration a live IDE keeps, and
+		that is the launcher line printed instead, so paying its first indexing pass
+		then is your call rather than the tool's.
+
+		--recent runs that last step alone, on a worktree whose project is already
+		there. It is how a project you removed from the welcome screen comes back,
+		since the alternative is a --redo, which wipes .idea and re-copies every .iml
+		to write one line of XML. Close IntelliJ first, or it prints the launcher line
+		and changes nothing, which is the same guard the full run obeys.
 	EOF
 }
 
@@ -1193,17 +1336,21 @@ lfrWorktreeIdeaInit() {
 
 	local wt_root="${LFR_WORKTREE_ROOT:-${HOME}/liferay/repos}"
 	local dir=""
+	local recent=""
 	local redo=""
 	local src=""
 
 	while [ "$#" -gt 0 ]; do
 		case "${1}" in
+		--recent)
+			recent="--recent"
+			;;
 		--redo)
 			redo="--redo"
 			;;
 		-*)
 			echo "lfrWorktreeIdeaInit: unknown option ${1}" >&2
-			echo "usage: lfrWorktreeIdeaInit [<branch|dir>] [<src>] [--redo]" >&2
+			echo "usage: lfrWorktreeIdeaInit [<branch|dir>] [<src>] [--redo|--recent]" >&2
 
 			return 1
 			;;
@@ -1223,6 +1370,12 @@ lfrWorktreeIdeaInit() {
 		shift
 	done
 
+	if [ -n "${recent}" ] && [ -n "${redo}" ]; then
+		echo "lfrWorktreeIdeaInit: pass --redo or --recent, not both" >&2
+
+		return 1
+	fi
+
 	src="${src:-${LFR_IDEA_TEMPLATE:-${wt_root}/liferay-portal}}"
 
 	if [ -z "${dir}" ]; then
@@ -1239,6 +1392,22 @@ lfrWorktreeIdeaInit() {
 		echo "lfrWorktreeIdeaInit: ${dir} does not exist" >&2
 
 		return 1
+	fi
+
+	# --recent is the whole run for a worktree already carrying its project, so it takes
+	# neither a source nor anything the source is checked for.
+	if [ -n "${recent}" ]; then
+		dir="$(cd "${dir}" && pwd)" || return 1
+
+		if [ ! -f "${dir}/.idea/modules.xml" ]; then
+			echo "lfrWorktreeIdeaInit: ${dir} has no IntelliJ project yet; run it without --recent first" >&2
+
+			return 1
+		fi
+
+		_lfrWorktreeIdeaRecentProject "${dir}"
+
+		return
 	fi
 
 	if [ ! -f "${src}/.idea/modules.xml" ]; then
@@ -1316,5 +1485,7 @@ lfrWorktreeIdeaInit() {
 
 	rm -f "${list}" "${tracked}"
 
-	_lfrWorktreeIdeaRunConfigurations "${src}" "${dir}"
+	_lfrWorktreeIdeaRunConfigurations "${src}" "${dir}" || return 1
+
+	_lfrWorktreeIdeaRecentProject "${dir}"
 }
