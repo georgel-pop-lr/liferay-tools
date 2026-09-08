@@ -79,14 +79,15 @@ _lfrPullsHelp() {
 		                                   works too: lfrPulls LPD-12345
 		  lfrPulls week [days] [<login>]  (w, lfrpw)
 		                                   your pulls closed in the last days
-		                                   (default 7): PR / SENDER / STATUS / TITLE
+		                                   (default 7), forwarded or direct:
+		                                   PR / SENDER / STATUS / TITLE
 		  lfrPulls stats [mine|all|<login>] [months]  (s, lfrps)
 		                                   per-month counts of PRs sent, merged, and
 		                                   rejected for you (mine); sent and closed
 		                                   for the whole repo (all); months default 12
 
-		mine matches PRs forwarded from your fork or opened by you; all shows
-		every PR. The AHEAD column is how many open pulls are older (lower
+		mine matches PRs forwarded from your fork or opened by you, and it means
+		the same in week and stats; all shows every PR. The AHEAD column is how many open pulls are older (lower
 		number), i.e. roughly how many are in front of it in the merge queue, so
 		a small number means yours is close. The list ends with when the repo was
 		last active (the most recent pull merged or rejected) and how long ago.
@@ -162,7 +163,8 @@ _lfrPullsHelp() {
 		landed, and "nothing landed yet" with the ref tip tells you the ref may
 		just be stale (lfrGitUpdateMaster).
 
-		stats (mine) counts the PRs you opened directly, by month:
+		stats (mine) counts the PRs you sent, forwarded or opened directly, by
+		month:
 		  SENT      PRs you created that month
 		  MERGED    of those closed that month, the ones whose exact title is a
 		            commit on the master ref (Brian merged that pull in)
@@ -245,8 +247,8 @@ _lfrPullsStatsMine() {
 	# commit is dated slightly later is still matched.
 	sinceDate="$(date -d "${windowStart}-01 -1 month" +%Y-%m-%d)"
 	echo "Counting PRs by ${person} on ${LFR_PULLS_REPO}, matching titles against ${LFR_PULLS_MASTER_REF}..." >&2
-	json="$(gh pr list --repo "${LFR_PULLS_REPO}" --author "${person}" \
-		--state all --limit 500 --json number,title,state,createdAt,closedAt)" || return 1
+	json="$(_lfrPullsMirrorPersonJson "${person}" all \
+		number,title,state,headRefName,createdAt,closedAt)" || return 1
 
 	local -A masterSubjects=()
 	_lfrPullsLoadMasterSubjects "${dir}" "${sinceDate}" masterSubjects
@@ -365,8 +367,8 @@ _lfrPullsWeek() {
 	local -A masterSubjects=()
 	_lfrPullsLoadMasterSubjects "${dir}" "$(date -d "${days} days ago -1 month" +%Y-%m-%d)" masterSubjects
 
-	json="$(gh pr list --repo "${LFR_PULLS_REPO}" --author "${person}" \
-		--state closed --limit 200 --json number,title,headRefName,author,closedAt)" || return 1
+	json="$(_lfrPullsMirrorPersonJson "${person}" closed \
+		number,title,headRefName,author,closedAt)" || return 1
 
 	rows=""
 	while IFS=$'\t' read -r num sender title; do
@@ -504,6 +506,50 @@ _lfrPullsMineUser() {
 	printf '%s\n' "${mineUser}"
 }
 
+# The owner that appears in the -sender-<owner> of a pull $1 forwarded. It is
+# their login, except for you, where a forward from an org fork carries the org
+# instead: LFR_PULLS_MINE_ORG. Pass your login as $2 to save the gh call.
+_lfrPullsSenderOwner() {
+	local person="${1}" me="${2:-}"
+	[ -z "${me}" ] && me="${LFR_PULLS_USER:-$(gh api user --jq '.login' 2>/dev/null)}"
+	if [ "${person}" = "${me}" ]; then
+		printf '%s\n' "${LFR_PULLS_MINE_ORG:-${person}}"
+	else
+		printf '%s\n' "${person}"
+	fi
+}
+
+# One person's pulls on the mirror, both ways a pull gets there, as one JSON
+# array carrying the fields $3, over the state $2 (default all).
+#
+# A pull they opened directly is theirs by author, which gh filters server-side.
+# A forwarded pull is authored by the CI bot, so it is theirs by the
+# -sender-<owner> its head branch carries, and no search qualifier indexes that
+# branch (head: wants the exact name). The forwarder does @-mention the sender in
+# the body, so mentions: narrows the fetch to a few hundred pulls and the branch
+# suffix then decides exactly. Verified on 6 of Georgel's forwarded pulls sampled
+# across 2026-01 to 2026-09: every one was in the mentions: set.
+#
+# Filtering by author alone is what used to hide every forwarded pull from week
+# and stats, so always come through here rather than passing --author yourself.
+_lfrPullsMirrorPersonJson() {
+	local person="${1}" state="${2:-all}" fields="${3}" senderOwner authored forwarded
+	senderOwner="$(_lfrPullsSenderOwner "${person}")"
+
+	authored="$(gh pr list --repo "${LFR_PULLS_REPO}" --author "${person}" \
+		--state "${state}" --limit 500 --json "${fields}")" || return 1
+	forwarded="$(gh pr list --repo "${LFR_PULLS_REPO}" --search "mentions:${person}" \
+		--state "${state}" --limit 500 --json "${fields}")" || return 1
+
+	# Both blobs go in on stdin, not as --argjson: a prolific person's two
+	# fetches together run past ARG_MAX and jq dies with "Argument list too
+	# long".
+	printf '%s\n%s\n' "${authored}" "${forwarded}" |
+		jq -s --arg senderOwner "${senderOwner}" \
+			'.[0] + [.[1][] | select(.headRefName | test("-sender-" + $senderOwner + "$"))] |
+				unique_by(.number)'
+}
+
 # Resolve a word to a fork owner: a team's full account (liferay-frontend), the
 # same without the prefix (frontend), or any unique part of one (experience).
 # A word matching no team is echoed unchanged, so a GitHub username works too.
@@ -562,6 +608,10 @@ _LFR_PULLS_JQ='
 		else "OPEN" end;
 	def sender:
 		if (.headRefName | test("-sender-")) then (.headRefName | sub(".*-sender-"; "")) else .author.login end;
+	# Whether the pull is yours. Never .author.login alone: the CI bot authors
+	# every pull it forwards, so on the mirror your own work reads as another
+	# person and drops out of ON YOU and off the dashboard.
+	def isMine: (.author.login == $me) or (sender == $senderMe);
 	def assignee: (.assignees | map(.login) | join(",")) | if . == "" then "-" else . end;
 	# Whether the next move is yours. It is when you are the assignee or the
 	# requested reviewer, when a pull of yours came back with something to fix,
@@ -585,9 +635,9 @@ _LFR_PULLS_JQ='
 		(.assignees | map(select(.login != $me)) | length > 0) as $claimedByOther |
 		((.assignees | length) == 0) as $unclaimed |
 		if ($yours == "true") and ($status == "CONFLICT") and $claimedByOther and
-			(.author.login == $me) then "ask"
+			isMine then "ask"
 		elif ($owners | any(. == $me)) then "you"
-		elif (.author.login == $me) then
+		elif isMine then
 			(if ([ "CONFLICT", "CHANGES", "CHECK-FAIL", "TEST-FAIL", "ON-HOLD" ] | any(. == $status))
 				then "you" else "-" end)
 		elif ($repoOwner == $me) then "you"
@@ -597,12 +647,12 @@ _LFR_PULLS_JQ='
 	def age: ((now - (.createdAt | fromdate)) / 86400 | floor | tostring) + "d";
 	# Whether a pull is worth a place on the dashboard, which shows your own
 	# queues and drops what belongs to somebody else. Three ways in:
-	#   you wrote it, so it is yours however healthy it looks
+	#   it is yours, sent either way, so it stays however healthy it looks
 	#   ON YOU says something, so it is waiting on you or free for you to take
 	#   it carries no workflow label at all, which is itself the finding: nobody
 	#     has triaged it, so it is sitting on the fork with no state
 	def relevant:
-		(.author.login == $me) or (onYou != "-") or ((workflowLabels | length) == 0);
+		isMine or (onYou != "-") or ((workflowLabels | length) == 0);
 '
 
 # Make each row's #<number> a clickable link to its pull. The URL rides in an
@@ -638,6 +688,8 @@ _lfrPullsOpenJson() {
 _lfrPullsForkSection() {
 	local repo="${1}" filter="${2}" heading="${3}" detail="${4:-}" json rows total header row
 	local me="${LFR_PULLS_USER:-$(gh api user --jq '.login' 2>/dev/null)}" yours="false"
+	local senderMe
+	senderMe="$(_lfrPullsSenderOwner "${me}" "${me}")"
 	case "${repo}" in
 	"${me}"/* | "${LFR_PULLS_TEAM:-${LFR_GIT_FORK_ORG:-::none::}}"/* | "${LFR_PULLS_EE_REPO}" | "${LFR_PULLS_REPO}") yours="true" ;;
 	esac
@@ -659,7 +711,8 @@ _lfrPullsForkSection() {
 		row='"#\(.number)\t\(.author.login)\t\(status)\t\(onYou)\t\(assignee)\t\(.title[0:60])"'
 	fi
 
-	rows="$(printf '%s' "${json}" | jq -r --arg me "${me}" --arg repoOwner "${repo%%/*}" --arg yours "${yours}" \
+	rows="$(printf '%s' "${json}" | jq -r --arg me "${me}" --arg senderMe "${senderMe}" \
+		--arg repoOwner "${repo%%/*}" --arg yours "${yours}" \
 		"${_LFR_PULLS_JQ} ${filter} | sort_by(.number) | reverse | .[] | ${row}")"
 
 	if [ -z "${rows}" ]; then
@@ -680,20 +733,19 @@ _lfrPullsForkSection() {
 _lfrPullsMirrorSection() {
 	local mode="${1}" detail="${2:-}" filter='.' json rows header row
 	local me="${LFR_PULLS_USER:-$(gh api user --jq '.login' 2>/dev/null)}"
+	local senderMe
+	senderMe="$(_lfrPullsSenderOwner "${me}" "${me}")"
 
 	# A pull is one person's when they authored it directly or when the bot
 	# forwarded it from their fork, which the head branch records as
-	# -sender-<owner>. For you the sender owner can be overridden, since a
-	# forward from an org fork carries the org: LFR_PULLS_MINE_ORG. For anybody
-	# else it is their login.
+	# -sender-<owner>.
 	local person="" senderOwner=""
 	if [ "${mode}" = "mine" ]; then
 		person="${me}"
-		senderOwner="${LFR_PULLS_MINE_ORG:-${me}}"
 	elif [ "${mode}" != "all" ]; then
 		person="${mode}"
-		senderOwner="${mode}"
 	fi
+	[ -n "${person}" ] && senderOwner="$(_lfrPullsSenderOwner "${person}" "${me}")"
 
 	if [ -n "${person}" ]; then
 		filter="[.[] | select((.headRefName | test(\"-sender-${senderOwner}$\")) or (.author.login == \"${person}\"))]"
@@ -714,7 +766,8 @@ _lfrPullsMirrorSection() {
 
 	# AHEAD = how many open PRs are older (lower number), so roughly how many are
 	# in front of it in the merge queue; a low number means it is close.
-	rows="$(printf '%s' "${json}" | jq -r --arg me "${me}" --arg repoOwner "${LFR_PULLS_REPO%%/*}" --arg yours "true" "${_LFR_PULLS_JQ}
+	rows="$(printf '%s' "${json}" | jq -r --arg me "${me}" --arg senderMe "${senderMe}" \
+		--arg repoOwner "${LFR_PULLS_REPO%%/*}" --arg yours "true" "${_LFR_PULLS_JQ}
 		(map(.number) | sort) as \$nums |
 		${filter} | sort_by(.number) | .[] | (.number) as \$n | ${row}")" || return 1
 

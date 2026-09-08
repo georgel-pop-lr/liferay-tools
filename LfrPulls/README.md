@@ -187,7 +187,7 @@ both halves of the output agree.
 
 ## Statistics
 
-`stats mine` counts the PRs you opened directly on the repo, by month:
+`stats mine` counts the PRs you sent, forwarded or opened directly, by month:
 
 - `SENT` — PRs you created that month.
 - `MERGED` — of those closed that month, the ones whose exact title is a commit
@@ -231,10 +231,23 @@ A PR on the mirror is either forwarded by the CI bot or opened directly:
 - **Direct** — the author is you, with a plain head branch. `lfrPulls` matches
   the author against your login (`LFR_PULLS_USER`).
 
-The open list counts a PR as yours if either matches. `week` and `stats mine`
-are narrower: they query GitHub by author only (`LFR_PULLS_USER`), so pulls
-forwarded by the CI bot from your fork do not appear in them, and their SENDER
-column can only ever show your own login.
+Every command counts a PR as yours if either matches: the four listings, `week`,
+`stats mine`, and the `ON YOU` column with it, so a forwarded pull of yours that
+comes back red says `you` like a direct one.
+
+Matching the forwarded half needs a fetch GitHub cannot filter, since no search
+qualifier indexes a head branch (`head:` wants the exact name). The open list has
+all 40 open pulls in hand anyway, so it filters them locally. `week` and `stats`
+would have to page over months of the mirror to do that, so they lean on the
+mention instead: the forwarder writes `@<sender>` into the pull body, so
+`mentions:<login>` narrows the fetch to a few hundred pulls, and the
+`-sender-<owner>` suffix then decides exactly which of them are that person's.
+Sampled across 2026-01 to 2026-09, every forwarded pull of Georgel's was in its
+`mentions:` set.
+
+Until 2026-09-04 these two queried by author alone, which hid every forwarded
+pull: `week 21` showed 1 pull instead of 6, and `stats mine 6` counted 53 sent
+where the real number was 97.
 
 ## Config
 
