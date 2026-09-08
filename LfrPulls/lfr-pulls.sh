@@ -691,9 +691,68 @@ _lfrPullsLinkify() {
 }
 
 # The open pulls on a repo, with everything STATUS is derived from.
-_lfrPullsOpenJson() {
+_lfrPullsOpenJsonFetch() {
 	gh pr list --repo "${1}" --state open --limit 200 \
 		--json number,title,headRefName,author,isDraft,mergeable,reviewDecision,assignees,reviewRequests,labels,createdAt 2>/dev/null
+}
+
+# Declared here and left empty for good: the copy that ever holds anything is a
+# `local -A` of the same name inside _lfrPullsDashboard, which shadows this one
+# for that call. What this declaration buys is the subscript. Without it the
+# lookup below reads an undeclared, therefore indexed, array, and bash evaluates
+# `owner/repo` as arithmetic and fails with "division by 0" on every command that
+# does not prefetch.
+declare -A _lfrPullsOpenCache=()
+
+# The open pulls on a repo, served from _lfrPullsOpenCache when the caller
+# prefetched that repo, else fetched now. A repo missing from the cache is
+# fetched here, so a listing is never quietly left out when its parallel fetch
+# failed; it just pays for a retry.
+#
+# The cache being that `local`, which bash's dynamic scoping makes visible down
+# here, is the point: it lives exactly as long as the one command that filled it,
+# so nothing can serve it to a later command, and an interrupt takes it away with
+# the stack rather than leaving it behind.
+_lfrPullsOpenJson() {
+	if [ -n "${_lfrPullsOpenCache[${1}]:-}" ]; then
+		printf '%s\n' "${_lfrPullsOpenCache[${1}]}"
+		return 0
+	fi
+	_lfrPullsOpenJsonFetch "${1}"
+}
+
+# Fetch the open pulls of every repo in "$@" at once, into the associative array
+# named $1. Each is an independent listing on a different repo, and a dashboard
+# spends nearly all its time waiting on them one after another (0.8s + 1.5s +
+# 0.6s + 1.9s), so together they cost the slowest instead of the sum.
+#
+# A background job is a subshell and cannot assign to the array, hence the temp
+# files. The backgrounding sits inside a subshell of its own for two reasons: an
+# interactive shell announces every async command ("[1] 806366") and its
+# completion, which would litter the tables, and a bare `wait` there would also
+# wait on whatever jobs you already had running.
+_lfrPullsPrefetchOpen() {
+	local -n _cache="${1}"
+	shift
+
+	local dir repo file
+	dir="$(mktemp -d -t lfr-pulls-open.XXXXXXXX 2>/dev/null)" || return 0
+
+	(
+		for repo in "$@"; do
+			_lfrPullsOpenJsonFetch "${repo}" >"${dir}/${repo//\//_}" &
+		done
+		wait
+	)
+
+	for repo in "$@"; do
+		file="${dir}/${repo//\//_}"
+		# Empty is how a failed fetch arrives. Leaving it out of the cache is
+		# what hands that repo back to _lfrPullsOpenJson to retry.
+		[ -s "${file}" ] && _cache["${repo}"]="$(cat "${file}")"
+	done
+
+	rm -rf "${dir}"
 }
 
 # Print one fork's open pulls under <heading>, newest first, keeping only what
@@ -924,6 +983,23 @@ _lfrPullsDashboard() {
 	*) person="${mirrorMode}" ;;
 	esac
 
+	# Resolved here, not at source time: LfrGit's conf can load after this file,
+	# and LFR_GIT_FORK_ORG is where the team fork comes from.
+	local team="${LFR_PULLS_TEAM:-${LFR_GIT_FORK_ORG:-}}"
+	forkUser="${person:-${LFR_PULLS_USER:-$(gh api user --jq '.login' 2>/dev/null)}}"
+
+	# Every listing the sections below ask for, named before the first one
+	# prints, which is what lets them all be fetched at once. The conditions are
+	# the same ones that decide whether each section runs.
+	local openRepos=("${LFR_PULLS_REPO}")
+	[ -n "${team}" ] && openRepos+=("${team}/${LFR_PULLS_FORK_REPO}")
+	[ -n "${forkUser}" ] && [ "${forkUser}" != "${team}" ] &&
+		openRepos+=("${forkUser}/${LFR_PULLS_FORK_REPO}")
+	[ -n "${LFR_PULLS_EE_REPO}" ] && openRepos+=("${LFR_PULLS_EE_REPO}")
+
+	local -A _lfrPullsOpenCache=()
+	_lfrPullsPrefetchOpen _lfrPullsOpenCache "${openRepos[@]}"
+
 	_lfrPullsMirrorSection "${mirrorMode}" "${detail}" || return 1
 
 	# The team fork is the one queue that carries everybody, so on `mine` it is
@@ -940,15 +1016,11 @@ _lfrPullsDashboard() {
 		teamFilter='[.[] | select(relevant)]'
 	fi
 
-	# Resolved here, not at source time: LfrGit's conf can load after this file,
-	# and LFR_GIT_FORK_ORG is where the team fork comes from.
-	local team="${LFR_PULLS_TEAM:-${LFR_GIT_FORK_ORG:-}}"
 	if [ -n "${team}" ]; then
 		_lfrPullsForkSection "${team}/${LFR_PULLS_FORK_REPO}" "${teamFilter}" \
 			"${team}/${LFR_PULLS_FORK_REPO} open pulls (your team: ${teamScope})" "${detail}"
 	fi
 
-	forkUser="${person:-${LFR_PULLS_USER:-$(gh api user --jq '.login' 2>/dev/null)}}"
 	if [ -n "${forkUser}" ] && [ "${forkUser}" != "${team}" ]; then
 		local forkHeading="on your fork"
 		[ -n "${person}" ] && forkHeading="on the fork of ${person}"
