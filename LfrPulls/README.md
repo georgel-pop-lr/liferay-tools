@@ -94,9 +94,9 @@ on the merge queue, and carries `ASSIGNEE` instead.
 decision, its assignees, and its labels. It is deliberately not a lookup of one
 team's label names, because every fork keeps its own vocabulary: Page Management
 writes `🛠 Changes needed` and `⚠️ Merge conflict` where Core Infra writes
-`Merge Conflicts` and Frontend writes `🛑 Missing Tests`. The two labels that do
-mean the same thing everywhere, `pr-check - failure` and `ci:forward`, are read
-by name. Worst news wins:
+`Merge Conflicts` and Frontend writes `🛑 Missing Tests`. The labels that do mean
+the same thing everywhere, the `pr-check` family and `ci:forward`, are read by
+name. Worst news wins:
 
 | STATUS | meaning |
 | --- | --- |
@@ -105,12 +105,25 @@ by name. Worst news wins:
 | `CHANGES` | changes requested, by review or by label |
 | `CHECK-FAIL` | carries `pr-check - failure` |
 | `ON-HOLD` | on hold, blocked, or waiting for something |
+| `NO-CHECK` | carries no `pr-check` label at all, so no result was ever published and it cannot be forwarded. Never on the EE repo |
 | `READY` | approved, ready to merge, ready to forward, QA passed |
 | `IN-REVIEW` | review in progress, or somebody is assigned to it |
 | `REVIEW` | review needed or requested, and nobody has taken it |
 | `FORWARDED` | `ci:forward` is on it, so it is on its way to the mirror |
 | `TEST-FAIL` | a `ci:test` batch is red and nothing above applies |
 | `OPEN` | none of the above |
+
+`NO-CHECK` sits under `CONFLICT`, `DRAFT` and `CHANGES` rather than above them,
+because each of those three is fixed by pushing new commits, and that push
+invalidates any pr-check taken against the old head. Asking for a pr-check first
+would be asking for work that is about to be thrown away, so the conflict is the
+only thing the column says; the pull falls through to `NO-CHECK` on the next run
+once the rebase lands. `CHECK-FAIL` outranks it for the plainer reason that a
+failure is a published result and this is the absence of one.
+
+The EE repo is exempt through the `$prChecked` argument, since pr-check is no
+part of the backport flow there: 44 of its 46 open pulls carry no such label, so
+the word would say nothing. The two that do carry `pr-check - skipped`.
 
 `TEST-FAIL` sits at the bottom on purpose. Ranked next to `CHECK-FAIL` it swamped
 everything: 43 of the 44 open EE backports carry some red `ci:test` batch, so the
@@ -123,7 +136,7 @@ column read `TEST-FAIL` 41 times out of 44. Demoted, the same list reads 22
 
 | value | meaning |
 | --- | --- |
-| `you` | you are the assignee or the requested reviewer; a pull of yours came back `CONFLICT`, `CHANGES`, `CHECK-FAIL`, `TEST-FAIL` or `ON-HOLD`; somebody opened it on your own fork, which is a review request by construction; or it is conflicting with nobody assigned, so it goes nowhere until someone picks it up |
+| `you` | you are the assignee or the requested reviewer; a pull of yours is `CONFLICT`, `CHANGES`, `CHECK-FAIL`, `NO-CHECK`, `TEST-FAIL` or `ON-HOLD`; somebody opened it on your own fork, which is a review request by construction; or it is conflicting with nobody assigned, so it goes nowhere until someone picks it up |
 | `ask` | a pull **of yours** is conflicting and somebody else is already reviewing it. Yours to rebase, but a force push under a review in progress destroys that review, so ask the person in `ASSIGNEE` first. A conflicting pull you neither wrote nor were assigned is not yours to touch, and reads `-` |
 | `review` | review needed and nobody has taken it, so it is free for you |
 | `-` | nothing for you to do |

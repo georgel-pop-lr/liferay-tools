@@ -99,6 +99,12 @@ _lfrPullsHelp() {
 		  CHANGES     changes requested, by review or by label
 		  CHECK-FAIL  carries pr-check - failure
 		  ON-HOLD     on hold, blocked, or waiting for something (waiting_for_dev)
+		  NO-CHECK    no pr-check label at all, so no pr-check result was ever
+		              published on it and it cannot be forwarded. Ranked under
+		              the four above because each of those is fixed by pushing
+		              new commits, which invalidates a pr-check against the old
+		              head; the pull falls through to here once that is done.
+		              Never on the EE repo, where backports run no pr-check
 		  READY       approved, ready to merge, ready to forward, QA passed
 		  IN-REVIEW   review in progress, or somebody is assigned to it
 		  REVIEW      review needed and nobody has taken it
@@ -108,11 +114,12 @@ _lfrPullsHelp() {
 		  OPEN        none of the above
 
 		ON YOU says whether the next move is yours. It reads:
-		  you     you are the assignee or the requested reviewer; a pull of yours
-		          came back CONFLICT / CHANGES / CHECK-FAIL / TEST-FAIL / ON-HOLD;
-		          somebody opened it on your own fork, which is a review request
-		          by construction; or it is conflicting with nobody assigned, so
-		          it is going nowhere until someone picks it up
+		  you     you are the assignee or the requested reviewer; a pull of
+		          yours is CONFLICT / CHANGES / CHECK-FAIL / NO-CHECK /
+		          TEST-FAIL / ON-HOLD; somebody opened it on your own fork,
+		          which is a review request by construction; or it is
+		          conflicting with nobody assigned, so it is going nowhere
+		          until someone picks it up
 		  ask     a pull of yours is conflicting and somebody else is already
 		          reviewing it. Yours to rebase, but a force push under a review
 		          in progress destroys that review, so ask the person in
@@ -603,6 +610,12 @@ _LFR_PULLS_JQ='
 	def workflowLabels:
 		allLabels | map(select(test("^ci:test|^ci:forward|^pr-check|^:arrow") | not)) |
 		map(gsub("[^ -~]"; "") | sub("^ +"; "") | sub(" +$"; "")) | map(select(. != ""));
+	# Whether the pull is waiting for a reviewer nobody has become yet. Its own
+	# predicate, not read off the status word, because NO-CHECK outranks REVIEW
+	# and collapses it: onYou still has to see the review to offer it to you.
+	def reviewNeeded:
+		(allLabels | any(test("review needed|ready to review"; "i"))) or
+		(.reviewDecision == "REVIEW_REQUIRED") or ((.reviewRequests | length) > 0);
 	def status:
 		allLabels as $l |
 		if (.mergeable == "CONFLICTING") or ($l | any(test("conflict"; "i"))) then "CONFLICT"
@@ -610,11 +623,18 @@ _LFR_PULLS_JQ='
 		elif (.reviewDecision == "CHANGES_REQUESTED") or ($l | any(test("changes needed"; "i"))) then "CHANGES"
 		elif $l | any(. == "pr-check - failure") then "CHECK-FAIL"
 		elif $l | any(test("on hold|blocked|waiting[ _-]for"; "i")) then "ON-HOLD"
+		# Ranked here, under CONFLICT / DRAFT / CHANGES, because every one of
+		# those is fixed by pushing new commits, which invalidates a pr-check
+		# against the old head: asking for one first would be wasted work. Once
+		# the rebase lands the pull falls through to here. Not on the EE repo,
+		# where pr-check is no part of the backport flow (44 of its 46 open
+		# pulls carry no such label), so $prChecked turns this off there.
+		elif ($prChecked == "true") and (($l | any(test("^pr-check"))) | not)
+			then "NO-CHECK"
 		elif (.reviewDecision == "APPROVED") or
 			($l | any(test("ready to merge|ready to forward|dev approved|passed review|qa passed"; "i"))) then "READY"
 		elif ($l | any(test("review in progress"; "i"))) or ((.assignees | length) > 0) then "IN-REVIEW"
-		elif ($l | any(test("review needed|ready to review"; "i"))) or
-			(.reviewDecision == "REVIEW_REQUIRED") or ((.reviewRequests | length) > 0) then "REVIEW"
+		elif reviewNeeded then "REVIEW"
 		elif $l | any(. == "ci:forward") then "FORWARDED"
 		# Last, not next to CHECK-FAIL: a backport all but always has some batch
 		# red (43 of the 44 open EE pulls did), so ranking it high says nothing.
@@ -652,11 +672,13 @@ _LFR_PULLS_JQ='
 			isMine then "ask"
 		elif ($owners | any(. == $me)) then "you"
 		elif isMine then
-			(if ([ "CONFLICT", "CHANGES", "CHECK-FAIL", "TEST-FAIL", "ON-HOLD" ] | any(. == $status))
+			(if ([ "CONFLICT", "CHANGES", "CHECK-FAIL", "NO-CHECK", "TEST-FAIL", "ON-HOLD" ] | any(. == $status))
 				then "you" else "-" end)
 		elif ($repoOwner == $me) then "you"
 		elif ($yours == "true") and $unclaimed and ($status == "CONFLICT") then "you"
-		elif ($yours == "true") and $unclaimed and ($status == "REVIEW") then "review"
+		elif ($yours == "true") and $unclaimed and
+			(($status == "REVIEW") or (($status == "NO-CHECK") and reviewNeeded))
+			then "review"
 		else "-" end;
 	def age: ((now - (.createdAt | fromdate)) / 86400 | floor | tostring) + "d";
 	# Whether a pull is worth a place on the dashboard, which shows your own
@@ -761,11 +783,12 @@ _lfrPullsPrefetchOpen() {
 _lfrPullsForkSection() {
 	local repo="${1}" filter="${2}" heading="${3}" detail="${4:-}" json rows total header row
 	local me="${LFR_PULLS_USER:-$(gh api user --jq '.login' 2>/dev/null)}" yours="false"
-	local senderMe
+	local prChecked="true" senderMe
 	senderMe="$(_lfrPullsSenderOwner "${me}" "${me}")"
 	case "${repo}" in
 	"${me}"/* | "${LFR_PULLS_TEAM:-${LFR_GIT_FORK_ORG:-::none::}}"/* | "${LFR_PULLS_EE_REPO}" | "${LFR_PULLS_REPO}") yours="true" ;;
 	esac
+	[ "${repo}" = "${LFR_PULLS_EE_REPO}" ] && prChecked="false"
 
 	printf '\n%s\n' "${heading}"
 
@@ -786,6 +809,7 @@ _lfrPullsForkSection() {
 
 	rows="$(printf '%s' "${json}" | jq -r --arg me "${me}" --arg senderMe "${senderMe}" \
 		--arg repoOwner "${repo%%/*}" --arg yours "${yours}" \
+		--arg prChecked "${prChecked}" \
 		"${_LFR_PULLS_JQ} ${filter} | sort_by(.number) | reverse | .[] | ${row}")"
 
 	if [ -z "${rows}" ]; then
@@ -840,7 +864,8 @@ _lfrPullsMirrorSection() {
 	# AHEAD = how many open PRs are older (lower number), so roughly how many are
 	# in front of it in the merge queue; a low number means it is close.
 	rows="$(printf '%s' "${json}" | jq -r --arg me "${me}" --arg senderMe "${senderMe}" \
-		--arg repoOwner "${LFR_PULLS_REPO%%/*}" --arg yours "true" "${_LFR_PULLS_JQ}
+		--arg repoOwner "${LFR_PULLS_REPO%%/*}" --arg yours "true" \
+		--arg prChecked "true" "${_LFR_PULLS_JQ}
 		(map(.number) | sort) as \$nums |
 		${filter} | sort_by(.number) | .[] | (.number) as \$n | ${row}")" || return 1
 
