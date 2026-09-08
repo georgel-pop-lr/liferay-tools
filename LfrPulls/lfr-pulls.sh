@@ -251,7 +251,7 @@ _lfrPullsStatsMine() {
 		number,title,state,headRefName,createdAt,closedAt)" || return 1
 
 	local -A masterSubjects=()
-	_lfrPullsLoadMasterSubjects "${dir}" "${sinceDate}" masterSubjects
+	_lfrPullsLoadMasterSubjects "${dir}" "${sinceDate}" masterSubjects "${json}"
 
 	local -A sent=() merged=() rejected=()
 	local mon
@@ -334,14 +334,26 @@ _lfrPullsStats() {
 }
 
 # Load the subjects of commits on the master ref (in clone $1, since date $2)
-# into the associative array named $3. A pull merged in when its exact title is
-# one of these subjects; loading them once avoids a full-history scan per title.
+# into the associative array named $3, keeping only those that are the exact
+# title of a pull in the JSON $4. A pull merged in when its title is one of
+# these subjects; loading them once avoids a full-history scan per title.
+#
+# Narrowing to the titles asked about is what makes that cheap, and the ratio is
+# why: the ref carries around 80,000 subjects over a year, while a listing asks
+# about a few hundred titles and matches a few dozen. Handing all 80,000 to bash
+# costs 7.7s in array assignments alone, more than the two GitHub fetches
+# together; letting grep drop the lines that cannot match first costs 0.01s.
 _lfrPullsLoadMasterSubjects() {
 	local -n _subjects="${3}"
-	local s
+	local titles s
+	# An empty pattern line matches every subject, which would load all 80,000
+	# again, so a pull with no title is dropped rather than passed to grep.
+	titles="$(printf '%s' "${4}" | jq -r '.[].title | select(. != "")' | sort -u)"
+	[ -z "${titles}" ] && return 0
 	while IFS= read -r s; do
 		[ -n "${s}" ] && _subjects["${s}"]=1
-	done < <(git -C "${1}" log "${LFR_PULLS_MASTER_REF}" --since="${2}" --format='%s' 2>/dev/null)
+	done < <(git -C "${1}" log "${LFR_PULLS_MASTER_REF}" --since="${2}" --format='%s' 2>/dev/null |
+		grep -Fxf <(printf '%s\n' "${titles}"))
 }
 
 # List your pulls closed in the last <days> (default 7), as PR / SENDER / STATUS
@@ -364,11 +376,13 @@ _lfrPullsWeek() {
 	dir="$(_lfrPullsMasterDir)" || return 1
 	since="$(date -u -d "${days} days ago" +%Y-%m-%dT%H:%M:%SZ)"
 
-	local -A masterSubjects=()
-	_lfrPullsLoadMasterSubjects "${dir}" "$(date -d "${days} days ago -1 month" +%Y-%m-%d)" masterSubjects
-
 	json="$(_lfrPullsMirrorPersonJson "${person}" closed \
 		number,title,headRefName,author,closedAt)" || return 1
+
+	# The pulls come first: their titles are what narrows the subject scan.
+	local -A masterSubjects=()
+	_lfrPullsLoadMasterSubjects "${dir}" "$(date -d "${days} days ago -1 month" +%Y-%m-%d)" \
+		masterSubjects "${json}"
 
 	rows=""
 	while IFS=$'\t' read -r num sender title; do
