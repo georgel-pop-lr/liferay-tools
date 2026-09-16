@@ -43,6 +43,8 @@ lfrTools() {
 		  lfrWorktree           create a git worktree + branch for a ticket,
 		                        wired to its own bundle, offering the IntelliJ
 		                        project at the end
+		  lfrWorktreeRename     rename a worktree, its branch, its bundle, its
+		                        database and IntelliJ's project, all in place
 		  lfrWorktreeRemove     remove a worktree, its branch, its bundle, and
 		                        IntelliJ's project state (--keep-bundle keeps it)
 		  lfrWorktreeIdeaClean  make IntelliJ forget worktree projects that are
@@ -91,7 +93,7 @@ lfrTools() {
 		  lfrReload     re-source lfrTools.sh, so edits to any tool take effect
 		                in this shell (no new terminal needed)
 
-		Every command has a short alias: lfrr, lfrw, lfrwr, lfrs, lfrb, lfrrb,
+		Every command has a short alias: lfrr, lfrw, lfrwn, lfrwr, lfrs, lfrb, lfrrb,
 		lfraa, lfrc, lfrcv, lfrp, lfrgc, lfrgcd, lfrgs, lfrgse, lfrgr, lfrgro,
 		lfrgum, lfrgub, lfrgct, lfrrl. Six expand to an lfrPulls subcommand:
 		lfrpw (week), lfrps (stats), lfrpt (ticket), lfrpf (a team or user's

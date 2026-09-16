@@ -4,8 +4,10 @@ A small set of shell functions for working with Liferay git repos scattered
 across more than one root directory. `lfrRepo` (short alias `lfrr`) jumps between
 clones without typing full paths; `lfrWorktree` (short alias `lfrw`) spins up a
 worktree for a branch (new off a base ref, or an existing one checked out),
-wired to a bundle and database of its own, and `lfrWorktreeRemove` (short alias
-`lfrwr`) takes all three away again, IntelliJ's project state included.
+wired to a bundle and database of its own, `lfrWorktreeRename` (short alias
+`lfrwn`) moves all of that to another branch name when the ticket turns out to
+be a different one, and `lfrWorktreeRemove` (short alias `lfrwr`) takes all
+three away again, IntelliJ's project state included.
 
 Both load via the top-level `lfrTools.sh` aggregator (see the repo's top-level
 README). They are shell functions, so they must be sourced, not executed: a
@@ -16,7 +18,7 @@ script runs in a subshell and its `cd` would not reach your interactive shell.
 | File | Purpose |
 |---|---|
 | `lfr-repo.sh` | Defines the `lfrRepo` switcher and its tab-completion. |
-| `lfr-worktree.sh` | Defines the `lfrWorktree` creator, the `lfrWorktreeRemove` remover, `lfrWorktreeIdeaClean` for IntelliJ leftovers, and `lfrWorktreeIdeaInit` for giving a worktree an IntelliJ project. |
+| `lfr-worktree.sh` | Defines the `lfrWorktree` creator, the `lfrWorktreeRename` renamer, the `lfrWorktreeRemove` remover, `lfrWorktreeIdeaClean` for IntelliJ leftovers, and `lfrWorktreeIdeaInit` for giving a worktree an IntelliJ project. |
 
 The repo list, picker, and per-user config live in the shared module
 `../LfrCommon/lfr-repo-list.sh` (config in `../LfrCommon/repos.local.conf`),
@@ -163,6 +165,101 @@ should not pay those seconds, so the question is asked rather than answered
 either way. Set `LFR_WORKTREE_IDEA=1` to always run it and `0` to never ask,
 which is also what a scripted run needs, since with no terminal the prompt is
 skipped and the command is named instead.
+
+### `lfrWorktreeRename`: rename a worktree
+
+The other way out of a worktree whose name is wrong. A branch that turns out to
+be a different ticket used to cost an `lfrWorktreeRemove` and a fresh
+`lfrWorktree`, and with it the ten minutes of `ant all` that filled the bundle.
+This moves every piece `lfrWorktree` wired under the old name to the new one
+instead, so the build, the deployed modules and the data all stay where they
+are. Run it from the worktree itself or from any other worktree of the repo.
+
+| Invocation | Behavior |
+|---|---|
+| `lfrWorktreeRename <new>` | Rename the worktree you are standing in, taking the old name from the branch it has checked out. |
+| `lfrWorktreeRename <old> <new>` | Rename the worktree that has `<old>` checked out, from anywhere in the repo. |
+| `lfrWorktreeRename <old> <new> --keep-database` | Same, but leave the database named as it is. |
+
+```bash
+lfrWorktreeRename LPD-54321              # from inside liferay-portal-LPD-12345
+lfrWorktreeRename LPD-12345 LPD-54321    # from anywhere in the repo
+```
+
+The old name is the worktree's own, read off its directory rather than off the
+branch, because the two disagree exactly when this is worth running. A branch
+renamed by hand with `git branch -m` leaves the directory, the bundle, the
+per-user properties and the database on the old ticket, so giving the command
+the name the branch already has moves that rest onto it and leaves the branch
+where it is:
+
+```
+lfrWorktreeRename: LPD-105724 is the branch already; moving the rest onto it
+  Worktree : /media/.../repos/liferay-portal-LPD-104838 -> /media/.../repos/liferay-portal-LPD-105724
+  Bundle   : /media/.../bundles/liferay-bundle-LPD-104838 -> /media/.../bundles/liferay-bundle-LPD-105724
+  Database : portal-lpd-104838 -> portal-lpd-105724
+```
+
+Only a worktree where every piece already carries the name is refused as
+nothing to do.
+
+Six things move: the branch (`git branch -m`), the worktree directory (to
+`liferay-portal-<new>`, in the root it already sits in), the bundle directory
+(to `liferay-bundle-<new>`), the `bundles/liferay-bundle-<old>` path inside the
+worktree's per-user `*.${USER}.properties`, the database (renamed with
+`alter database`, so its data comes along), and the project IntelliJ offers on
+its welcome screen. The `jacocoagent.jar` and `destfile` paths in the bundle's
+`tomcat-*/bin/setenv.sh` are repointed too, since the build writes both of them
+absolute. The bundle's other absolute paths are all in `osgi/state`, which
+records where every module resolved from and holds the Elasticsearch sidecar's
+process config as a serialized Java object, so there is nothing to rewrite
+there: the directory is deleted instead and the first boot rebuilds it. On a
+built bundle that is 1.2 GB of cache carrying 180 paths to the old directory,
+and leaving it is what breaks the sidecar, whose `--module-path` and
+`-javaagent` would still name a directory that is not there.
+
+It says what it is about to move and asks once:
+
+```
+lfrWorktreeRename: LPD-12345 -> LPD-54321
+  Worktree : /media/.../repos/liferay-portal-LPD-12345 -> /media/.../repos/liferay-portal-LPD-54321
+  Bundle   : /media/.../bundles/liferay-bundle-LPD-12345 -> /media/.../bundles/liferay-bundle-LPD-54321
+  Database : portal-lpd-12345 -> portal-lpd-54321
+lfrWorktreeRename: rename all of that? [y/n]
+```
+
+It refuses while a Tomcat is running out of that bundle, when another branch,
+the new directory or the new bundle directory already exists, when the old
+branch looks like a `master` branch, and when the directory found is the clone
+itself rather than a worktree of it. The bundle and its database are left where
+they are when the bundle is not this worktree's own: one `lfrShare` pointed it
+at, or one whose directory is named after neither the worktree nor the new
+name. A database that
+cannot be renamed (no `psql`, an unreachable server, or a connection still open
+to it, which PostgreSQL refuses to rename around) leaves the bundle pointing at
+the name it already had, so nothing is left naming a database that is not there.
+When the bundle names a database nothing ever created, the new name is created
+instead, exactly as a fresh worktree's is.
+
+IntelliJ only comes into it when it already lists the project, and then it is
+the same offer `lfrWorktreeRemove` makes, since the IDE writes its options back
+from memory on exit:
+
+```
+lfrWorktreeRename: IntelliJ is running and would write the projects back on exit. Close it now? [y/n]
+```
+
+Answer yes and the old path's state goes (the welcome-screen entry, the trusted
+path, the Open File history, the task state and the caches keyed by its hash)
+and the new path is put at the top of the recent projects. Answer no and the
+rename still happens, with the two commands that finish that half printed:
+`lfrWorktreeIdeaClean`, then `lfrWorktreeIdeaInit <new> --recent`. The renamed
+project is not trusted again for you, so IntelliJ asks about it once when you
+open it.
+
+The remote is left alone: the branch keeps tracking the ref it was pushed to
+under its old name, which is printed at the end, so pushing the new name and
+deleting the old one stay yours to do.
 
 ### `lfrWorktreeRemove`: remove a worktree
 
@@ -336,7 +433,7 @@ schedule. `--recent` runs this step alone, which is how a project you removed fr
 welcome screen comes back without a `--redo` wiping `.idea` and re-copying every `.iml`
 to write one line of XML.
 
-All five commands accept `-h`/`--help`.
+All six commands accept `-h`/`--help`.
 
 ## Configuration
 

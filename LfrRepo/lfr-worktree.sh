@@ -1,5 +1,6 @@
-# lfr-worktree.sh — create and remove Liferay git worktrees (the lfrWorktree,
-# lfrWorktreeRemove, lfrWorktreeIdeaClean and lfrWorktreeIdeaInit commands).
+# lfr-worktree.sh — create, rename and remove Liferay git worktrees (the lfrWorktree,
+# lfrWorktreeRename, lfrWorktreeRemove, lfrWorktreeIdeaClean and lfrWorktreeIdeaInit
+# commands).
 #
 # Worktree root and base ref come from the shared per-user config
 # (LFR_WORKTREE_ROOT, LFR_WORKTREE_BASE), owned by LfrCommon/lfr-repo-list.sh.
@@ -26,35 +27,25 @@
 # project of its own. Set LFR_WORKTREE_IDEA to answer that in advance (1 runs it, 0
 # skips it).
 
-# Create the bundle's database when it is not there yet. Pointing jdbc.default.url at
-# a name does not bring the database into being, so without this the first boot dies
-# with `FATAL: database "portal-<suffix>" does not exist`. $1 is the properties file to
-# read the connection from, $2 the database name.
-#
-# Soft-fails on purpose: no psql, an unreachable server, or a non-PostgreSQL URL must
-# report and move on rather than abort a worktree that is otherwise fine.
-_lfrWorktreeCreateDatabase() {
-	local properties_file="${1}" db_name="${2}"
+# The PostgreSQL connection in $1's jdbc.default.url, as "host<TAB>port<TAB>user<TAB>
+# password". The two database helpers below both need it before they can run a psql of
+# their own, and neither can do anything with another engine, so a URL that is not
+# PostgreSQL returns 1 and each of them says so in its own words.
+_lfrWorktreeConnection() {
+	local properties_file="${1}"
 	local host password port url user
 
 	url="$(sed -nE 's/^[[:space:]]*jdbc\.default\.url=(.*)$/\1/p' "${properties_file}" | head -1)"
 
 	case "${url}" in
 	jdbc:postgresql://*) ;;
-	*)
-		echo "lfrWorktree: ${db_name} is not on PostgreSQL; create it yourself" >&2
-		return 0
-		;;
+	*) return 1 ;;
 	esac
-
-	if ! command -v psql >/dev/null 2>&1; then
-		echo "lfrWorktree: psql not found; create ${db_name} yourself" >&2
-		return 0
-	fi
 
 	host="$(printf '%s' "${url}" | sed -E 's#^jdbc:postgresql://([^:/]+).*#\1#')"
 	port="$(printf '%s' "${url}" | sed -E 's#^jdbc:postgresql://[^:/]+:([0-9]+)/.*#\1#')"
 
+	# The URL names no port, so the sed above matched nothing and echoed it back whole.
 	if [ "${port}" = "${url}" ]; then
 		port=5432
 	fi
@@ -62,10 +53,36 @@ _lfrWorktreeCreateDatabase() {
 	user="$(sed -nE 's/^[[:space:]]*jdbc\.default\.username=(.*)$/\1/p' "${properties_file}" | head -1)"
 	password="$(sed -nE 's/^[[:space:]]*jdbc\.default\.password=(.*)$/\1/p' "${properties_file}" | head -1)"
 
+	printf '%s\t%s\t%s\t%s\n' "${host}" "${port}" "${user}" "${password}"
+}
+
+# Create the bundle's database when it is not there yet. Pointing jdbc.default.url at
+# a name does not bring the database into being, so without this the first boot dies
+# with `FATAL: database "portal-<suffix>" does not exist`. $1 is the properties file to
+# read the connection from, $2 the database name, $3 the calling command, used only to
+# prefix the messages, since lfrWorktreeRename creates one here too.
+#
+# Soft-fails on purpose: no psql, an unreachable server, or a non-PostgreSQL URL must
+# report and move on rather than abort a worktree that is otherwise fine.
+_lfrWorktreeCreateDatabase() {
+	local properties_file="${1}" db_name="${2}"
+	local caller="${3:-lfrWorktree}"
+	local host password port user
+
+	if ! IFS=$'\t' read -r host port user password < <(_lfrWorktreeConnection "${properties_file}"); then
+		echo "${caller}: ${db_name} is not on PostgreSQL; create it yourself" >&2
+		return 0
+	fi
+
+	if ! command -v psql >/dev/null 2>&1; then
+		echo "${caller}: psql not found; create ${db_name} yourself" >&2
+		return 0
+	fi
+
 	if PGPASSWORD="${password}" psql -h "${host}" -p "${port}" -U "${user}" -tAc \
 			"select 1 from pg_database where datname = '${db_name}'" 2>/dev/null |
 			grep -q 1; then
-		echo "lfrWorktree: database ${db_name} already exists" >&2
+		echo "${caller}: database ${db_name} already exists" >&2
 
 		return 0
 	fi
@@ -75,9 +92,9 @@ _lfrWorktreeCreateDatabase() {
 	if PGPASSWORD="${password}" psql -h "${host}" -p "${port}" -U "${user}" -q -c \
 			"create database \"${db_name}\" with encoding 'UTF8' lc_collate 'en_US.UTF-8' lc_ctype 'en_US.UTF-8' template template0" \
 			2>/dev/null; then
-		echo "lfrWorktree: created database ${db_name}" >&2
+		echo "${caller}: created database ${db_name}" >&2
 	else
-		echo "lfrWorktree: could not create database ${db_name}; create it yourself" >&2
+		echo "${caller}: could not create database ${db_name}; create it yourself" >&2
 	fi
 }
 
@@ -1017,8 +1034,510 @@ lfrWorktreeRemove() {
 	fi
 }
 
+# Rename the bundle's database, so its name keeps saying which worktree it belongs to.
+# $1 is the bundle's portal-ext.properties, which carries the connection and still names
+# the old database, $2 the old name and $3 the new one. Returns 0 when the database was
+# renamed, 2 when there was none to rename, and 1 when it could not be done, so the
+# caller repoints jdbc.default.url on 0 and 2 and leaves it on the old name on 1.
+#
+# Soft-fails the way the creation above does, and for the same reason: a database this
+# cannot reach is worth a line rather than a half-renamed worktree. PostgreSQL refuses to
+# rename a database anything is connected to, which is the failure to expect here, so the
+# message names that one.
+_lfrWorktreeRenameDatabase() {
+	local properties_file="${1}" old_db="${2}" new_db="${3}"
+	local host password port user
+
+	if ! IFS=$'\t' read -r host port user password < <(_lfrWorktreeConnection "${properties_file}"); then
+		echo "lfrWorktreeRename: ${old_db} is not on PostgreSQL; rename it yourself" >&2
+
+		return 1
+	fi
+
+	if ! command -v psql >/dev/null 2>&1; then
+		echo "lfrWorktreeRename: psql not found; rename ${old_db} yourself" >&2
+
+		return 1
+	fi
+
+	if ! PGPASSWORD="${password}" psql -h "${host}" -p "${port}" -U "${user}" -tAc \
+			"select 1 from pg_database where datname = '${old_db}'" 2>/dev/null |
+			grep -q 1; then
+		echo "lfrWorktreeRename: there is no ${old_db} database to rename" >&2
+
+		return 2
+	fi
+
+	if PGPASSWORD="${password}" psql -h "${host}" -p "${port}" -U "${user}" -q -c \
+			"alter database \"${old_db}\" rename to \"${new_db}\"" 2>/dev/null; then
+		echo "lfrWorktreeRename: renamed the database ${old_db} to ${new_db}, data and all" >&2
+
+		return 0
+	fi
+
+	echo "lfrWorktreeRename: could not rename ${old_db}, which PostgreSQL refuses while anything is connected to it; left the bundle on ${old_db}" >&2
+
+	return 1
+}
+
+# True while some IntelliJ still offers the project at $1, in either spelling a path is
+# stored under. It is what decides whether a rename has any IntelliJ work to do: a
+# worktree no IDE ever opened has no welcome-screen entry to move, and writing one for it
+# would put a project there that was never wanted.
+_lfrWorktreeIdeaLists() {
+	local dir="${1}"
+	local config_root="${XDG_CONFIG_HOME:-${HOME}/.config}/JetBrains"
+	local -a keys=("${dir}")
+
+	case "${dir}" in
+	"${HOME}"/*) keys+=("\$USER_HOME\$/${dir#"${HOME}"/}") ;;
+	esac
+
+	local key recent
+	for recent in "${config_root}"/*/options/recentProjects.xml; do
+		[ -f "${recent}" ] || continue
+
+		for key in "${keys[@]}"; do
+			grep -qF "<entry key=\"${key}\">" "${recent}" && return 0
+		done
+	done
+
+	return 1
+}
+
+_lfrWorktreeRenameHelp() {
+	cat <<-'EOF'
+		lfrWorktreeRename — rename a worktree, its branch, its bundle and its database.
+
+		Usage:
+		  lfrWorktreeRename <new>            rename the worktree you are standing in
+		  lfrWorktreeRename <old> <new>      rename the worktree that has <old> checked out
+		  lfrWorktreeRename <old> <new> --keep-database   leave the database named as it is
+
+		Everything lfrWorktree wires under one name is moved to another, so a branch
+		that turns out to be the wrong ticket costs a rename instead of a removal and
+		a fresh build: the branch, the worktree directory (liferay-portal-<new>), the
+		bundle directory (liferay-bundle-<new>), the bundle path in the worktree's
+		per-user *.${USER}.properties, the database (portal-<new>, renamed with its
+		data in it), and the project IntelliJ offers on its welcome screen. The build
+		in the bundle is kept as it is, apart from osgi/state, which names the bundle's
+		own absolute path everywhere and is deleted so the first boot rebuilds it.
+
+		The old name is the worktree's own, read off its directory rather than off the
+		branch, so a branch renamed by hand is brought back into line: give it the name
+		the branch already has and the worktree, the bundle, its path in the per-user
+		properties and the database move onto it, the branch itself staying put.
+
+		It says what it is about to move and asks once before moving any of it, and
+		refuses while a Tomcat runs out of that bundle, when another branch, the new
+		directory or the new bundle directory already exists, and when every piece
+		carries the name asked for already, which is the only nothing-to-do there is.
+
+		The bundle and its database are left alone when the bundle is not this
+		worktree's own: one shared by lfrShare, or one whose directory is named after
+		neither the worktree nor the new name.
+
+		IntelliJ only comes into it when it already lists the project, and then you get
+		the same offer to close it lfrWorktreeRemove makes, since it writes its options
+		back from memory on exit. Decline and the rename still happens, with the two
+		commands that finish that half printed.
+
+		Never touched: the remote branch, which keeps the old name until you push the
+		new one yourself, and the database when --keep-database says so.
+	EOF
+}
+
+# Rename what an lfrWorktree created, rather than removing it and building a fresh one:
+# the branch, the worktree, the bundle, the database, and IntelliJ's project. All of it
+# is a move, so nothing that took ten minutes to build is paid for twice.
+#
+# Usage:
+#     lfrWorktreeRename LPD-54321                  # rename the worktree you are in
+#     lfrWorktreeRename LPD-12345 LPD-54321        # rename that worktree
+#     lfrWorktreeRename LPD-12345 LPD-54321 --keep-database
+lfrWorktreeRename() {
+	case "${1-}" in -h | --help) _lfrWorktreeRenameHelp; return 0 ;; esac
+
+	local keep_database=""
+	local -a names=()
+
+	while [ "$#" -gt 0 ]; do
+		case "${1}" in
+		--keep-database)
+			keep_database="--keep-database"
+			;;
+		-*)
+			echo "lfrWorktreeRename: unknown option ${1}" >&2
+			echo "usage: lfrWorktreeRename [<old-branch>] <new-branch> [--keep-database]" >&2
+
+			return 1
+			;;
+		*)
+			names+=("${1}")
+			;;
+		esac
+
+		shift
+	done
+
+	if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+		echo "lfrWorktreeRename: not inside a git repo" >&2
+
+		return 1
+	fi
+
+	local new_branch="" old_branch=""
+
+	case "${#names[@]}" in
+	1)
+		new_branch="${names[0]}"
+
+		# The branch in hand, which is the whole point of the one-argument form: you find
+		# out it is another ticket while standing in its worktree.
+		old_branch="$(git rev-parse --abbrev-ref HEAD)" || return 1
+		;;
+	2)
+		old_branch="${names[0]}"
+		new_branch="${names[1]}"
+		;;
+	*)
+		echo "usage: lfrWorktreeRename [<old-branch>] <new-branch> [--keep-database]" >&2
+
+		return 1
+		;;
+	esac
+
+	# A master-like branch is nobody's ticket, and a detached HEAD has no name to move.
+	case "${old_branch}" in
+	master* | *master)
+		echo "lfrWorktreeRename: refusing to rename the master-like branch ${old_branch}" >&2
+
+		return 1
+		;;
+	HEAD)
+		echo "lfrWorktreeRename: HEAD is detached here; name the branch to rename" >&2
+
+		return 1
+		;;
+	esac
+
+	# Asked of git rather than guessed at, and asked here rather than found out by the
+	# branch rename, which runs once the directories have already moved.
+	if ! git check-ref-format "refs/heads/${new_branch}"; then
+		echo "lfrWorktreeRename: ${new_branch} is not a name git will take for a branch" >&2
+
+		return 1
+	fi
+
+	# Its own name is not a collision. A branch renamed by hand leaves the worktree, the
+	# bundle and the database on the old ticket, and moving those onto it is the repair
+	# this command is for, with the branch itself left where it already is.
+	if [ "${old_branch}" != "${new_branch}" ] &&
+		git show-ref --verify --quiet "refs/heads/${new_branch}"; then
+		echo "lfrWorktreeRename: branch ${new_branch} already exists" >&2
+
+		return 1
+	fi
+
+	# Found by the branch it has checked out rather than by its path, the way
+	# lfrWorktreeRemove finds it. A worktree named by hand is found too, and comes out of
+	# this named liferay-portal-<new>, which is the name lfrWorktree gives one and the
+	# only name lfrWorktreeIdeaClean recognizes later.
+	local dir
+	dir="$(git worktree list --porcelain |
+		awk -v branch="refs/heads/${old_branch}" '
+			/^worktree /  { path = substr($0, 10) }
+			$0 == "branch " branch { print path; exit }
+		')"
+
+	if [ -z "${dir}" ]; then
+		echo "lfrWorktreeRename: no worktree has ${old_branch} checked out" >&2
+
+		return 1
+	fi
+
+	# The first entry git lists is the main working tree, which is the clone itself: git
+	# cannot move it, and its name is not a branch's to take.
+	local main_root
+	main_root="$(git worktree list --porcelain |
+		awk '/^worktree / { print substr($0, 10); exit }')"
+
+	if [ "${dir}" = "${main_root}" ]; then
+		echo "lfrWorktreeRename: ${dir} is the clone itself, not a worktree of it" >&2
+
+		return 1
+	fi
+
+	local new_suffix="${new_branch//\//-}"
+
+	# The old name is read off the worktree directory rather than off the branch, because
+	# the two disagree exactly when this is worth running: the directory, the bundle and
+	# the database are named after whatever the worktree was created as, which a branch
+	# renamed by hand leaves behind. A directory named by hand has no such name to read,
+	# so there the branch is still it.
+	local dir_name="${dir##*/}"
+	local old_suffix="${old_branch//\//-}"
+
+	case "${dir_name}" in
+	liferay-portal-?*) old_suffix="${dir_name#liferay-portal-}" ;;
+	esac
+
+	local new_dir="${dir%/*}/liferay-portal-${new_suffix}"
+
+	if [ "${new_dir}" != "${dir}" ] && [ -e "${new_dir}" ]; then
+		echo "lfrWorktreeRename: ${new_dir} already exists" >&2
+
+		return 1
+	fi
+
+	# Resolved while the worktree still stands where its properties say it does.
+	local bundle_dir
+	bundle_dir="$(cd "${dir}" && _lfrRepoBundleDir)" || bundle_dir=""
+
+	# A bundle only moves when it is this worktree's own. One lfrShare pointed it at is
+	# somebody else's, and one whose name does not follow the old branch was chosen by
+	# hand, so renaming either would take a bundle this worktree does not own with it.
+	local new_bundle_dir=""
+
+	if [ -n "${bundle_dir}" ] && [ -d "${bundle_dir}" ]; then
+		if [ -f "${dir}/app.server.${USER}.lfrshare-bak.properties" ]; then
+			echo "lfrWorktreeRename: ${bundle_dir} is shared with this worktree by lfrShare; leaving the bundle alone" >&2
+		elif [ "${bundle_dir##*/}" != "liferay-bundle-${old_suffix}" ] &&
+			[ "${bundle_dir##*/}" != "liferay-bundle-${new_suffix}" ]; then
+			echo "lfrWorktreeRename: ${bundle_dir} is not named after ${old_suffix}; leaving the bundle alone" >&2
+		else
+			new_bundle_dir="${bundle_dir%/*}/liferay-bundle-${new_suffix}"
+
+			if [ "${new_bundle_dir}" != "${bundle_dir}" ] && [ -e "${new_bundle_dir}" ]; then
+				echo "lfrWorktreeRename: ${new_bundle_dir} already exists" >&2
+
+				return 1
+			fi
+		fi
+	fi
+
+	# Read even when --keep-database says it stays, so the plan below names the database
+	# being kept rather than reporting none.
+	local db="" new_db=""
+
+	if [ -n "${new_bundle_dir}" ]; then
+		db="$(_lfrWorktreeBundleDatabase "${bundle_dir}/portal-ext.properties")"
+
+		if [ -z "${keep_database}" ]; then
+			# Lowercased, the way the creation names one.
+			new_db="portal-${new_suffix,,}"
+		fi
+	fi
+
+	# Refused here rather than on the branch alone, since a branch that already carries
+	# the name is not a worktree that does. Only once every piece carries it is there
+	# nothing left to move.
+	if [ "${old_branch}" = "${new_branch}" ] && [ "${new_dir}" = "${dir}" ] &&
+		{ [ -z "${new_bundle_dir}" ] || [ "${new_bundle_dir}" = "${bundle_dir}" ]; } &&
+		{ [ -z "${new_db}" ] || [ "${new_db}" = "${db}" ]; }; then
+		echo "lfrWorktreeRename: ${new_branch} is already its name, and its worktree, bundle and database carry it too" >&2
+
+		return 1
+	fi
+
+	# Extract each running catalina.base and compare, rather than grepping ps for the
+	# bundle path: a pattern holding the path matches this very grep in the ps output.
+	# The escaped dot is what keeps the extracting grep from matching itself too.
+	local catalina_base
+	while IFS= read -r catalina_base; do
+		case "${catalina_base}" in
+		"${bundle_dir}" | "${bundle_dir}"/*)
+			echo "lfrWorktreeRename: a Tomcat is running out of ${bundle_dir}; stop it first" >&2
+
+			return 1
+			;;
+		esac
+	done < <([ -n "${bundle_dir}" ] && ps -eo args |
+		grep --only-matching -- "-Dcatalina\.base=[^ ]*" | sed "s/-Dcatalina.base=//")
+
+	local bundle_move="kept where it is" db_move="kept as it is" dir_move="kept where it is"
+
+	if [ "${new_dir}" != "${dir}" ]; then
+		dir_move="${new_dir}"
+	fi
+
+	if [ -n "${new_bundle_dir}" ] && [ "${new_bundle_dir}" != "${bundle_dir}" ]; then
+		bundle_move="${new_bundle_dir}"
+	fi
+
+	if [ -n "${new_db}" ] && [ "${new_db}" != "${db}" ]; then
+		db_move="${new_db}"
+	fi
+
+	if [ "${old_branch}" = "${new_branch}" ]; then
+		echo "lfrWorktreeRename: ${new_branch} is the branch already; moving the rest onto it" >&2
+	else
+		echo "lfrWorktreeRename: ${old_branch} -> ${new_branch}" >&2
+	fi
+
+	echo "  Worktree : ${dir} -> ${dir_move}" >&2
+	echo "  Bundle   : ${bundle_dir:-none} -> ${bundle_move}" >&2
+	echo "  Database : ${db:-none} -> ${db_move}" >&2
+
+	# Four moves in four places, so the plan above is put to you before any of them
+	# happens. A run with no terminal goes ahead, since there is nobody to ask.
+	if [ -t 0 ] && ! _lfrConfirm "lfrWorktreeRename: rename all of that?"; then
+		echo "lfrWorktreeRename: nothing was renamed" >&2
+
+		return 1
+	fi
+
+	# Asked before anything moves, the way lfrWorktreeRemove asks, because the answer can
+	# be "let me close it myself first" and being asked that once the directory has moved
+	# out from under the IDE is no use.
+	local idea_clear="" idea_listed=""
+
+	if [ "${new_dir}" != "${dir}" ] && _lfrWorktreeIdeaLists "${dir}"; then
+		idea_listed=yes
+
+		if _lfrWorktreeIdeaCloseOrRefuse lfrWorktreeRename; then
+			idea_clear=yes
+		fi
+	fi
+
+	if [ "${new_dir}" != "${dir}" ]; then
+		if ! git worktree move "${dir}" "${new_dir}"; then
+			echo "lfrWorktreeRename: could not move the worktree; nothing was renamed" >&2
+
+			return 1
+		fi
+
+		echo "lfrWorktreeRename: moved the worktree to ${new_dir}" >&2
+
+		# The shell is left standing in a directory that is not there any more when it
+		# was inside the worktree, so follow the move. An empty * still matches, so the
+		# worktree itself is covered as well as anything under it.
+		case "${PWD}/" in
+		"${dir}"/*) cd "${new_dir}" || return 1 ;;
+		esac
+	fi
+
+	if [ "${old_branch}" != "${new_branch}" ]; then
+		# Through the clone, since the shell may be standing in the directory that just
+		# moved and git would have nothing to resolve from there.
+		if ! git -C "${main_root}" branch -m "${old_branch}" "${new_branch}"; then
+			echo "lfrWorktreeRename: the worktree moved but its branch is still ${old_branch}; rename it with git branch -m" >&2
+
+			return 1
+		fi
+
+		echo "lfrWorktreeRename: renamed the branch to ${new_branch}" >&2
+	fi
+
+	if [ -n "${new_bundle_dir}" ] && [ "${new_bundle_dir}" != "${bundle_dir}" ]; then
+		if ! mv "${bundle_dir}" "${new_bundle_dir}"; then
+			echo "lfrWorktreeRename: could not move ${bundle_dir}; left the worktree pointing at it" >&2
+
+			return 1
+		fi
+
+		echo "lfrWorktreeRename: moved the bundle to ${new_bundle_dir}" >&2
+
+		# The same rewrite the creation does when it copies these in, so the worktree
+		# keeps deploying into its own bundle under the bundle's new name.
+		local f name
+		local -a repointed=()
+
+		for f in "${new_dir}"/*."${USER}".properties; do
+			[ -f "${f}" ] || continue
+
+			# Only the ones naming a bundle, so the message says what really moved: a
+			# per-user file with no bundle path in it (build.${USER}.properties) is
+			# untouched by this and has no business in that list.
+			grep -q "bundles/liferay-bundle-" "${f}" || continue
+
+			name="${f##*/}"
+
+			sed -i -E "s#(bundles/liferay-bundle-)[^/[:space:]]+#\1${new_suffix}#g" "${f}" ||
+				return 1
+
+			repointed+=("${name}")
+		done
+
+		if [ "${#repointed[@]}" -gt 0 ]; then
+			echo "lfrWorktreeRename: repointed the per-user config (bundle -> liferay-bundle-${new_suffix}): ${repointed[*]}" >&2
+		fi
+
+		# setenv.sh is the one file in a built bundle whose absolute paths can be
+		# rewritten: the build writes the JaCoCo agent's jar and its destfile into it, one
+		# under the bundle and one under the worktree, so both spellings move with the
+		# rename. The rest of them are in osgi/state, which goes below.
+		local setenv
+		for setenv in "${new_bundle_dir}"/tomcat-*/bin/setenv.sh; do
+			[ -f "${setenv}" ] || continue
+
+			grep -qF "${bundle_dir}" "${setenv}" || grep -qF "${dir}" "${setenv}" || continue
+
+			sed -i -e "s#${bundle_dir//./\\.}#${new_bundle_dir}#g" \
+				-e "s#${dir//./\\.}#${new_dir}#g" "${setenv}" || return 1
+
+			echo "lfrWorktreeRename: repointed the paths in ${setenv}" >&2
+		done
+
+		# The one part of a built bundle that cannot be repointed. osgi/state records the
+		# absolute location of every module the framework resolved, and the Elasticsearch
+		# sidecar's persisted process config with it, whose --module-path, -javaagent and
+		# java.io.tmpdir all name the old directory; that one is a serialized Java object
+		# rather than text, so there is nothing to sed. It is a cache the framework
+		# rebuilds, so it goes instead, at the cost of a slower first boot. Measured on a
+		# built bundle: 1.2G of it, holding 180 paths to the directory that just moved.
+		local state_dir="${new_bundle_dir}/osgi/state"
+
+		if [ -d "${state_dir}" ]; then
+			local state_size
+			state_size="$(du -sh "${state_dir}" | cut -f1)"
+
+			rm -rf "${state_dir}" &&
+				echo "lfrWorktreeRename: deleted the OSGi state ${state_dir} (${state_size}), which named the old bundle; the first boot rebuilds it" >&2
+		fi
+	fi
+
+	if [ -n "${db}" ] && [ -n "${new_db}" ] && [ "${db}" != "${new_db}" ]; then
+		local rc=0
+
+		_lfrWorktreeRenameDatabase "${new_bundle_dir}/portal-ext.properties" "${db}" "${new_db}" ||
+			rc="$?"
+
+		if [ "${rc}" != 1 ]; then
+			sed -i -E "s#^([[:space:]]*jdbc\.default\.url=jdbc:[a-z]+://[^/]+/)[^?[:space:]]+#\1${new_db}#" \
+				"${new_bundle_dir}/portal-ext.properties" || return 1
+
+			echo "lfrWorktreeRename: pointed the bundle at ${new_db}" >&2
+		fi
+
+		# Nothing to rename, so the bundle now names a database that has to be brought
+		# into being, exactly as a fresh worktree's is.
+		if [ "${rc}" = 2 ]; then
+			_lfrWorktreeCreateDatabase "${new_bundle_dir}/portal-ext.properties" "${new_db}" \
+				lfrWorktreeRename
+		fi
+	fi
+
+	if [ -n "${idea_clear}" ]; then
+		_lfrWorktreeRemoveIdeaProject "${dir}" lfrWorktreeRename
+		_lfrWorktreeIdeaRecentProject "${new_dir}" lfrWorktreeRename
+	elif [ -n "${idea_listed}" ]; then
+		echo "lfrWorktreeRename: IntelliJ still lists ${dir}; once it is closed run lfrWorktreeIdeaClean, then lfrWorktreeIdeaInit ${new_branch} --recent" >&2
+	fi
+
+	# The remote is left alone: pushing the new name, and deleting the old one, are not
+	# moves this command can take back for you.
+	local upstream
+	upstream="$(git -C "${new_dir}" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null)"
+
+	if [ -n "${upstream}" ] && [ "${old_branch}" != "${new_branch}" ]; then
+		echo "lfrWorktreeRename: ${new_branch} still tracks ${upstream}; push it under its new name yourself" >&2
+	fi
+}
+
 # Short aliases.
 lfrw() { lfrWorktree "$@"; }
+lfrwn() { lfrWorktreeRename "$@"; }
 lfrwr() { lfrWorktreeRemove "$@"; }
 
 # Write the source project's run configurations into $2/.idea/runConfigurations, one
@@ -1167,8 +1686,12 @@ _lfrWorktreeIdeaRunConfigurations() {
 # underneath it would be gone before the restart that would show it. Opening the project
 # once is the only registration a live IDE keeps, and whether to pay that project's first
 # indexing pass now is yours to decide.
+#
+# $2 is the calling command, used only to prefix the messages, since lfrWorktreeRename
+# registers a project here too.
 _lfrWorktreeIdeaRecentProject() {
 	local dir="${1}"
+	local caller="${2:-lfrWorktreeIdeaInit}"
 	local config_root="${XDG_CONFIG_HOME:-${HOME}/.config}/JetBrains"
 	local config_dir idea key now pid recent tmp trailing_newline
 
@@ -1186,8 +1709,8 @@ _lfrWorktreeIdeaRecentProject() {
 
 		[ -x "${idea}" ] || idea="idea"
 
-		echo "lfrWorktreeIdeaInit: IntelliJ is running and would write its recent projects back over the entry, so open the project once instead, which needs no File > Open:" >&2
-		echo "lfrWorktreeIdeaInit:   ${idea} ${dir}" >&2
+		echo "${caller}: IntelliJ is running and would write its recent projects back over the entry, so open the project once instead, which needs no File > Open:" >&2
+		echo "${caller}:   ${idea} ${dir}" >&2
 
 		return 0
 	fi
@@ -1200,7 +1723,7 @@ _lfrWorktreeIdeaRecentProject() {
 		config_dir="${recent%/options/recentProjects.xml}"
 
 		if grep -qF "<entry key=\"${key}\">" "${recent}"; then
-			echo "lfrWorktreeIdeaInit: ${config_dir##*/} already lists the project ${dir}" >&2
+			echo "${caller}: ${config_dir##*/} already lists the project ${dir}" >&2
 
 			continue
 		fi
@@ -1238,7 +1761,7 @@ _lfrWorktreeIdeaRecentProject() {
 		' "${recent}" >"${tmp}" || {
 			rm -f "${tmp}"
 
-			echo "lfrWorktreeIdeaInit: ${config_dir##*/} holds no recent projects map; left it alone" >&2
+			echo "${caller}: ${config_dir##*/} holds no recent projects map; left it alone" >&2
 
 			continue
 		}
@@ -1249,7 +1772,7 @@ _lfrWorktreeIdeaRecentProject() {
 			! python3 -c 'import sys, xml.dom.minidom; xml.dom.minidom.parse(sys.argv[1])' "${tmp}" >/dev/null 2>&1; then
 			rm -f "${tmp}"
 
-			echo "lfrWorktreeIdeaInit: the edited ${recent} would not parse; left it alone" >&2
+			echo "${caller}: the edited ${recent} would not parse; left it alone" >&2
 
 			return 1
 		fi
@@ -1268,7 +1791,7 @@ _lfrWorktreeIdeaRecentProject() {
 			truncate -s -1 "${recent}"
 		fi
 
-		echo "lfrWorktreeIdeaInit: ${config_dir##*/} now lists the project ${dir}" >&2
+		echo "${caller}: ${config_dir##*/} now lists the project ${dir}" >&2
 	done
 }
 
