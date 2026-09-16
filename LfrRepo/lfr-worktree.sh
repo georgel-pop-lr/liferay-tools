@@ -930,7 +930,7 @@ lfrWorktreeRemove() {
 
 	# A master-like branch is never a disposable worktree; refuse before anything else.
 	case "${branch}" in
-	master* | *master)
+	master* | */master)
 		echo "lfrWorktreeRemove: refusing to remove the master-like branch ${branch}" >&2
 		return 1
 		;;
