@@ -1552,6 +1552,7 @@ lfrWorktreeRename() {
 
 	if [ -n "${idea_clear}" ]; then
 		_lfrWorktreeIdeaTrustProject "${dir}" "${new_dir}" lfrWorktreeRename
+		_lfrWorktreeIdeaMoveTaskState "${dir}" "${new_dir}" lfrWorktreeRename
 		_lfrWorktreeRemoveIdeaProject "${dir}" lfrWorktreeRename
 		_lfrWorktreeIdeaRecentProject "${new_dir}" lfrWorktreeRename
 	elif [ -n "${idea_listed}" ]; then
@@ -1846,6 +1847,59 @@ _lfrWorktreeIdeaTrustProject() {
 		fi
 
 		echo "${caller}: ${config_dir##*/} carried the trust answer ${value} over to ${new_dir}" >&2
+	done
+}
+
+# Carry IntelliJ's task-management state from the project at $1 over to the one at $2, in
+# every IDE version. $3 is the calling command, used only to prefix the messages.
+#
+# The plugin keys that state by the project's directory name, so a rename leaves it under
+# the old name and _lfrWorktreeRemoveIdeaProject then deletes it, which is right for a
+# removal and is the rename throwing away state it was asked to carry. This runs before
+# that removal, which is what keeps the removal's one job intact: with the files moved,
+# its rm finds nothing under the old name and deletes nothing.
+#
+# Nothing is ever overwritten, and the reason is the key. It is the directory's name
+# alone, never its path, so a worktree of the same name under another repo root shares
+# the file, and a zip already sitting under the new name can belong to a project that is
+# still there. It can also simply have outlived a worktree that went away by some route
+# other than lfrWorktreeRemove. Either way the answer is the same: leave it, and leave
+# the old one for the removal to delete, since overwriting is the one outcome that loses
+# work.
+_lfrWorktreeIdeaMoveTaskState() {
+	local dir="${1}" new_dir="${2}" caller="${3}"
+	local config_root="${XDG_CONFIG_HOME:-${HOME}/.config}/JetBrains"
+
+	local slug="${dir##*/}"
+	slug="${slug//[^[:alnum:]]/_}"
+
+	local new_slug="${new_dir##*/}"
+	new_slug="${new_slug//[^[:alnum:]]/_}"
+
+	# Both names share one key, so there is nothing to move and the state is already
+	# where it belongs.
+	[ "${slug}" != "${new_slug}" ] || return 0
+
+	local config_dir kind tasks
+	for tasks in "${config_root}"/*/tasks; do
+		[ -d "${tasks}" ] || continue
+
+		config_dir="${tasks%/tasks}"
+
+		# The two halves are moved one at a time rather than as a pair: the plugin writes
+		# each when it has something to write, so one can be there without the other.
+		for kind in tasks contexts; do
+			[ -f "${tasks}/${slug}.${kind}.zip" ] || continue
+
+			if [ -e "${tasks}/${new_slug}.${kind}.zip" ]; then
+				echo "${caller}: ${config_dir##*/} already holds ${new_slug}.${kind}.zip, which is not this project's to overwrite; left both alone" >&2
+
+				continue
+			fi
+
+			mv "${tasks}/${slug}.${kind}.zip" "${tasks}/${new_slug}.${kind}.zip" &&
+				echo "${caller}: ${config_dir##*/} carried ${slug}.${kind}.zip over to ${new_slug}.${kind}.zip" >&2
+		done
 	done
 }
 

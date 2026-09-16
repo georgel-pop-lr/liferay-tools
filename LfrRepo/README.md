@@ -267,16 +267,25 @@ lfrWorktreeRename: IntelliJ is running and would write the projects back on exit
 ```
 
 Answer yes and the old path's state goes (the welcome-screen entry, the Open
-File history, the task state and the caches keyed by its hash), the new path is
-put at the top of the recent projects, and the answer you gave IntelliJ's trust
-prompt is carried over to it, since a rename changes neither the files nor their
-authors. A `value="false"` is carried across as a false: the rename preserves
-the answer, it does not turn a no into a yes.
+File history and the caches keyed by its hash), the new path is put at the top
+of the recent projects, and two things move over to it rather than being
+dropped:
+
+- the answer you gave IntelliJ's trust prompt, since a rename changes neither
+  the files nor their authors. A `value="false"` is carried across as a false:
+  the rename preserves the answer, it does not turn a no into a yes.
+- the task state, which a removal is right to delete and a rename is not.
+
+Neither is ever written over something already under the new name. A task zip
+there can belong to a project that is still around, because that state is keyed
+by a directory's name alone, so it is left as it is and the old one is deleted
+with the rest.
 
 Answer no and the rename still happens, with the two commands that finish that
 half printed: `lfrWorktreeIdeaClean`, then `lfrWorktreeIdeaInit <new> --recent`.
-That route drops the trust answer along with the rest of the old path's state,
-so IntelliJ asks about the renamed project once when you open it.
+That route drops the trust answer and the task state along with the rest of the
+old path's state, so IntelliJ asks about the renamed project once when you open
+it.
 
 The remote is left alone: the branch keeps tracking the ref it was pushed to
 under its old name, which is printed at the end, so pushing the new name and
@@ -336,7 +345,9 @@ the one rule, along with whatever a later IDE version adds.
 
 The task state is the exception, keyed by the project's directory name with every
 non-alphanumeric turned into an underscore, so it is addressable by neither the
-path nor the hash.
+path nor the hash. The name alone is the whole key, so the two same-named
+projects above share one file, which is why `lfrWorktreeRename` moves that state
+but never writes over a copy already sitting under the new name.
 
 A running IntelliJ is the one thing that stops either command, because it rewrites
 its options from memory on exit and would put the entry straight back. Both now offer
