@@ -189,7 +189,8 @@ lfrWorktreeRename LPD-12345 LPD-54321    # from anywhere in the repo
 The old name is the worktree's own, read off its directory rather than off the
 branch, because the two disagree exactly when this is worth running. A branch
 renamed by hand with `git branch -m` leaves the directory, the bundle, the
-per-user properties and the database on the old ticket, so giving the command
+per-user and generated Gradle properties and the database on the old ticket, so
+giving the command
 the name the branch already has moves that rest onto it and leaves the branch
 where it is:
 
@@ -203,17 +204,33 @@ lfrWorktreeRename: LPD-105724 is the branch already; moving the rest onto it
 Only a worktree where every piece already carries the name is refused as
 nothing to do.
 
-Six things move: the branch (`git branch -m`), the worktree directory (to
+Seven things move: the branch (`git branch -m`), the worktree directory (to
 `liferay-portal-<new>`, in the root it already sits in), the bundle directory
 (to `liferay-bundle-<new>`), the `bundles/liferay-bundle-<old>` path inside the
-worktree's per-user `*.${USER}.properties`, the database (renamed with
+worktree's per-user `*.${USER}.properties`, the same path in the worktree's
+generated `.gradle/gradle.properties`, the database (renamed with
 `alter database`, so its data comes along), and the project IntelliJ offers on
 its welcome screen. The `jacocoagent.jar` and `destfile` paths in the bundle's
 `tomcat-*/bin/setenv.sh` are repointed too, since the build writes both of them
-absolute. The bundle's other absolute paths are all in `osgi/state`, which
-records where every module resolved from and holds the Elasticsearch sidecar's
-process config as a serialized Java object, so there is nothing to rewrite
-there: the directory is deleted instead and the first boot rebuilds it. On a
+absolute.
+
+`.gradle/gradle.properties` is the one that has to move or the rename is worse
+than useless. `ant` writes it with every path expanded absolute, `liferay.home`
+and the `app.server.*.dir` for all four containers among them, and it is what
+every Gradle `deploy` reads. Nothing regenerates it on its own, so a rename that
+left it behind would send the next deploy into the old bundle path, where it
+recreates the directory that just moved and drops the jars there. The deploy
+still exits 0 and prints nothing about it, which is how eight modules once
+deployed into a bundle that had not existed for an hour. A real one carries 60
+spellings of the worktree directory and 54 of the bundle, every one of them
+built on the worktree's own path, so both the directory and the bundle name are
+rewritten. `ant update-gradle-properties` regenerates the file if you ever need
+to repair one by hand.
+
+The bundle's other absolute paths are all in `osgi/state`, which records where
+every module resolved from and holds the Elasticsearch sidecar's process config
+as a serialized Java object, so there is nothing to rewrite there: the directory
+is deleted instead and the first boot rebuilds it. On a
 built bundle that is 1.2 GB of cache carrying 180 paths to the old directory,
 and leaving it is what breaks the sidecar, whose `--module-path` and
 `-javaagent` would still name a directory that is not there.

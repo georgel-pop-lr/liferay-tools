@@ -1118,7 +1118,8 @@ _lfrWorktreeRenameHelp() {
 		that turns out to be the wrong ticket costs a rename instead of a removal and
 		a fresh build: the branch, the worktree directory (liferay-portal-<new>), the
 		bundle directory (liferay-bundle-<new>), the bundle path in the worktree's
-		per-user *.${USER}.properties, the database (portal-<new>, renamed with its
+		per-user *.${USER}.properties and in the generated .gradle/gradle.properties
+		every Gradle deploy reads, the database (portal-<new>, renamed with its
 		data in it), and the project IntelliJ offers on its welcome screen. The build
 		in the bundle is kept as it is, apart from osgi/state, which names the bundle's
 		own absolute path everywhere and is deleted so the first boot rebuilds it.
@@ -1126,7 +1127,8 @@ _lfrWorktreeRenameHelp() {
 		The old name is the worktree's own, read off its directory rather than off the
 		branch, so a branch renamed by hand is brought back into line: give it the name
 		the branch already has and the worktree, the bundle, its path in the per-user
-		properties and the database move onto it, the branch itself staying put.
+		and generated Gradle properties and the database move onto it, the branch
+		itself staying put.
 
 		It says what it is about to move and asks once before moving any of it, and
 		refuses while a Tomcat runs out of that bundle, when another branch, the new
@@ -1495,6 +1497,36 @@ lfrWorktreeRename() {
 			rm -rf "${state_dir}" &&
 				echo "lfrWorktreeRename: deleted the OSGi state ${state_dir} (${state_size}), which named the old bundle; the first boot rebuilds it" >&2
 		fi
+	fi
+
+	# .gradle/gradle.properties is the generated config every Gradle deploy reads, written
+	# by ant's update-gradle-properties target with every path expanded absolute:
+	# liferay.home, the app.server.*.dir for all four containers, and the JaCoCo agent's
+	# jar and destfile. Nothing regenerates it on its own, since Gradle only reads it, so
+	# a rename that leaves it behind sends the next deploy into the old bundle path, where
+	# it recreates the directory that just moved and drops the jars there instead of into
+	# the bundle this worktree now owns, and the deploy still exits 0. Measured on a
+	# renamed worktree: 60 spellings of the worktree directory and 54 of the bundle, every
+	# one of them built on the worktree's own path, which is why both rewrites are needed.
+	local gradle_properties="${new_dir}/.gradle/gradle.properties"
+	local bundle_moved=""
+
+	if [ -n "${new_bundle_dir}" ] && [ "${new_bundle_dir}" != "${bundle_dir}" ]; then
+		bundle_moved=yes
+	fi
+
+	if [ -f "${gradle_properties}" ] &&
+		{ [ "${new_dir}" != "${dir}" ] || [ -n "${bundle_moved}" ]; }; then
+		sed -i -E "s#${dir//./\\.}#${new_dir}#g" "${gradle_properties}" || return 1
+
+		# The bundle's name on top of that, and only when the bundle moved: one left alone
+		# keeps its own name whatever the worktree is called now.
+		if [ -n "${bundle_moved}" ]; then
+			sed -i -E "s#(bundles/liferay-bundle-)[^/[:space:]]+#\1${new_suffix}#g" \
+				"${gradle_properties}" || return 1
+		fi
+
+		echo "lfrWorktreeRename: repointed the generated Gradle config ${gradle_properties}" >&2
 	fi
 
 	if [ -n "${db}" ] && [ -n "${new_db}" ] && [ "${db}" != "${new_db}" ]; then
