@@ -1,4 +1,4 @@
-# lfr-share.sh — point a worktree at a shared (already-built) bundle.
+# lfr-share.sh - point a worktree at a shared (already-built) bundle.
 #
 # Writes app.server.parent.dir into <repo>/app.server.$USER.properties so the
 # repo uses a chosen bundle. Switching needs no build: a built bundle is
@@ -233,7 +233,7 @@ lfrShare() {
 		;;
 	help | --help | -h)
 		cat <<-'EOF'
-			lfrShare — point a repo/worktree at an already-built bundle, so it runs
+			lfrShare - point a repo/worktree at an already-built bundle, so it runs
 			that bundle without rebuilding (deploy only your changed modules).
 
 			Usage:

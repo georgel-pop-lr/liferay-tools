@@ -1,4 +1,4 @@
-# lfr-worktree.sh — create, rename and remove Liferay git worktrees (the lfrWorktree,
+# lfr-worktree.sh - create, rename and remove Liferay git worktrees (the lfrWorktree,
 # lfrWorktreeRename, lfrWorktreeRemove, lfrWorktreeIdeaClean and lfrWorktreeIdeaInit
 # commands).
 #
@@ -278,7 +278,7 @@ lfrWorktree() {
 	case "${1-}" in
 	-h | --help)
 		cat <<-'EOF'
-			lfrWorktree — create a git worktree for a branch, wired to its own bundle.
+			lfrWorktree - create a git worktree for a branch, wired to its own bundle.
 
 			Usage:
 			  lfrWorktree <branch>          if <branch> exists, check it out; else create
@@ -792,7 +792,7 @@ _lfrWorktreeIdeaOrphans() {
 
 _lfrWorktreeIdeaCleanHelp() {
 	cat <<-'EOF'
-		lfrWorktreeIdeaClean — make IntelliJ forget worktree projects that are gone.
+		lfrWorktreeIdeaClean - make IntelliJ forget worktree projects that are gone.
 
 		Usage:
 		  lfrWorktreeIdeaClean      for every liferay-portal-<branch> project in
@@ -851,7 +851,7 @@ lfrWorktreeIdeaClean() {
 # Undo an lfrWorktree: remove the worktree, delete its branch, and delete the bundle
 # dir that came with it, and make IntelliJ forget the project. Deliberately conservative,
 # since all of it is destructive: it refuses while that bundle's Tomcat runs, keeps the
-# bundle when --keep-bundle asks for it, and never touches the database — it prints the
+# bundle when --keep-bundle asks for it, and never touches the database - it prints the
 # name so you can drop it yourself.
 #
 # Usage:
@@ -863,7 +863,7 @@ lfrWorktreeRemove() {
 	case "${1-}" in
 	-h | --help)
 		cat <<-'EOF'
-			lfrWorktreeRemove — remove a worktree, its branch, and its bundle.
+			lfrWorktreeRemove - remove a worktree, its branch, and its bundle.
 
 			Usage:
 			  lfrWorktreeRemove <branch>                remove the worktree, delete
@@ -1107,7 +1107,7 @@ _lfrWorktreeIdeaLists() {
 
 _lfrWorktreeRenameHelp() {
 	cat <<-'EOF'
-		lfrWorktreeRename — rename a worktree, its branch, its bundle and its database.
+		lfrWorktreeRename - rename a worktree, its branch, its bundle and its database.
 
 		Usage:
 		  lfrWorktreeRename <new>            rename the worktree you are standing in
@@ -1829,7 +1829,7 @@ _lfrWorktreeIdeaRecentProject() {
 
 _lfrWorktreeIdeaInitHelp() {
 	cat <<-'EOF'
-		lfrWorktreeIdeaInit — give a worktree the IntelliJ project a clone already has.
+		lfrWorktreeIdeaInit - give a worktree the IntelliJ project a clone already has.
 
 		Usage:
 		  lfrWorktreeIdeaInit                       the worktree you are in

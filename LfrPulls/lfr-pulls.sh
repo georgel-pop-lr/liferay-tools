@@ -1,4 +1,4 @@
-# lfr-pulls.sh — list open pull requests along the road a change travels.
+# lfr-pulls.sh - list open pull requests along the road a change travels.
 #
 # Source this from your shell rc (normally via the root lfrTools.sh). It defines:
 #     lfrPulls        the four queues a pull of yours passes through
@@ -44,7 +44,7 @@ _LFR_PULLS_TEAMS="liferay-ac liferay-appsec liferay-bpm liferay-commerce liferay
 
 _lfrPullsHelp() {
 	cat <<-'EOF'
-		lfrPulls — list open pull requests along the road a change travels.
+		lfrPulls - list open pull requests along the road a change travels.
 
 		Usage (each command has a short form and an alias):
 		  lfrPulls                         the four queues, in order: yours on the

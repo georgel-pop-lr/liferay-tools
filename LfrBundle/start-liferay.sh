@@ -2,7 +2,7 @@
 #
 # Starts a Liferay bundle, picking free ports if the defaults are taken.
 # Modifies tomcat/conf/server.xml in place (with backup) so the bundle's
-# stored config matches the running ports — useful for parallel bundles.
+# stored config matches the running ports - useful for parallel bundles.
 #
 # Usage:
 #   start-liferay.sh                              # opens the bundle picker (fzf)
@@ -84,7 +84,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Machine-specific defaults. Override them in start-liferay.conf next to this
-# script (gitignored — copy start-liferay.conf.example to get started).
+# script (gitignored - copy start-liferay.conf.example to get started).
 BUNDLES_DIRS=(
 	"$HOME/liferay/bundles"
 )
@@ -101,7 +101,7 @@ if [ -f "$CONF_FILE" ]; then
 	# shellcheck source=start-liferay.conf.example
 	. "$CONF_FILE"
 else
-	echo "Note: no $CONF_FILE — using built-in defaults." >&2
+	echo "Note: no $CONF_FILE - using built-in defaults." >&2
 	echo "      Copy start-liferay.conf.example to start-liferay.conf to configure bundle and JDK locations." >&2
 fi
 
@@ -294,7 +294,7 @@ if [ "$PICK" = "1" ]; then
 				BUNDLE="$choice"
 				break
 			fi
-			echo "Invalid selection — try again." >&2
+			echo "Invalid selection - try again." >&2
 		done
 
 		echo
@@ -308,7 +308,7 @@ if [ ! -d "$BUNDLE" ]; then
 	exit 1
 fi
 
-# Liferay bundles have either tomcat/ or tomcat-9.x.y/ — collect every match
+# Liferay bundles have either tomcat/ or tomcat-9.x.y/ - collect every match
 # so we can prompt if a bundle has more than one (e.g. after an upgrade left
 # the old tomcat-9.0.50 next to the new tomcat-9.0.60).
 TOMCAT_CANDIDATES=()
@@ -343,7 +343,7 @@ else
 			TOMCAT_DIR="${TOMCAT_CANDIDATES[$((REPLY - 1))]}"
 			break
 		fi
-		echo "Invalid selection — try again." >&2
+		echo "Invalid selection - try again." >&2
 	done
 	echo
 fi
@@ -496,18 +496,18 @@ _recover_via_docker() {
 	done
 
 	if [ "$ASSUME_YES" = "1" ]; then
-		echo "  (--yes given — not prompting. Re-run with --db-docker <container> to target one.)" >&2
+		echo "  (--yes given - not prompting. Re-run with --db-docker <container> to target one.)" >&2
 		_db_reset_failed
 	fi
 
 	local choice
 	read -r -p "  Reset the DB inside which container? (number, or Enter to abort): " choice
 	if [ -z "$choice" ]; then
-		echo "  Aborted — nothing was deleted." >&2
+		echo "  Aborted - nothing was deleted." >&2
 		exit 1
 	fi
 	if ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt "${#names[@]}" ]; then
-		echo "  Invalid selection — aborting." >&2
+		echo "  Invalid selection - aborting." >&2
 		exit 1
 	fi
 
@@ -521,7 +521,7 @@ reset_database() {
 	local portal_ext="$1"
 
 	if [ ! -f "$portal_ext" ]; then
-		echo "  No portal-ext.properties at $portal_ext — skipping database reset." >&2
+		echo "  No portal-ext.properties at $portal_ext - skipping database reset." >&2
 		return 0
 	fi
 
@@ -531,7 +531,7 @@ reset_database() {
 	pass="$(sed -nE 's/^[[:space:]]*jdbc\.default\.password=//p' "$portal_ext" | tail -n 1)"
 
 	if [ -z "$url" ]; then
-		echo "  No jdbc.default.url in portal-ext.properties — skipping (data/ removal clears embedded DBs)." >&2
+		echo "  No jdbc.default.url in portal-ext.properties - skipping (data/ removal clears embedded DBs)." >&2
 		return 0
 	fi
 
@@ -547,7 +547,7 @@ reset_database() {
 		hostport="${base#jdbc:*://}"
 		port=3306
 	else
-		echo "  Unrecognized JDBC URL ($base) — skipping DB reset; data/ removal handles embedded DBs." >&2
+		echo "  Unrecognized JDBC URL ($base) - skipping DB reset; data/ removal handles embedded DBs." >&2
 		return 0
 	fi
 
@@ -668,15 +668,15 @@ fi
 # 2025.q1+) carry elasticsearch8. On an ES8 bundle the ES7 PID is only read by
 # a one-shot migration upgrade step, so injecting the ES7 file there
 # re-triggers that migration on every start and races the search components
-# into "Elasticsearch connection not found" errors during startup — remove a
+# into "Elasticsearch connection not found" errors during startup - remove a
 # previously injected ES7 copy and install the ES8 file instead.
 ELASTIC_SOURCE_ES7="$SCRIPT_DIR/com.liferay.portal.search.elasticsearch7.configuration.ElasticsearchConfiguration.config"
 ELASTIC_SOURCE_ES8="$SCRIPT_DIR/com.liferay.portal.search.elasticsearch8.configuration.ElasticsearchConfiguration.config"
 
 # osgi/ lives directly under the Liferay home (the tomcat's parent), whichever
 # bundle layout we resolved. Neither osgi/ nor its configs/ subdir is guaranteed
-# to exist yet on a fresh bundle — the portal only creates configs/ on first
-# boot — so create the path ourselves. Skipping it would silently drop the
+# to exist yet on a fresh bundle - the portal only creates configs/ on first
+# boot - so create the path ourselves. Skipping it would silently drop the
 # connector configs (Arquillian, DataGuard, Elasticsearch) and let the
 # fixed-port clash they guard against fire.
 LIFERAY_HOME="$(dirname "$TOMCAT_DIR")"
@@ -704,7 +704,7 @@ if [ -n "$ELASTIC_TARGET_DIR" ]; then
 		ELASTIC_SOURCE="$ELASTIC_SOURCE_ES8"
 
 		# A leftover ES7 config on an ES8 bundle causes the startup noise
-		# described above — drop it before installing the right one.
+		# described above - drop it before installing the right one.
 		ELASTIC_STALE="$ELASTIC_TARGET_DIR/$(basename "$ELASTIC_SOURCE_ES7")"
 		if [ -f "$ELASTIC_STALE" ]; then
 			rm "$ELASTIC_STALE"
@@ -764,7 +764,7 @@ choose_port() {
 
 HTTP_PORT=$(choose_port "$HTTP_DEFAULT")
 # Tomcat's shutdown port (<Server port="...">) is bound only at the very END of
-# startup, in StandardServer.await() — unlike the connectors, which bind
+# startup, in StandardServer.await() - unlike the connectors, which bind
 # immediately and stay bound. So when a sibling bundle is mid-boot, is_port_free
 # reports 8005 as free even though that sibling will claim it seconds later, once
 # both reach await(); the loser then dies with "Failed to create server shutdown
@@ -825,10 +825,10 @@ export LIFERAY_MODULE_PERIOD_FRAMEWORK_PERIOD_PROPERTIES_PERIOD_OSGI_PERIOD_CONS
 # without the osgi/test scan the connector never starts anyway. It does start: once
 # --test has installed it, the connector stays installed in the framework state
 # cache (osgi/state) and comes up on later boots even though its dir is no longer
-# scanned — File Install only uninstalls a bundle whose FILE went away, and the jar
+# scanned - File Install only uninstalls a bundle whose FILE went away, and the jar
 # is still sitting in osgi/test. With the config deleted, DS then activated it with
 # no properties, i.e. on the hardcoded ArquillianConnector._DEFAULT_PORT (32763),
-# which the 8080 bundle already holds — and its catch does System.exit(-10), so a
+# which the 8080 bundle already holds - and its catch does System.exit(-10), so a
 # forgotten --test killed the whole JVM on boot. Keeping the port pinned makes that
 # leftover connector bind harmlessly on this bundle's own port.
 #
@@ -870,7 +870,7 @@ seed_test_connector "DataGuard" \
 [ -n "$ARQUILLIAN_PORT$DATA_GUARD_PORT" ] && echo
 
 # The embedded Elasticsearch sidecar binds a transport port (default 9300) late
-# in OSGi startup, so — like the shutdown/arquillian ports — scanning it
+# in OSGi startup, so - like the shutdown/arquillian ports - scanning it
 # independently races a still-booting sibling. Seed from the HTTP offset only
 # when we have an osgi/configs dir to write the value into.
 ES_TRANSPORT_PORT=""
@@ -910,16 +910,16 @@ if [ -n "$GLOWROOT_PORT" ]; then
 			echo
 		else
 			rm -f "$_gr_tmp"
-			echo "Could not rewrite $GLOWROOT_ADMIN — leaving Glowroot port unchanged." >&2
+			echo "Could not rewrite $GLOWROOT_ADMIN - leaving Glowroot port unchanged." >&2
 		fi
 	else
-		echo "glowroot/admin.json present but jq is not installed — leaving Glowroot port unchanged." >&2
+		echo "glowroot/admin.json present but jq is not installed - leaving Glowroot port unchanged." >&2
 	fi
 fi
 
 # The portal's own inet socket address defaults to :8080; on a non-default HTTP
 # port that mismatch breaks features that resolve the instance's web address.
-# Pin it to the resolved port every run — always, not just when non-default —
+# Pin it to the resolved port every run - always, not just when non-default -
 # so a run that lands back on 8080 overwrites a stale value from an earlier run.
 set_portal_ext_prop() {
 	local file=$1 key=$2 value=$3
@@ -935,14 +935,14 @@ set_portal_ext_prop "$LIFERAY_HOME/portal-ext.properties" \
 echo "portal.instance.inet.socket.address set to localhost:$HTTP_PORT"
 echo
 
-# Test mode (--test) needs the test-support bundles — com.liferay.portal.test
+# Test mode (--test) needs the test-support bundles - com.liferay.portal.test
 # (exports com.liferay.portal.kernel.test), the *.test.util jars, and the
-# Arquillian/DataGuard connectors — on the module path so a testIntegration run
+# Arquillian/DataGuard connectors - on the module path so a testIntegration run
 # against this live bundle can resolve their imports. They ship in osgi/test,
 # which a launcher boot never scans. Rather than copy ~70 jars into osgi/modules
 # (stale copies, and a duplicate of anything already there fails DS with
-# "Component descriptor entry not found"), scan osgi/test in place — exactly like a
-# managed testIntegration boot — by adding it to module.framework.auto.deploy.dirs.
+# "Component descriptor entry not found"), scan osgi/test in place - exactly like a
+# managed testIntegration boot - by adding it to module.framework.auto.deploy.dirs.
 # Without --test we remove the override so a plain boot stays lean.
 portal_ext="$LIFERAY_HOME/portal-ext.properties"
 if [ "$TEST" = 1 ]; then
@@ -1148,7 +1148,7 @@ CURRENT_AJP=$(read_port '<Connector[^>]*port="[0-9]+"[^>]*protocol="AJP/1\.3"')
 CURRENT_AJP_ALT=$(read_port 'protocol="AJP/1\.3"[^>]*port="[0-9]+"')
 CURRENT_HTTPS=$(grep -oE 'redirectPort="[0-9]+"' "$SERVER_XML" | head -n 1 | grep -oE '[0-9]+' || true)
 
-# AJP block in Liferay can have port="" before or after protocol="" — try both.
+# AJP block in Liferay can have port="" before or after protocol="" - try both.
 if [ -z "$CURRENT_AJP" ] && [ -n "$CURRENT_AJP_ALT" ]; then
 	CURRENT_AJP="$CURRENT_AJP_ALT"
 fi
@@ -1164,12 +1164,12 @@ if $needs_update; then
 	cp "$SERVER_XML" "$BACKUP"
 	echo "server.xml backed up to $BACKUP"
 
-	# Shutdown port — <Server port="..."
+	# Shutdown port - <Server port="..."
 	if [ -n "$CURRENT_SHUTDOWN" ]; then
 		sed -i -E "s|(<Server[[:space:]]+port=\")[0-9]+(\")|\1$SHUTDOWN_PORT\2|" "$SERVER_XML"
 	fi
 
-	# HTTP port — Connector with protocol="HTTP/1.1"
+	# HTTP port - Connector with protocol="HTTP/1.1"
 	if [ -n "$CURRENT_HTTP" ]; then
 		# Replace every Connector that declares protocol="HTTP/1.1"
 		# in case there are two (Liferay sometimes ships a commented-out
@@ -1177,12 +1177,12 @@ if $needs_update; then
 		sed -i -E "/protocol=\"HTTP\/1\.1\"/{s|port=\"$CURRENT_HTTP\"|port=\"$HTTP_PORT\"|}" "$SERVER_XML"
 	fi
 
-	# AJP port — Connector with protocol="AJP/1.3"
+	# AJP port - Connector with protocol="AJP/1.3"
 	if [ -n "$CURRENT_AJP" ]; then
 		sed -i -E "/protocol=\"AJP\/1\.3\"/{s|port=\"$CURRENT_AJP\"|port=\"$AJP_PORT\"|}" "$SERVER_XML"
 	fi
 
-	# HTTPS / redirectPort — referenced from HTTP and AJP connectors.
+	# HTTPS / redirectPort - referenced from HTTP and AJP connectors.
 	if [ -n "$CURRENT_HTTPS" ]; then
 		sed -i -E "s|redirectPort=\"$CURRENT_HTTPS\"|redirectPort=\"$HTTPS_PORT\"|g" "$SERVER_XML"
 		# Also patch the HTTPS connector(s) themselves if their port differed.
@@ -1192,7 +1192,7 @@ if $needs_update; then
 	echo "server.xml updated."
 fi
 
-# Decide which JDK to run with — explicit --jdk wins, then JAVA_HOME from the
+# Decide which JDK to run with - explicit --jdk wins, then JAVA_HOME from the
 # shell, then a heuristic based on the bundle name.
 choose_jdk() {
 	local bundle_name
@@ -1217,7 +1217,7 @@ choose_jdk() {
 			echo "$JDK_17"
 			;;
 		*)
-			# Unknown — fall back to JDK 17 (best for current LTS).
+			# Unknown - fall back to JDK 17 (best for current LTS).
 			echo "$JDK_17"
 			;;
 	esac
@@ -1266,7 +1266,7 @@ if [ "$DEBUG" = "1" ]; then
 	#
 	# Export the full JPDA_OPTS rather than JPDA_ADDRESS: catalina.sh sources
 	# the bundle's setenv.sh after our environment, and Liferay setenv.sh
-	# files hardcode JPDA_ADDRESS="8000" — which would override our chosen
+	# files hardcode JPDA_ADDRESS="8000" - which would override our chosen
 	# port and collide with an already-running bundle. catalina.sh leaves a
 	# non-empty JPDA_OPTS untouched.
 	export JPDA_OPTS="-agentlib:jdwp=transport=dt_socket,address=*:$JPDA_PORT,server=y,suspend=$JPDA_SUSPEND"

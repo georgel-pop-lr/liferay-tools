@@ -1,4 +1,4 @@
-# lfr-git.sh — Liferay git helpers: safe clean, fork sync, master update, rebase.
+# lfr-git.sh - Liferay git helpers: safe clean, fork sync, master update, rebase.
 #
 # Source this from your shell rc (normally via the root lfrTools.sh). It defines:
 #     lfrGitCleanDry   preview what `git clean` would remove (safe, no deletion)
@@ -32,7 +32,7 @@ _lfrGitCleanExcludes=(
 # Shared help for the lfrGit* commands.
 _lfrGitHelp() {
 	cat <<-'EOF'
-		lfrGit* — Liferay git helpers.
+		lfrGit* - Liferay git helpers.
 
 		Commands:
 		  lfrGitClean          delete untracked and ignored files, but keep IDE

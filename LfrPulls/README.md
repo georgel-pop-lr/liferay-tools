@@ -10,7 +10,7 @@ had rejected per month.
 
 ## Commands
 
-- `lfrPulls` (alias `lfrp`) — the three queues, in the order a change travels
+- `lfrPulls` (alias `lfrp`) - the three queues, in the order a change travels
   them: the mirror (yours), your team's fork (`LFR_PULLS_TEAM`), and your own
   fork. The team fork is the one carrying everybody, so it is narrowed to the
   pulls you wrote, the ones `ON YOU` speaks for, and the ones with no workflow
@@ -24,10 +24,10 @@ pull of theirs needs from you. The one exception is `lfrPulls [mine|all]`, where
 a bare word already names a fork: `lfrPulls <login>` lists that person's fork,
 and their mirror pulls come from `lfrPulls stats <login>`.
 
-- `lfrPulls [mine|all]` — the mirror alone. Yours by default (`mine`); `all`
+- `lfrPulls [mine|all]` - the mirror alone. Yours by default (`mine`); `all`
   shows every open PR. `-m`/`--mine` and `-a`/`--all` work too.
 - `lfrPulls <team|user|owner/repo> [mine|all|<login>]` (also
-  `lfrPulls team ...`, alias `lfrpf`) — the open pulls on one fork, all of them
+  `lfrPulls team ...`, alias `lfrpf`) - the open pulls on one fork, all of them
   by default. A second word keeps one person's: `mine`, or any login, so
   `lfrPulls page-management achaparro` asks the same question about somebody
   else. A first word carrying a slash is a whole `owner/repo` and is used as it
@@ -39,18 +39,18 @@ and their mirror pulls come from `lfrPulls stats <login>`.
   (`frontend`), or by any unique part of it (`experience`, `page`, `headless`);
   a name matching no team is used as a GitHub username, so `lfrPulls achaparro`
   lists their fork.
-- `lfrPulls ee [mine|all|<login>]` (alias `lfrpe`) — backports on
+- `lfrPulls ee [mine|all|<login>]` (alias `lfrpe`) - backports on
   `liferay/liferay-portal-ee`, yours by default since everybody's backports share
   that one repo.
-- `lfrPulls teams` (alias `lfrpteams`) — the product teams with each one's open
+- `lfrPulls teams` (alias `lfrpteams`) - the product teams with each one's open
   pull count.
-- `lfrPulls ticket <TICKET>` (`t`, alias `lfrpt`) — every pull ever opened for one
+- `lfrPulls ticket <TICKET>` (`t`, alias `lfrpt`) - every pull ever opened for one
   ticket, oldest first, then what that ticket has landed on the master ref. A bare
   ticket is the same thing: `lfrPulls LPD-12345`.
-- `lfrPulls week [days] [<login>]` (`w` or `recent`, alias `lfrpw`) — your pulls
+- `lfrPulls week [days] [<login>]` (`w` or `recent`, alias `lfrpw`) - your pulls
   closed in the last `days` (default 7, reading at most 200 closed PRs), as
   PR / SENDER / STATUS / TITLE, where STATUS is `MERGED` or `REJECTED`.
-- `lfrPulls stats [mine|all|<login>] [months]` (`s` or `st`, alias `lfrps`) —
+- `lfrPulls stats [mine|all|<login>] [months]` (`s` or `st`, alias `lfrps`) -
   per-month counts of PRs sent, merged, and rejected, with a TOTAL row. Yours by
   default, or one person's when you name a login;
   months default to 12 (reading at most your last 500 PRs).
@@ -202,10 +202,10 @@ both halves of the output agree.
 
 `stats mine` counts the PRs you sent, forwarded or opened directly, by month:
 
-- `SENT` — PRs you created that month.
-- `MERGED` — of those closed that month, the ones whose exact title is a commit
+- `SENT` - PRs you created that month.
+- `MERGED` - of those closed that month, the ones whose exact title is a commit
   on the master ref (Brian merged that pull in).
-- `REJECTED` — closed that month whose title is NOT on master (just closed).
+- `REJECTED` - closed that month whose title is NOT on master (just closed).
 
 The `TOTAL` row sums each column. A row's `SENT` need not equal
 `MERGED + REJECTED`: some PRs are still open, and merged/rejected are counted by
@@ -238,10 +238,10 @@ work matches well; older months may read low on `MERGED`.
 
 A PR on the mirror is either forwarded by the CI bot or opened directly:
 
-- **Forwarded** — the author is the bot, and the head branch encodes the source
+- **Forwarded** - the author is the bot, and the head branch encodes the source
   fork owner as `...-sender-<owner>`. `lfrPulls` matches that owner against your
   fork (`LFR_PULLS_MINE_ORG`, your own login by default).
-- **Direct** — the author is you, with a plain head branch. `lfrPulls` matches
+- **Direct** - the author is you, with a plain head branch. `lfrPulls` matches
   the author against your login (`LFR_PULLS_USER`).
 
 Every command counts a PR as yours if either matches: the four listings, `week`,
@@ -271,25 +271,25 @@ and edit it:
 cp lfr-pulls.local.conf.example lfr-pulls.local.conf
 ```
 
-- `LFR_PULLS_REPO` — repo to list (default `brianchandotcom/liferay-portal`).
-- `LFR_PULLS_MINE_ORG` — the owner in the `-sender-<owner>` of a pull you
+- `LFR_PULLS_REPO` - repo to list (default `brianchandotcom/liferay-portal`).
+- `LFR_PULLS_MINE_ORG` - the owner in the `-sender-<owner>` of a pull you
   forwarded, so your own fork. Defaults to your login, which is what a personal
   fork carries; set it only if you forward from an org fork.
-- `LFR_PULLS_TEAM` — your team's account, whose fork is the second section
+- `LFR_PULLS_TEAM` - your team's account, whose fork is the second section
   (defaults to `LFR_GIT_FORK_ORG` from LfrGit, which already holds it).
-- `LFR_PULLS_USER` — your GitHub login (defaults to the `gh`-authed user).
-- `LFR_PULLS_FORK_REPO` — the repo an owner with no slash means (defaults to
+- `LFR_PULLS_USER` - your GitHub login (defaults to the `gh`-authed user).
+- `LFR_PULLS_FORK_REPO` - the repo an owner with no slash means (defaults to
   `liferay-portal`, the name part of `LFR_PULLS_REPO`). Pass `owner/repo` to a
   listing to override it once.
-- `LFR_PULLS_EE_REPO` — where backports go (default
+- `LFR_PULLS_EE_REPO` - where backports go (default
   `liferay/liferay-portal-ee`), the fourth section and `lfrPulls ee`.
-- `LFR_PULLS_MASTER_REPO` — local clone to grep for merges (defaults to the
+- `LFR_PULLS_MASTER_REPO` - local clone to grep for merges (defaults to the
   current repo). Set it so `stats mine`, `week`, and `ticket`'s landing footer
   work from any directory (`stats all` needs no clone).
-- `LFR_PULLS_LINKS` — `on`, `off`, or `auto` (default). Each `#number` is a
+- `LFR_PULLS_LINKS` - `on`, `off`, or `auto` (default). Each `#number` is a
   clickable link to its pull, carried in an OSC 8 escape so the visible text
   stays `#12345` and no column grows. On a terminal by default, plain whenever
   the output is piped or redirected; `on` forces it through a pipe, `off`
   disables it. Click or ctrl-click the number.
-- `LFR_PULLS_MASTER_REF` — master ref to grep (default `brian/master`), used by
+- `LFR_PULLS_MASTER_REF` - master ref to grep (default `brian/master`), used by
   the same three.

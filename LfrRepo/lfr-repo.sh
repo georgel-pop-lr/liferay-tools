@@ -1,4 +1,4 @@
-# lfr-repo.sh — jump between Liferay repos (the lfrRepo command).
+# lfr-repo.sh - jump between Liferay repos (the lfrRepo command).
 #
 # The repo list, picker, and per-user config live in the shared module
 # LfrCommon/lfr-repo-list.sh (loaded via the root lfrTools.sh).
@@ -12,7 +12,7 @@ lfrRepo() {
 	case "${1-}" in
 	-h | --help)
 		cat <<-'EOF'
-			lfrRepo — jump (cd) to a Liferay repo.
+			lfrRepo - jump (cd) to a Liferay repo.
 
 			Usage:
 			  lfrRepo          open a picker over every repo under your roots

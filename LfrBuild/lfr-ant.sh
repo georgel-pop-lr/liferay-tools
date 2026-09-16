@@ -1,4 +1,4 @@
-# lfr-ant.sh — guarded `ant all` (the lfrAntAll command).
+# lfr-ant.sh - guarded `ant all` (the lfrAntAll command).
 #
 # Loaded via the root lfrTools.sh. Defines lfrAntAll (short alias lfraa): run
 # `ant all` in the current repo, with three guards:
@@ -56,7 +56,7 @@ lfrAntAll() {
 	case "${1-}" in
 	-h | --help)
 		cat <<-'EOF'
-			lfrAntAll — run `ant all` in this repo, with safety guards.
+			lfrAntAll - run `ant all` in this repo, with safety guards.
 
 			Refuses when:
 			  - this repo's Liferay server is running (a full build can corrupt it),

@@ -1,4 +1,4 @@
-# lfr.sh — single entry point for every Liferay tool under this folder.
+# lfr.sh - single entry point for every Liferay tool under this folder.
 #
 # Source this one file from your shell rc. It loads every lfr-*.sh tool from
 # each tool subfolder (LfrRepo, LfrCache, ...), defining their functions
@@ -22,7 +22,7 @@ done
 
 unset _lfr_root _lfr_script
 
-# lfrReload — pick up edits to any lfr-*.sh in the shell you are already in, so
+# lfrReload - pick up edits to any lfr-*.sh in the shell you are already in, so
 # changing a tool does not cost a new terminal or an `exec bash` (which would
 # throw away the shell's state). Re-sourcing redefines every function, so a
 # function you DELETED from a file stays defined until the shell restarts.
@@ -33,7 +33,7 @@ lfrReload() {
 
 lfrrl() { lfrReload; }
 
-# lfrTools — explain the tool commands loaded by this entry point.
+# lfrTools - explain the tool commands loaded by this entry point.
 lfrTools() {
 	cat <<-'EOF'
 		Liferay helper commands. Run any with -h (or --help) for details.

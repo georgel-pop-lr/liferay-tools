@@ -2,7 +2,7 @@
 #
 # Copy this file to start-liferay.conf (same directory as the script) and
 # adjust the paths. The file is sourced as a bash script, so any bash syntax
-# works. start-liferay.conf is gitignored — your local paths stay out of the
+# works. start-liferay.conf is gitignored - your local paths stay out of the
 # repository.
 
 # Directories that contain Liferay bundles. --pick scans all of them; missing

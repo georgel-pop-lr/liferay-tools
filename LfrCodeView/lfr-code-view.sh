@@ -1,4 +1,4 @@
-# lfr-code-view.sh — read the code of a change without copying hashes around.
+# lfr-code-view.sh - read the code of a change without copying hashes around.
 #
 # Source this from your shell rc (normally via the root lfrTools.sh). It defines:
 #     lfrCodeView   pick a commit (or your local changes) from a picker and diff it
@@ -15,7 +15,7 @@
 
 _lfrCodeViewHelp() {
 	cat <<-'EOF'
-		lfrCodeView — view the code of a change from a picker (short alias lfrcv).
+		lfrCodeView - view the code of a change from a picker (short alias lfrcv).
 
 		Usage:
 		  lfrCodeView               the current branch: local changes + commits

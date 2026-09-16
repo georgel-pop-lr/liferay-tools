@@ -1,4 +1,4 @@
-# lfr-bundle-list.sh — shared bundle discovery for the Liferay tools.
+# lfr-bundle-list.sh - shared bundle discovery for the Liferay tools.
 #
 # Loaded via the root lfrTools.sh. Owns LFR_BUNDLES_DIRS, _lfrBundleEntries and
 # _lfrBundleRepoBranches, reused by lfrShare (its bundle picker) and lfrBundle

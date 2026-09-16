@@ -1,4 +1,4 @@
-# lfr-cache.sh — share one Gradle build cache across Liferay repos/worktrees.
+# lfr-cache.sh - share one Gradle build cache across Liferay repos/worktrees.
 #
 # Liferay's build runs Gradle with a per-repo Gradle home (<repo>/.gradle) and
 # forces caching on, so by default each repo caches to its own
@@ -189,7 +189,7 @@ EOF
 		;;
 	help | h)
 		cat <<-'EOF'
-			lfrCache — share ONE Gradle build cache across repos/worktrees, so a
+			lfrCache - share ONE Gradle build cache across repos/worktrees, so a
 			build in one reuses the artifacts another already built.
 
 			Usage:

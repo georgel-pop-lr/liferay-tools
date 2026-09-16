@@ -1,4 +1,4 @@
-# lfr-repo-list.sh — shared repo discovery and picker for the Liferay tools.
+# lfr-repo-list.sh - shared repo discovery and picker for the Liferay tools.
 #
 # Loaded via the root lfrTools.sh. Owns the per-user repo config and the two
 # helpers reused by lfrRepo, lfrWorktree, and lfrCache:

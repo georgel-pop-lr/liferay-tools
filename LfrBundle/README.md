@@ -13,7 +13,7 @@ one without manually editing `server.xml` or hunting for a free port.
 | `lfr-bundle.sh` | Defines `lfrBundle` (alias `lfrb`): toggles a bundle (start if stopped, stop if running) via a picker or by name, plus `status`, `stop-all`, `cd` (jump to a bundle without starting it), and `upgrade` (run its database upgrade tool). `lfrRunBundle` / `lfrrb` remain as back-compat aliases. |
 | `com.liferay.portal.search.elasticsearch7.configuration.ElasticsearchConfiguration.config` | Embedded-Elasticsearch configuration for ES7-era bundles. Regenerated into the bundle's `osgi/configs/` directory on every run (with a per-instance transport port), so search works out of the box without an external Elasticsearch server. |
 | `com.liferay.portal.search.elasticsearch8.configuration.ElasticsearchConfiguration.config` | Same, for ES8-era bundles. The launcher picks the right one based on the bundle's Elasticsearch sidecar version. |
-| `start-liferay.conf` | Machine-specific config (bundle roots and JDK paths). Gitignored — yours alone. |
+| `start-liferay.conf` | Machine-specific config (bundle roots and JDK paths). Gitignored - yours alone. |
 
 The config files are referenced relative to the script, so as long as they sit
 together you can move the folder freely.
@@ -42,8 +42,8 @@ together you can move the folder freely.
    source /path/to/liferay-tools/lfrTools.sh
    ```
 
-4. (Only needed for `--clean`) Install a database client on the host — `psql`
-   for PostgreSQL or `mysql` for MySQL/MariaDB — so the launcher can drop and
+4. (Only needed for `--clean`) Install a database client on the host - `psql`
+   for PostgreSQL or `mysql` for MySQL/MariaDB - so the launcher can drop and
    recreate the database. `docker` is optional and only used as a fallback when
    the database runs inside a container. `jq` is optional too, used only to
    remap Glowroot's web port when the bundle ships `glowroot/admin.json`.
@@ -51,7 +51,7 @@ together you can move the folder freely.
 ## Configuration
 
 Machine-specific paths live in `start-liferay.conf`, next to the script. It is
-**gitignored**, so your local paths never enter the repository — copy the
+**gitignored**, so your local paths never enter the repository - copy the
 tracked `start-liferay.conf.example` to create it. The file is sourced as a
 bash script, so any bash syntax works; when it is missing the launcher falls
 back to built-in defaults and prints a hint.
@@ -62,7 +62,7 @@ back to built-in defaults and prints a hint.
 | `JDK_8` / `JDK_11` / `JDK_17` | JDK roots by major version. The launcher picks one from the bundle name (see [JDK selection](#jdk-selection-older-bundles-need-older-jdks)); leave a version empty if you never run that family. |
 | `JDK_21` | JDK root usable via `--jdk`/`JAVA_HOME` only; the name-based detection never selects it. |
 | `JPDA_SUSPEND` | Set to `y` to make `--debug` wait for the debugger before starting (same as `--suspend`). |
-| `BUNDLE_DEFAULT` | Optional. A fallback bundle path — largely vestigial now that a bare invocation opens the picker; leave it empty. |
+| `BUNDLE_DEFAULT` | Optional. A fallback bundle path - largely vestigial now that a bare invocation opens the picker; leave it empty. |
 
 Example:
 
@@ -123,7 +123,7 @@ Pass the bundle path as the first argument:
 ```
 
 The path can point at either the bundle root (`liferay-dxp-tomcat-...`) or
-its inner `liferay-dxp/` directory — the script auto-detects the Tomcat
+its inner `liferay-dxp/` directory - the script auto-detects the Tomcat
 folder regardless. Both of the following are equivalent:
 
 ```bash
@@ -145,7 +145,7 @@ lfrBundle <name> -d
 ```
 
 JPDA listens on port `8000` by default. If `8000` is already taken, the
-script bumps to the next free port — same behaviour as the other ports — and
+script bumps to the next free port - same behaviour as the other ports - and
 prints the resolved value:
 
 ```
@@ -341,7 +341,7 @@ The test-support bundles (`com.liferay.portal.test`, which exports
 DataGuard connectors) all ship in `osgi/test`, which a normal launcher boot never
 scans, so on a bundle that has never had `--test` none of them start. With `--test`
 the launcher adds `osgi/test` to `module.framework.auto.deploy.dirs` (via
-`portal-ext.properties`) so the whole set is scanned **in place** — exactly what a
+`portal-ext.properties`) so the whole set is scanned **in place** - exactly what a
 managed `testIntegration` boot does. Each connector's `.config` is seeded with a
 **per-instance port derived from the HTTP offset**, on every launch, with or without
 `--test`:
@@ -416,8 +416,8 @@ bundle. With no interactive stdin the prompt answers `n` by itself. Pass
 
 | Flag | What it does |
 |---|---|
-| `--clean` / `-c` | **Full wipe** — resets the database and deletes all runtime state. Use for a fresh install. |
-| `--clean-cache` / `-cc` | **Caches only** — clears the OSGi state and work/temp, keeps everything else. Use when modules or JSPs are stale but you want to keep your data. |
+| `--clean` / `-c` | **Full wipe** - resets the database and deletes all runtime state. Use for a fresh install. |
+| `--clean-cache` / `-cc` | **Caches only** - clears the OSGi state and work/temp, keeps everything else. Use when modules or JSPs are stale but you want to keep your data. |
 
 When both are given, `--clean` wins.
 
@@ -431,7 +431,7 @@ lfrBundle <name> -c -y      # skip the confirmation prompt
 After confirmation it:
 
 - **resets the database** read from the bundle's `portal-ext.properties`
-  (`jdbc.default.url` / `username` / `password`) — drops and recreates it, for
+  (`jdbc.default.url` / `username` / `password`) - drops and recreates it, for
   PostgreSQL and MySQL/MariaDB; and
 - **deletes** `data`, `work`, `elasticsearch`, `logs`, `osgi/state`, and the
   Tomcat `logs` / `work` / `temp` directories.
@@ -449,7 +449,7 @@ lfrBundle <name> -cc
 The light version: it removes only `osgi/state`, `work`, and the Tomcat
 `work` / `temp` directories, so the next boot rebuilds the module cache and
 recompiles JSPs. It **keeps** `data`, `logs`, the search index, and the
-database — no database connection is touched.
+database - no database connection is touched.
 
 **Docker databases.** A containerized database that publishes its port to the
 host is reset through the normal path. If the database is only reachable inside
@@ -523,13 +523,13 @@ redirected, it just `exec`s Tomcat.)
    (seeded from the HTTP offset) bound to loopback, so parallel bundles don't
    fight over the Elasticsearch ports. Picks the ES7 or ES8 PID to match the
    module the bundle ships.
-3. **Resolves the service ports** — HTTP `8080`, shutdown `8005`, AJP `8009`,
+3. **Resolves the service ports** - HTTP `8080`, shutdown `8005`, AJP `8009`,
    HTTPS `8443`, the OSGi console `11311`, the Elasticsearch transport port
    `9301`, and Glowroot `4000` when the bundle ships it (plus JPDA `8000` in
-   debug mode) — using `ss`, `lsof` or `netstat`. Picks the next free port if a
+   debug mode) - using `ss`, `lsof` or `netstat`. Picks the next free port if a
    default is busy, avoiding self-collisions. The shutdown and ES ports bind late
    and can take the JVM down on a clash, so their candidates are seeded from the
-   HTTP offset (deterministic) rather than scanned — this is what lets two bundles
+   HTTP offset (deterministic) rather than scanned - this is what lets two bundles
    run at once. Also sets `portal.instance.inet.socket.address` to the resolved
    HTTP port, and remaps Glowroot's web port in `glowroot/admin.json` if present.
    Each test connector is seeded a per-instance port from the HTTP offset on every
@@ -540,7 +540,7 @@ redirected, it just `exec`s Tomcat.)
    [Test mode](#test-mode---test-testintegration-against-a-live-bundle)); without
    the flag a launch is lean, since the scan override is removed.
 4. **Backs up `tomcat/conf/server.xml`** to
-   `server.xml.bak.<yyyymmdd-hhmmss>` and rewrites the connector ports —
+   `server.xml.bak.<yyyymmdd-hhmmss>` and rewrites the connector ports -
    only when at least one port differs from what's already in the file.
    Re-running on the same setup leaves `server.xml` untouched.
 5. **Starts Tomcat**, prints the resolved HTTP URL and the `catalina.out` path,
@@ -641,6 +641,6 @@ switching to an external Elasticsearch.
   different bundle paths. Each call picks its own non-conflicting port
   set; the per-bundle `server.xml` keeps its own assigned ports between
   runs.
-- `set -euo pipefail` is enabled in the script — it will exit non-zero
+- `set -euo pipefail` is enabled in the script - it will exit non-zero
   on any unexpected failure (missing bundle, missing `catalina.sh`,
   etc.) before reaching the start phase.

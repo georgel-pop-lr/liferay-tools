@@ -1,4 +1,4 @@
-# lfr-term.sh — shared terminal helpers for the Liferay tools.
+# lfr-term.sh - shared terminal helpers for the Liferay tools.
 #
 # Loaded via the root lfrTools.sh. Owns _lfrClearScreen, used by the tools that
 # take over the terminal for a long run (lfrAntAll), and _lfrConfirm, the yes/no

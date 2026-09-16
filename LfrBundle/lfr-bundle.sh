@@ -1,4 +1,4 @@
-# lfr-bundle.sh — manage Liferay bundles (the lfrBundle command): toggle
+# lfr-bundle.sh - manage Liferay bundles (the lfrBundle command): toggle
 # start/stop, cd to one, or run its database upgrade tool.
 #
 # Loaded via the root lfrTools.sh. Defines lfrBundle (short alias lfrb):
@@ -329,7 +329,7 @@ lfrBundle() {
 		;;
 	help | -h | --help)
 		cat <<-'EOF'
-			lfrBundle — Liferay server bundles: toggle start/stop, jump to one,
+			lfrBundle - Liferay server bundles: toggle start/stop, jump to one,
 			or run its database upgrade.
 
 			Usage:
