@@ -1551,6 +1551,7 @@ lfrWorktreeRename() {
 	fi
 
 	if [ -n "${idea_clear}" ]; then
+		_lfrWorktreeIdeaTrustProject "${dir}" "${new_dir}" lfrWorktreeRename
 		_lfrWorktreeRemoveIdeaProject "${dir}" lfrWorktreeRename
 		_lfrWorktreeIdeaRecentProject "${new_dir}" lfrWorktreeRename
 	elif [ -n "${idea_listed}" ]; then
@@ -1700,6 +1701,152 @@ _lfrWorktreeIdeaRunConfigurations() {
 	fi
 
 	echo "lfrWorktreeIdeaInit: wrote ${written} run configurations to ${out}" >&2
+}
+
+# Carry the answer to IntelliJ's trust prompt from the project at $1 over to the one at
+# $2, in every IDE version. $3 is the calling command, used only to prefix the messages.
+#
+# The prompt asks whether the authors of the files in that directory are trusted, and a
+# rename changes neither the files nor their authors, so dropping the answer is the
+# rename losing state it was asked to carry. It runs before _lfrWorktreeRemoveIdeaProject
+# takes the old entry out, since that entry is where the answer is read from.
+#
+# The answer is copied rather than assumed: an entry can say value="false", and a rename
+# is no place to turn a no into a yes. Listing the repos directory in the neighbouring
+# Trusted.Paths.Settings component would cost no code at all and is deliberately not
+# done, since it would trust anything cloned there later, sight unseen.
+#
+# The entry is appended to the map rather than inserted in sorted position. IntelliJ
+# reads it back as a map, so where it sits does not matter, and the file is rewritten in
+# the IDE's own order the next time it closes.
+_lfrWorktreeIdeaTrustProject() {
+	local dir="${1}" new_dir="${2}" caller="${3}"
+	local config_root="${XDG_CONFIG_HOME:-${HOME}/.config}/JetBrains"
+	local -a keys=("${dir}")
+
+	# A path under the home directory is stored through IntelliJ's $USER_HOME$ macro, so
+	# look for that form too, and write the new path back in the form that matches it.
+	case "${dir}" in
+	"${HOME}"/*) keys+=("\$USER_HOME\$/${dir#"${HOME}"/}") ;;
+	esac
+
+	local new_key="${new_dir}"
+
+	case "${new_dir}" in
+	"${HOME}"/*) new_key="\$USER_HOME\$/${new_dir#"${HOME}"/}" ;;
+	esac
+
+	local config_dir key tmp trailing_newline trusted value
+	for trusted in "${config_root}"/*/options/trusted-paths.xml; do
+		[ -f "${trusted}" ] || continue
+
+		config_dir="${trusted%/options/trusted-paths.xml}"
+		value=""
+
+		# The key is compared as a string instead of a pattern, the way the removal above
+		# does it, since a project path holds regex metacharacters (liferay-portal-7.4.x)
+		# and the $USER_HOME$ form is worse.
+		for key in "${keys[@]}"; do
+			value="$(awk -v key="${key}" '
+				function trim(line) {
+					sub(/^[[:space:]]+/, "", line)
+					sub(/[[:space:]]+$/, "", line)
+
+					return line
+				}
+
+				BEGIN {
+					prefix = "<entry key=\"" key "\" value=\""
+				}
+
+				{
+					line = trim($0)
+
+					if (substr(line, 1, length(prefix)) == prefix) {
+						value = substr(line, length(prefix) + 1)
+
+						sub(/".*/, "", value)
+
+						print value
+
+						exit
+					}
+				}
+
+				END {
+					exit value == "" ? 1 : 0
+				}
+			' "${trusted}")" && break
+
+			value=""
+		done
+
+		# This IDE was never asked about the old path, so there is no answer to carry.
+		[ -n "${value}" ] || continue
+
+		if grep -qF "<entry key=\"${new_key}\" " "${trusted}"; then
+			echo "${caller}: ${config_dir##*/} already has an answer for ${new_dir}" >&2
+
+			continue
+		fi
+
+		# IntelliJ writes these files without a trailing newline, which awk's print would
+		# add. tail strips newlines, so output here means the last byte is not one.
+		trailing_newline=1
+
+		if [ -n "$(tail -c 1 "${trusted}")" ]; then
+			trailing_newline=0
+		fi
+
+		tmp="$(mktemp)" || return 1
+
+		awk -v key="${new_key}" -v value="${value}" '
+			!inserted && /^[[:space:]]*<\/map>[[:space:]]*$/ {
+				printf "        <entry key=\"%s\" value=\"%s\" />\n", key, value
+
+				inserted = 1
+			}
+
+			{ print }
+
+			END {
+				exit !inserted
+			}
+		' "${trusted}" >"${tmp}" || {
+			rm -f "${tmp}"
+
+			echo "${caller}: ${config_dir##*/} holds no trusted paths map; left it alone" >&2
+
+			continue
+		}
+
+		# The file is the live configuration of an IDE that is merely closed, so prove the
+		# edit parses before it lands rather than after.
+		if command -v python3 >/dev/null 2>&1 &&
+			! python3 -c 'import sys, xml.dom.minidom; xml.dom.minidom.parse(sys.argv[1])' "${tmp}" >/dev/null 2>&1; then
+			rm -f "${tmp}"
+
+			echo "${caller}: the edited ${trusted} would not parse; left it alone" >&2
+
+			return 1
+		fi
+
+		# Written back through the existing file to keep its mode and owner, the way the
+		# entry removal above does.
+		cat "${tmp}" >"${trusted}" || {
+			rm -f "${tmp}"
+
+			return 1
+		}
+
+		rm -f "${tmp}"
+
+		if [ "${trailing_newline}" -eq 0 ]; then
+			truncate -s -1 "${trusted}"
+		fi
+
+		echo "${caller}: ${config_dir##*/} carried the trust answer ${value} over to ${new_dir}" >&2
+	done
 }
 
 # Put $1 in IntelliJ's recent projects, so the worktree is one click away on the welcome

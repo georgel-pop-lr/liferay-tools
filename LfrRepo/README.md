@@ -266,13 +266,17 @@ from memory on exit:
 lfrWorktreeRename: IntelliJ is running and would write the projects back on exit. Close it now? [y/n]
 ```
 
-Answer yes and the old path's state goes (the welcome-screen entry, the trusted
-path, the Open File history, the task state and the caches keyed by its hash)
-and the new path is put at the top of the recent projects. Answer no and the
-rename still happens, with the two commands that finish that half printed:
-`lfrWorktreeIdeaClean`, then `lfrWorktreeIdeaInit <new> --recent`. The renamed
-project is not trusted again for you, so IntelliJ asks about it once when you
-open it.
+Answer yes and the old path's state goes (the welcome-screen entry, the Open
+File history, the task state and the caches keyed by its hash), the new path is
+put at the top of the recent projects, and the answer you gave IntelliJ's trust
+prompt is carried over to it, since a rename changes neither the files nor their
+authors. A `value="false"` is carried across as a false: the rename preserves
+the answer, it does not turn a no into a yes.
+
+Answer no and the rename still happens, with the two commands that finish that
+half printed: `lfrWorktreeIdeaClean`, then `lfrWorktreeIdeaInit <new> --recent`.
+That route drops the trust answer along with the rest of the old path's state,
+so IntelliJ asks about the renamed project once when you open it.
 
 The remote is left alone: the branch keeps tracking the ref it was pushed to
 under its old name, which is printed at the end, so pushing the new name and
