@@ -1209,7 +1209,7 @@ lfrWorktreeRename() {
 
 	# A master-like branch is nobody's ticket, and a detached HEAD has no name to move.
 	case "${old_branch}" in
-	master* | *master)
+	master* | */master)
 		echo "lfrWorktreeRename: refusing to rename the master-like branch ${old_branch}" >&2
 
 		return 1
