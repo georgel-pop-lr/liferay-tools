@@ -113,23 +113,42 @@ _lfrPullsHelp() {
 		              here because a backport nearly always has one red batch
 		  OPEN        none of the above
 
-		ON YOU says whether the next move is yours. It reads:
-		  you     you are the assignee or the requested reviewer; a pull of
-		          yours is CONFLICT / CHANGES / CHECK-FAIL / NO-CHECK /
-		          TEST-FAIL / ON-HOLD; somebody opened it on your own fork,
-		          which is a review request by construction; or it is
-		          conflicting with nobody assigned, so it is going nowhere
-		          until someone picks it up
-		  ask     a pull of yours is conflicting and somebody else is already
-		          reviewing it. Yours to rebase, but a force push under a review
-		          in progress destroys that review, so ask the person in
-		          ASSIGNEE first
-		  review  review needed and nobody has taken it, so it is free for you
-		  -       nothing for you to do
-		The last three only fire on a queue of your own (your fork, your team
-		fork, the mirror, the EE repo). On a fork of another team an unclaimed
-		pull is not yours to pick up, so it stays "-". A pull of yours that
-		another person is reviewing is not on you.
+		ON YOU says what the pull needs from you, and nothing else. Every
+		value but "-" is an action of yours:
+		  you          a pull of yours is CONFLICT / CHANGES / CHECK-FAIL /
+		               NO-CHECK / TEST-FAIL / ON-HOLD, so it is yours to fix.
+		               Yours is decided by who sent it, never by who authored
+		               it, so a forwarded pull on the mirror still counts
+		  ask          a pull of yours is conflicting and somebody else is
+		               already reviewing it. Yours to rebase, but a force push
+		               under a review in progress destroys that review, so ask
+		               the person in ASSIGNEE first
+		  on-review    the review is on you: you are the assignee or the
+		               requested reviewer, or somebody opened it on your own
+		               fork and nobody has taken it, which is a review request
+		               to you by construction
+		  need-review  somebody else wrote it, review needed, nobody has taken
+		               it, conflicting or not: free for you to take
+		  -            nothing for you to do, which includes a pull of yours
+		               that is healthy or waiting on a reviewer, and any pull
+		               somebody else is reviewing
+		What another person owes a pull is not in this column. STATUS says
+		IN-REVIEW, ASSIGNEE names them, and the census below counts them.
+		need-review only fires on a queue of your own (your fork, your team
+		fork, the mirror, the EE repo), because an unclaimed pull is only
+		yours to pick up on a queue you belong to. On a fork of another team
+		it stays "-", unless the review was requested from you by name.
+
+		Under each table, the count line ends in the census of every open pull
+		the section holds, not only the rows it printed, with the same over
+		ON YOU and over the labels themselves under it:
+		  5 of 14 open pull(s): 4 CONFLICT, 3 CHANGES, 3 NO-CHECK, 3 IN-REVIEW.
+		  on you: 1 you, 3 need-review.
+		  labels: 10 Backend review needed, 3 Changes needed, 1 On hold.
+		STATUS keeps the worst word per pull, so the labels line is the one
+		that shows everything: a conflicting pull that is also on hold and
+		waiting for a backend review counts once in STATUS and three times
+		there. A pull carrying no workflow label counts as untriaged.
 
 		Anywhere mine is accepted a GitHub login works in its place, and the
 		whole question is then asked about that person: lfrPulls stats nikki-pru
@@ -647,20 +666,30 @@ _LFR_PULLS_JQ='
 	# person and drops out of ON YOU and off the dashboard.
 	def isMine: (.author.login == $me) or (sender == $senderMe);
 	def assignee: (.assignees | map(.login) | join(",")) | if . == "" then "-" else . end;
-	# Whether the next move is yours. It is when you are the assignee or the
-	# requested reviewer, when a pull of yours came back with something to fix,
-	# or when somebody opened it on your own fork, which is a review request by
-	# construction. A pull of yours that another person is reviewing is not.
-	#
-	# Three more only on a queue of your own ($yours: your fork, your team fork,
-	# the mirror, the EE repo), because an unclaimed pull is only yours to pick
-	# up on a queue you belong to. On a fork of another team they stay "-".
+	# What this pull needs from you, and nothing else: every value but "-" is
+	# an action of yours. What somebody else owes it is not reported here, it
+	# is reported by STATUS (IN-REVIEW), by ASSIGNEE, and by the census under
+	# the table, which is where a pull waiting on another person belongs.
+	#   a pull of yours came back with something to fix -> "you". Decided by
+	#     who sent it, never by who authored it, so a forwarded pull on the
+	#     mirror is still yours
 	#   your own pull conflicting, somebody else already reviewing it -> "ask":
 	#     yours to rebase, but a force push under a review in progress destroys
-	#     that review, so ask the person in ASSIGNEE first. Only your own pull:
-	#     one you neither wrote nor were assigned is not yours to touch
-	#   conflicting and nobody assigned  -> "you", it is going nowhere otherwise
-	#   review needed and nobody assigned -> "review", free for you to take
+	#     that review, so ask the person in ASSIGNEE first
+	#   any other pull of yours -> "-". Healthy, or waiting on a reviewer who
+	#     has not turned up, which is somebody to chase and not an action
+	#   you are the assignee or the requested reviewer -> "on-review", the
+	#     review is on you. Also a pull somebody opened on your own fork and
+	#     nobody has taken, which is a review request to you by construction
+	#   review needed and nobody assigned -> "need-review", free for you to
+	#     take. Conflicting counts too: CONFLICT outranks REVIEW in the status
+	#     word and would otherwise swallow the only half of that pull which is
+	#     takeable. The rebase belongs to whoever wrote it, the review does not
+	#
+	# need-review only on a queue of your own ($yours: your fork, your team
+	# fork, the mirror, the EE repo), because an unclaimed pull is only yours
+	# to pick up on a queue you belong to. On a fork of another team it stays
+	# "-", unless the review was requested from you by name.
 	def onYou:
 		([.assignees[].login] + [.reviewRequests[] | (.login // .slug // "")]) as $owners |
 		status as $status |
@@ -668,19 +697,47 @@ _LFR_PULLS_JQ='
 		# account means nobody has taken it, and there is no one person to ask.
 		(.assignees | map(select(.login != $me)) | length > 0) as $claimedByOther |
 		((.assignees | length) == 0) as $unclaimed |
-		if ($yours == "true") and ($status == "CONFLICT") and $claimedByOther and
-			isMine then "ask"
-		elif ($owners | any(. == $me)) then "you"
-		elif isMine then
-			(if ([ "CONFLICT", "CHANGES", "CHECK-FAIL", "NO-CHECK", "TEST-FAIL", "ON-HOLD" ] | any(. == $status))
-				then "you" else "-" end)
-		elif ($repoOwner == $me) then "you"
-		elif ($yours == "true") and $unclaimed and ($status == "CONFLICT") then "you"
+		if isMine then
+			(if ($yours == "true") and ($status == "CONFLICT") and $claimedByOther
+				then "ask"
+			elif ([ "CONFLICT", "CHANGES", "CHECK-FAIL", "NO-CHECK", "TEST-FAIL", "ON-HOLD" ] | any(. == $status))
+				then "you"
+			else "-" end)
+		elif ($owners | any(. == $me)) then "on-review"
+		elif ($repoOwner == $me) and $unclaimed then "on-review"
 		elif ($yours == "true") and $unclaimed and
-			(($status == "REVIEW") or (($status == "NO-CHECK") and reviewNeeded))
-			then "review"
+			(($status == "REVIEW") or
+				(([ "CONFLICT", "NO-CHECK" ] | any(. == $status)) and reviewNeeded))
+			then "need-review"
 		else "-" end;
 	def age: ((now - (.createdAt | fromdate)) / 86400 | floor | tostring) + "d";
+	# The words in the order they are ranked in, so a census reads worst news
+	# first and keeps the same shape between runs, where sorting by count would
+	# reshuffle it every time a pull moves.
+	def statusOrder: [ "CONFLICT", "DRAFT", "CHANGES", "CHECK-FAIL", "ON-HOLD",
+		"NO-CHECK", "READY", "IN-REVIEW", "REVIEW", "FORWARDED", "TEST-FAIL",
+		"OPEN" ];
+	def onYouOrder: [ "you", "ask", "need-review", "on-review" ];
+	# The labels themselves, which STATUS cannot report: it keeps the worst
+	# word per pull, so a conflicting pull that is also on hold and waiting for
+	# a backend review is counted once and its other two labels are never
+	# printed. A pull appears here once per label it carries, so these sum past
+	# the section total, and a pull carrying none counts as untriaged.
+	def labelWords:
+		[ .[] | workflowLabels[] ] +
+		[ .[] | select((workflowLabels | length) == 0) | "untriaged" ];
+	# "4 CONFLICT, 3 CHANGES, ...". Any word $order does not list still counts,
+	# sorted after the ones it does, so a value added to status or onYou without
+	# being added here is under-reported in position only, never dropped.
+	def census($order; $words):
+		($words | group_by(.) | map({ (.[0]): length }) | add // {}) as $counts |
+		(($order | map(select($counts[.]))) + (($counts | keys) - $order | sort)) as $keys |
+		[ $keys[] | "\($counts[.]) \(.)" ] | join(", ");
+	# The same, for words with no ranking to follow: most first, then by name
+	# so a tie does not reshuffle between runs.
+	def censusByCount($words):
+		[ $words | group_by(.)[] | { word: .[0], n: length } ] |
+		sort_by([ -.n, .word ]) | map("\(.n) \(.word)") | join(", ");
 	# Whether a pull is worth a place on the dashboard, which shows your own
 	# queues and drops what belongs to somebody else. Three ways in:
 	#   it is yours, sent either way, so it stays however healthy it looks
@@ -777,6 +834,40 @@ _lfrPullsPrefetchOpen() {
 	rm -rf "${dir}"
 }
 
+# The census a section prints under its table: how many of its open pulls sit
+# in each STATUS, then how many are on you, then how many carry each
+# label. Counted over every open pull the section fetched rather than the rows
+# its filter kept, because "5 of 14" is only worth reading next to what the
+# other 9 are doing. Three lines out, any of which can come back empty.
+_lfrPullsCensus() {
+	printf '%s' "${1}" | jq -r --arg me "${2}" --arg senderMe "${3}" \
+		--arg repoOwner "${4}" --arg yours "${5}" --arg prChecked "${6}" \
+		"${_LFR_PULLS_JQ}"' census(statusOrder; [.[] | status]),
+			census(onYouOrder; [.[] | onYou | select(. != "-")]),
+			censusByCount(labelWords)'
+}
+
+# The count line closing a section, with that census on it: "5 of 14 open
+# pull(s): 4 CONFLICT, 3 CHANGES, ...", then "on you: 1 you, 3 need-review"
+# and "labels: ..." under it. $1 rows kept, $2 open in total, the rest what the
+# census needs.
+_lfrPullsCountLine() {
+	local kept="${1}" total="${2}" census statusCensus onYouCensus labelCensus
+	census="$(_lfrPullsCensus "${3}" "${4}" "${5}" "${6}" "${7}" "${8}")"
+	statusCensus="$(printf '%s\n' "${census}" | sed -n 1p)"
+	onYouCensus="$(printf '%s\n' "${census}" | sed -n 2p)"
+	labelCensus="$(printf '%s\n' "${census}" | sed -n 3p)"
+
+	if [ "${kept}" -eq 0 ]; then
+		printf '  none of the %s open pull(s)%s.\n' "${total}" "${statusCensus:+: ${statusCensus}}"
+	else
+		printf '  %s of %s open pull(s)%s.\n' "${kept}" "${total}" "${statusCensus:+: ${statusCensus}}"
+	fi
+	[ -n "${onYouCensus}" ] && printf '  on you: %s.\n' "${onYouCensus}"
+	[ -n "${labelCensus}" ] && printf '  labels: %s.\n' "${labelCensus}"
+	return 0
+}
+
 # Print one fork's open pulls under <heading>, newest first, keeping only what
 # the jq expression <filter> selects. `detail` as $4 adds the age and the pull's
 # own labels; without it the table stays PR / AUTHOR / STATUS / ASSIGNEE / TITLE.
@@ -816,13 +907,15 @@ _lfrPullsForkSection() {
 		if [ "${total}" -eq 0 ]; then
 			printf '  no open pulls.\n'
 		else
-			printf '  none of the %s open pull(s).\n' "${total}"
+			_lfrPullsCountLine 0 "${total}" "${json}" "${me}" "${senderMe}" \
+				"${repo%%/*}" "${yours}" "${prChecked}"
 		fi
 		return 0
 	fi
 	printf "${header}"'\n%s\n' "${rows}" | column -t -s $'\t' | sed 's/^/  /' |
 		_lfrPullsLinkify "${repo}"
-	printf '  %s of %s open pull(s).\n' "$(printf '%s\n' "${rows}" | grep -c .)" "${total}"
+	_lfrPullsCountLine "$(printf '%s\n' "${rows}" | grep -c .)" "${total}" \
+		"${json}" "${me}" "${senderMe}" "${repo%%/*}" "${yours}" "${prChecked}"
 }
 
 # Print the mirror's open pulls: the same STATUS as a fork, plus AHEAD, which
@@ -874,11 +967,13 @@ _lfrPullsMirrorSection() {
 
 	printf '\n%s open pulls (%s)\n' "${LFR_PULLS_REPO}" "${mode}"
 	if [ -z "${rows}" ]; then
-		printf '  none of the %s open pull(s).\n' "${total}"
+		_lfrPullsCountLine 0 "${total}" "${json}" "${me}" "${senderMe}" \
+			"${LFR_PULLS_REPO%%/*}" true true
 	else
 		printf "${header}"'\n%s\n' "${rows}" | column -t -s $'\t' | sed 's/^/  /' |
 			_lfrPullsLinkify "${LFR_PULLS_REPO}"
-		printf '  %s of %s open pull(s).\n' "$(printf '%s\n' "${rows}" | grep -c .)" "${total}"
+		_lfrPullsCountLine "$(printf '%s\n' "${rows}" | grep -c .)" "${total}" \
+			"${json}" "${me}" "${senderMe}" "${LFR_PULLS_REPO%%/*}" true true
 	fi
 	printf '  %s\n' "$(_lfrPullsLastActiveLine)"
 }

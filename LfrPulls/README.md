@@ -132,25 +132,64 @@ column read `TEST-FAIL` 41 times out of 44. Demoted, the same list reads 22
 
 ## ON YOU
 
-`ON YOU` answers the only question a dashboard is for: is this waiting on me.
+`ON YOU` answers the only question a dashboard is for: what does this pull need
+from me. Every value but `-` is an action of yours. What another person owes a
+pull is not in this column at all: `STATUS` says `IN-REVIEW`, `ASSIGNEE` names
+them, and the census below counts them.
 
 | value | meaning |
 | --- | --- |
-| `you` | you are the assignee or the requested reviewer; a pull of yours is `CONFLICT`, `CHANGES`, `CHECK-FAIL`, `NO-CHECK`, `TEST-FAIL` or `ON-HOLD`; somebody opened it on your own fork, which is a review request by construction; or it is conflicting with nobody assigned, so it goes nowhere until someone picks it up |
-| `ask` | a pull **of yours** is conflicting and somebody else is already reviewing it. Yours to rebase, but a force push under a review in progress destroys that review, so ask the person in `ASSIGNEE` first. A conflicting pull you neither wrote nor were assigned is not yours to touch, and reads `-` |
-| `review` | review needed and nobody has taken it, so it is free for you |
-| `-` | nothing for you to do |
+| `you` | a pull of yours is `CONFLICT`, `CHANGES`, `CHECK-FAIL`, `NO-CHECK`, `TEST-FAIL` or `ON-HOLD`, so it is yours to fix. A pull of yours is decided by who sent it, not by who authored it, so a forwarded one on the mirror still counts |
+| `ask` | a pull **of yours** is conflicting and somebody else is already reviewing it. Yours to rebase, but a force push under a review in progress destroys that review, so ask the person in `ASSIGNEE` first |
+| `on-review` | the review is on you: you are the assignee or the requested reviewer, or somebody opened it on your own fork and nobody has taken it, which is a review request to you by construction |
+| `need-review` | somebody else wrote it, a review is needed and nobody has taken it, conflicting or not: free for you to take. Conflicting counts because the rebase belongs to whoever wrote it and the review does not, and `CONFLICT` outranks `REVIEW` in `STATUS`, so the takeable half would otherwise be swallowed |
+| `-` | nothing for you to do. A pull of yours that is healthy, or waiting on a reviewer who has not turned up (somebody to chase, not an action), and any pull somebody else is reviewing |
 
-`ask` and `review` and the unclaimed half of `you` only fire on a queue of your
-own: your fork, your team's fork, the mirror, the EE repo. You review unassigned
-pulls from your own team, not from other teams, so on another team's fork an
-unclaimed pull stays `-`. The one exception is a review requested from you
-personally, which shows `you` wherever it is, because that is the case where
-another team did ask.
+`need-review` only fires on a queue of your own: your fork, your team's fork,
+the mirror, the EE repo. You review unassigned pulls from your own team, not
+from other teams, so on another team's fork an unclaimed pull stays `-`, unless
+the review was requested from you by name, which shows `on-review` wherever it
+is.
 
 `ask` is decided on assignees alone, never on review requests. A request sitting
 on the team account (`liferay-page-management`) means nobody has taken it and
 there is no one person to ask, so such a pull of yours reads `you`, not `ask`.
+
+## The census under each table
+
+Every section closes on the count of the rows it printed out of the pulls it
+fetched, and that count carries the breakdown behind it, with `ON YOU` and the
+labels themselves under it:
+
+```
+  5 of 14 open pull(s): 4 CONFLICT, 3 CHANGES, 3 NO-CHECK, 3 IN-REVIEW, 1 REVIEW.
+  on you: 1 you, 3 need-review.
+  labels: 10 Backend review needed, 3 Changes needed, 1 On hold, 1 Ready to merge.
+```
+
+All three count every open pull the section fetched, not only the rows its
+filter kept, which is the point: the dashboard shows you 5 of the team's 14,
+and the census is what says whether the 9 it hid are healthy. The first two are
+ordered by the ranking their words are ranked in rather than by count, so the
+worst news reads first and the line keeps its shape between runs; `on you`
+leaves out `-`.
+
+The labels line is the one that shows everything. `STATUS` keeps the worst word
+per pull, so a conflicting pull that is also on hold and waiting for a backend
+review is counted once there and three times here, which is what makes it easy
+to see what a section is actually missing. Labels have no ranking to follow, so
+this line is ordered by count and then by name, and a pull carrying no workflow
+label counts as `untriaged`. The counts sum past the section total on purpose,
+since a pull carries as many labels as it carries.
+
+It is free: both are computed from the listing already fetched, so no section
+makes an extra call for it.
+
+A per-month `CONFLICT` or `NO-CHECK` column is not the same thing and is not
+available. GitHub keeps no history of a pull's mergeable state or of when a
+label was on it, and `mergeable` is computed live, so for a pull closed in
+March there is nothing to count. The census answers the same question for the
+pulls that are open now, which is where a conflict can still be acted on.
 
 ## Teams
 
@@ -216,7 +255,8 @@ title-match every PR).
 
 After the month table, `stats` prints the same three queues bare `lfrPulls`
 shows, in full (following the login when you named one): each pull's age and its own workflow labels alongside the
-`STATUS`. `stats all` also widens the team fork section back to every pull. The compact list answers "where is it stuck"; the detailed one answers
+`STATUS`, and under each table the census that says how many pulls sit in each
+`STATUS` and whose move is next. `stats all` also widens the team fork section back to every pull. The compact list answers "where is it stuck"; the detailed one answers
 "how long has it been stuck and what does the team's own label say".
 
 ### Why title-matching, not the GitHub merge flag
