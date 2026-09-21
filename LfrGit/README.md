@@ -154,6 +154,13 @@ updated. The rebase now stashes those changes and puts them back, with
 
 Untracked files are neither stashed nor ever in the way.
 
+In the middle case `-p` still force-pushes. The rebase succeeded, so the commits
+are the same ones a clean tree would have produced and only the working tree is
+conflicted, and holding the push back would leave the branch rebased locally and
+stale on the fork. The push output scrolls the warning away, so it is printed
+again as the last line: which branch is in conflict, and that the changes are in
+`stash@{0}`.
+
 As a backstop, a rebase that would replay more than `LFR_GIT_REBASE_MAX` commits
 (default 50) is refused with the command to inspect them: no branch owns that
 many, so it means the fork point is wrong. Raise the variable for a run that

@@ -394,7 +394,9 @@ lfrGitRebaseOnto() {
 # own commits ever move: a branch built on another mirror is cut at its real fork
 # point (see _lfrGitRebaseOnto), and -o forces that cut even when it is not needed.
 # A dirty working tree does not turn the rebase away: the changes are stashed and
-# put back on top of the rebased branch.
+# put back on top of the rebased branch. When that reapply conflicts, -p still
+# pushes, since the rebase itself succeeded and only the tree is left conflicted;
+# the conflict is then repeated after the push output, where it is the last line.
 # Args: [-r|--rebase] [-f|--force-rebase] [-o|--rebase-onto] [-p|--push] [rebase-target].
 lfrGitUpdateMaster() {
 	local cur a rebase=0 force_rebase=0 rebase_onto=0 push_branch=0
@@ -492,7 +494,7 @@ lfrGitUpdateMaster() {
 	# -p: the rebase rewrote history, so force-push the branch to its fork
 	# (--force-with-lease, which refuses if the remote moved unexpectedly).
 	if [ "${push_branch}" = 1 ]; then
-		local push_ref push_remote
+		local push_ref push_remote push_rc
 		push_ref="$(git rev-parse --abbrev-ref "${cur}@{push}" 2>/dev/null)"
 		case "${push_ref}" in
 		*/*) push_remote="${push_ref%%/*}" ;;
@@ -500,6 +502,18 @@ lfrGitUpdateMaster() {
 		esac
 		echo "Force-pushing ${cur} to ${push_remote} (--force-with-lease)..."
 		git push --force-with-lease "${push_remote}" "${cur}"
+		push_rc="$?"
+
+		# The stash can fail to reapply while the rebase itself succeeded, which
+		# is why the push still runs: the commits are right and only the working
+		# tree is left conflicted. _lfrGitRebaseOnto said so before the push, so
+		# the push output has since scrolled it away; repeat it here, where it is
+		# the last line and the only thing left to act on.
+		if [ -n "$(git ls-files --unmerged)" ]; then
+			echo "  ${cur} is left in conflict: your local changes did not reapply cleanly and are kept in stash@{0}. Resolve the conflicts, then git stash drop." >&2
+		fi
+
+		return "${push_rc}"
 	fi
 }
 
