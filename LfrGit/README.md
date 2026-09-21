@@ -31,8 +31,8 @@ cp lfr-git.local.conf.example lfr-git.local.conf
 | `lfrGitSync [org]` | `lfrgs` | `gh repo sync <org>/liferay-portal --source <upstream>/liferay-portal`. `org` defaults to `LFR_GIT_FORK_ORG`. |
 | `lfrGitSyncEE [org]` | `lfrgse` | Same for `liferay-portal-ee` master. |
 | `lfrGitRebase [N]` | `lfrgr` | `git rebase -i HEAD~N` (N defaults to 20). |
-| `lfrGitRebaseOnto [target]` | `lfrgro` | Replay only the current branch's own commits onto `target` (default `upstream/master`), dropping the mirror history it was rebased onto in between. The fix for a branch that ended up on `masterBrian` and belongs on `master`. Updates no mirror and syncs no fork. |
-| `lfrGitUpdateMaster [-r] [-f] [-o] [-p] [rebase-target]` | `lfrgum` | Update each mirror configured in `LFR_GIT_MASTER_MIRRORS` from its `<remote>/master` (e.g. `master` from upstream, `masterBrian` from brian) and sync the team fork; `-r` rebases the current branch onto a target (default `upstream/master`, or pass a remote/branch), `-f` forces the rebase (implies `-r`), `-o` cuts at the branch's own fork point (implies `-r`), `-p` force-pushes it after (implies `-r`). A target without `-r` is an error. |
+| `lfrGitRebaseOnto [target]` | `lfrgro` | Replay only the current branch's own commits onto `target` (default `upstream/master`), dropping the mirror history it was rebased onto in between. The fix for a branch that ended up on `masterBrian` and belongs on `master`. Local changes are stashed and put back on top. Updates no mirror and syncs no fork. |
+| `lfrGitUpdateMaster [-r] [-f] [-o] [-p] [rebase-target]` | `lfrgum` | Update each mirror configured in `LFR_GIT_MASTER_MIRRORS` from its `<remote>/master` (e.g. `master` from upstream, `masterBrian` from brian) and sync the team fork; `-r` rebases the current branch onto a target (default `upstream/master`, or pass a remote/branch), `-f` forces the rebase (implies `-r`), `-o` cuts at the branch's own fork point (implies `-r`), `-p` force-pushes it after (implies `-r`). A target without `-r` is an error. Local changes are stashed and put back around the rebase. |
 | `lfrGitUpdateBranch [branch] [-n]` | `lfrgub` | Update one branch (e.g. `release-2026.q1`) from upstream and push it to your fork. The branch defaults to the one you are on, and is created locally when you do not have it. `-n` skips the push. |
 | `lfrGitCheckoutTag <tag> [branch] [-n]` | `lfrgct` | Check out a tag (e.g. `2026.q1.8`, `fix-pack-de-85-7010`) on a local branch: fetch the tag from upstream, branch off it, push the branch to your fork. The branch defaults to the tag's name and is reused when it exists. `-n` skips the push. |
 
@@ -74,7 +74,8 @@ both `master` and `masterBrian`.
    `lfrGitUpdateMaster -r masterBrian`) to rebase onto Brian's line instead. The
    rebase is skipped when the branch already sits on the latest target;
    `-f`/`--force-rebase` forces it, and `-p`/`--push` (implies `-r`) then
-   force-pushes the rebased branch with `--force-with-lease`.
+   force-pushes the rebased branch with `--force-with-lease`. A dirty working
+   tree does not turn the rebase away any more: see below.
 
 ## Release branches and patch tags
 
@@ -134,6 +135,24 @@ configured mirrors that leaves the fewest commits to replay. When that differs
 from `merge-base(target, HEAD)`, it cuts there with `--onto`, and only your own
 commits land on the target. `-o`/`--rebase-onto` forces that cut, and
 `lfrGitRebaseOnto` does it on its own without touching the mirrors.
+
+## Local changes ride along the rebase
+
+git refuses a rebase outright while the tree is dirty (`cannot rebase: You have
+unstaged changes`), which used to end the run after the mirrors were already
+updated. The rebase now stashes those changes and puts them back, with
+`--autostash`. Three endings, each reported:
+
+- The rebase applies and the changes reapply: they are back on top of the
+  rebased branch, staged or unstaged exactly as you left them.
+- The rebase applies but the changes collide with what came in: they stay in
+  `stash@{0}` and the conflict markers are in your tree. Resolve them, then
+  `git stash drop`.
+- The rebase itself conflicts: the changes are held in the rebase's own
+  autostash, which `git stash list` does not show. Finishing the rebase restores
+  them, and so does `git rebase --abort`.
+
+Untracked files are neither stashed nor ever in the way.
 
 As a backstop, a rebase that would replay more than `LFR_GIT_REBASE_MAX` commits
 (default 50) is refused with the command to inspect them: no branch owns that

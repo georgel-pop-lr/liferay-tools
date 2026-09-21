@@ -74,7 +74,8 @@ _lfrGitHelp() {
 		Aliases: lfrgc lfrgcd lfrgs lfrgse lfrgr lfrgro lfrgum lfrgub lfrgct
 
 		A rebase only ever moves the branch's own commits, and refuses to replay
-		more than LFR_GIT_REBASE_MAX (default 50).
+		more than LFR_GIT_REBASE_MAX (default 50). Local changes are stashed
+		before it and put back on top of the rebased branch.
 	EOF
 }
 
@@ -285,10 +286,12 @@ _lfrGitForkPoint() {
 # replay more than LFR_GIT_REBASE_MAX commits (default 50), since no branch owns
 # that many; it means the fork point is wrong and the rebase is about to rewrite
 # other people's commits as yours. Returns 2 when there is nothing to do.
+# Local changes are stashed with --autostash and restored on top of the rebased
+# branch, so a dirty tree no longer turns the run away.
 # Args: <branch> <target> <force_rebase 0|1> <rebase_onto 0|1>
 _lfrGitRebaseOnto() {
 	local cur="${1}" target="${2}" force_rebase="${3}" rebase_onto="${4}"
-	local base target_base replay max
+	local base target_base replay max rc dirty=0
 	local -a rebase_args
 
 	target_base="$(git merge-base "${target}" HEAD)" || return 1
@@ -320,13 +323,39 @@ _lfrGitRebaseOnto() {
 	else
 		echo "Rebasing ${cur} onto ${target}..."
 	fi
-	git rebase "${rebase_args[@]}"
+
+	# A dirty tree makes git refuse the rebase outright, so stash it and put it
+	# back afterwards. --autostash does both halves and keeps the changes safe
+	# whichever way the rebase ends, but it is quiet about where they went, so
+	# say so here: refresh the stat cache first, since diff-index alone reports a
+	# merely touched file as modified.
+	git update-index -q --refresh 2>/dev/null
+	if ! git diff-index --quiet HEAD -- 2>/dev/null; then
+		dirty=1
+		echo "  local changes in the way; stashing them and restoring them after the rebase."
+	fi
+
+	git rebase --autostash "${rebase_args[@]}"
+	rc="$?"
+
+	if [ "${dirty}" = 1 ]; then
+		if [ "${rc}" != 0 ]; then
+			echo "  your local changes are held in the rebase's autostash, which git stash list does not show; they come back when you finish it, and git rebase --abort restores them too." >&2
+		elif [ -n "$(git ls-files --unmerged)" ]; then
+			echo "  rebased, but your local changes did not reapply cleanly: they are kept in stash@{0} and the conflicts are in your working tree. Resolve them, then git stash drop." >&2
+		else
+			echo "  restored your local changes on top of the rebased ${cur}."
+		fi
+	fi
+
+	return "${rc}"
 }
 
 # Replay only the current branch's own commits onto <target> (default
 # upstream/master), dropping whatever mirror history it picked up in between: the
-# fix for a branch that ended up on masterBrian and belongs on master. Unlike
-# `lfrGitUpdateMaster -r`, this touches no mirror and syncs no fork.
+# fix for a branch that ended up on masterBrian and belongs on master. Local
+# changes are stashed and put back on top. Unlike `lfrGitUpdateMaster -r`, this
+# touches no mirror and syncs no fork.
 # Args: lfrGitRebaseOnto [target]
 lfrGitRebaseOnto() {
 	case "${1-}" in -h | --help) _lfrGitHelp; return 0 ;; esac
@@ -364,6 +393,8 @@ lfrGitRebaseOnto() {
 # then force-pushes the rebased branch with --force-with-lease. Only the branch's
 # own commits ever move: a branch built on another mirror is cut at its real fork
 # point (see _lfrGitRebaseOnto), and -o forces that cut even when it is not needed.
+# A dirty working tree does not turn the rebase away: the changes are stashed and
+# put back on top of the rebased branch.
 # Args: [-r|--rebase] [-f|--force-rebase] [-o|--rebase-onto] [-p|--push] [rebase-target].
 lfrGitUpdateMaster() {
 	local cur a rebase=0 force_rebase=0 rebase_onto=0 push_branch=0
