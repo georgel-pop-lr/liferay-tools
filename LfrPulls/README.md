@@ -102,7 +102,7 @@ name. Worst news wins:
 | --- | --- |
 | `CONFLICT` | GitHub reports it `CONFLICTING`, or a conflict label is on it |
 | `DRAFT` | opened as a draft |
-| `CHANGES` | changes requested, by review or by label |
+| `CHANGES` | changes requested and still owed, by review or by label |
 | `CHECK-FAIL` | carries `pr-check - failure` |
 | `ON-HOLD` | on hold, blocked, or waiting for something |
 | `NO-CHECK` | carries no `pr-check` label at all, so no result was ever published and it cannot be forwarded. Never on the EE repo |
@@ -112,6 +112,19 @@ name. Worst news wins:
 | `FORWARDED` | `ci:forward` is on it, so it is on its way to the mirror |
 | `TEST-FAIL` | a `ci:test` batch is red and nothing above applies |
 | `OPEN` | none of the above |
+
+`CHANGES` is the one word a push can take back. GitHub keeps
+`reviewDecision` at `CHANGES_REQUESTED` until that same reviewer reviews again:
+new commits never clear it, and neither does a `COMMENTED` review from them, so
+the field goes on saying "changes requested" hours after the author has done
+them and pushed. Each changes-requested review carries the commit it was made
+against, so the head having moved past every one of them is the proof that the
+author answered, and the pull falls through to whatever it is now (usually
+`NO-CHECK`, since the push invalidated its pr-check, or `IN-REVIEW` while the
+reviewer comes back to it). The label half is left alone: a person put it there
+by hand and it stands until somebody takes it off. A pull with more reviews than
+the API returns in one page keeps the old reading, unanswered, rather than being
+cleared on missing evidence.
 
 `NO-CHECK` sits under `CONFLICT`, `DRAFT` and `CHANGES` rather than above them,
 because each of those three is fixed by pushing new commits, and that push

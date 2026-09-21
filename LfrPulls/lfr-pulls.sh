@@ -96,7 +96,12 @@ _lfrPullsHelp() {
 		fork keeps its own vocabulary. Worst news first:
 		  CONFLICT    GitHub reports it CONFLICTING, or a conflict label is on it
 		  DRAFT       opened as a draft
-		  CHANGES     changes requested, by review or by label
+		  CHANGES     changes requested and still owed, by review or by label.
+		              A push answers the review half: GitHub keeps its own
+		              CHANGES_REQUESTED until that reviewer reviews again, so
+		              the word is kept only while the changes-requested review
+		              still points at the head commit. A label stands until
+		              somebody takes it off
 		  CHECK-FAIL  carries pr-check - failure
 		  ON-HOLD     on hold, blocked, or waiting for something (waiting_for_dev)
 		  NO-CHECK    no pr-check label at all, so no pr-check result was ever
@@ -635,11 +640,31 @@ _LFR_PULLS_JQ='
 	def reviewNeeded:
 		(allLabels | any(test("review needed|ready to review"; "i"))) or
 		(.reviewDecision == "REVIEW_REQUIRED") or ((.reviewRequests | length) > 0);
+	# Whether a changes-requested review has been answered by a push. GitHub
+	# keeps reviewDecision at CHANGES_REQUESTED until that same reviewer
+	# reviews again: new commits never clear it, and neither does a COMMENTED
+	# review from them. So the field alone says "changes requested" long after
+	# the author has done them, which reads as an action of yours that is not
+	# one. The head moving is the answer: every changes-requested review
+	# carries the commit it was made against, so a pull whose reviews all point
+	# at a commit that is no longer the head has been pushed to since. Empty
+	# reviews, or no head, means unanswered, which keeps a pull with more
+	# reviews than the API returned on the old behavior rather than clearing it
+	# wrongly.
+	def changesAddressed:
+		(.headRefOid // "") as $head |
+		[ (.reviews // [])[] | select(.state == "CHANGES_REQUESTED") ] as $changesRequested |
+		($head != "") and (($changesRequested | length) > 0) and
+		(($changesRequested | any(.commit.oid == $head)) | not);
 	def status:
 		allLabels as $l |
 		if (.mergeable == "CONFLICTING") or ($l | any(test("conflict"; "i"))) then "CONFLICT"
 		elif .isDraft then "DRAFT"
-		elif (.reviewDecision == "CHANGES_REQUESTED") or ($l | any(test("changes needed"; "i"))) then "CHANGES"
+		# The label is a statement somebody made by hand and stands until they
+		# take it off; reviewDecision is machinery, and changesAddressed tells
+		# a pull still owing the work from one already pushed.
+		elif ((.reviewDecision == "CHANGES_REQUESTED") and ((changesAddressed) | not)) or
+			($l | any(test("changes needed"; "i"))) then "CHANGES"
 		elif $l | any(. == "pr-check - failure") then "CHECK-FAIL"
 		elif $l | any(test("on hold|blocked|waiting[ _-]for"; "i")) then "ON-HOLD"
 		# Ranked here, under CONFLICT / DRAFT / CHANGES, because every one of
@@ -769,10 +794,13 @@ _lfrPullsLinkify() {
 	sed -E "s|^([[:space:]]*)#([0-9]+)|\1${esc}]8;;https://github.com/${repo}/pull/\2${esc}\\\\#\2${esc}]8;;${esc}\\\\|"
 }
 
-# The open pulls on a repo, with everything STATUS is derived from.
+# The open pulls on a repo, with everything STATUS is derived from. headRefOid
+# and reviews ride along for changesAddressed, which needs the commit each
+# changes-requested review was made against; they cost one field each on the
+# same call, not a second request.
 _lfrPullsOpenJsonFetch() {
 	gh pr list --repo "${1}" --state open --limit 200 \
-		--json number,title,headRefName,author,isDraft,mergeable,reviewDecision,assignees,reviewRequests,labels,createdAt 2>/dev/null
+		--json number,title,headRefName,author,isDraft,mergeable,reviewDecision,assignees,reviewRequests,labels,createdAt,headRefOid,reviews 2>/dev/null
 }
 
 # Declared here and left empty for good: the copy that ever holds anything is a
