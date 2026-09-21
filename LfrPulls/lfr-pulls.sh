@@ -133,7 +133,9 @@ _lfrPullsHelp() {
 		               fork and nobody has taken it, which is a review request
 		               to you by construction
 		  need-review  somebody else wrote it, review needed, nobody has taken
-		               it, conflicting or not: free for you to take
+		               it, conflicting or not: free for you to take. Never on
+		               an on-hold pull, which CONFLICT would otherwise hide
+		               the hold on and offer as takeable
 		  -            nothing for you to do, which includes a pull of yours
 		               that is healthy or waiting on a reviewer, and any pull
 		               somebody else is reviewing
@@ -640,6 +642,10 @@ _LFR_PULLS_JQ='
 	def reviewNeeded:
 		(allLabels | any(test("review needed|ready to review"; "i"))) or
 		(.reviewDecision == "REVIEW_REQUIRED") or ((.reviewRequests | length) > 0);
+	# Its own predicate for the same reason: CONFLICT outranks ON-HOLD in the
+	# status word and swallows it, and an on-hold pull is not free for anybody
+	# to pick up however takeable the rest of it looks.
+	def onHold: allLabels | any(test("on hold|blocked|waiting[ _-]for"; "i"));
 	# Whether a changes-requested review has been answered by a push. GitHub
 	# keeps reviewDecision at CHANGES_REQUESTED until that same reviewer
 	# reviews again: new commits never clear it, and neither does a COMMENTED
@@ -666,7 +672,7 @@ _LFR_PULLS_JQ='
 		elif ((.reviewDecision == "CHANGES_REQUESTED") and ((changesAddressed) | not)) or
 			($l | any(test("changes needed"; "i"))) then "CHANGES"
 		elif $l | any(. == "pr-check - failure") then "CHECK-FAIL"
-		elif $l | any(test("on hold|blocked|waiting[ _-]for"; "i")) then "ON-HOLD"
+		elif onHold then "ON-HOLD"
 		# Ranked here, under CONFLICT / DRAFT / CHANGES, because every one of
 		# those is fixed by pushing new commits, which invalidates a pr-check
 		# against the old head: asking for one first would be wasted work. Once
@@ -710,6 +716,10 @@ _LFR_PULLS_JQ='
 	#     take. Conflicting counts too: CONFLICT outranks REVIEW in the status
 	#     word and would otherwise swallow the only half of that pull which is
 	#     takeable. The rebase belongs to whoever wrote it, the review does not
+	#   on hold, whatever else it is -> "-". The same swallowing works the
+	#     other way round for ON-HOLD, which CONFLICT also outranks: an
+	#     on-hold pull would arrive as CONFLICT and be offered as takeable,
+	#     when its author has asked for it to be left alone
 	#
 	# need-review only on a queue of your own ($yours: your fork, your team
 	# fork, the mirror, the EE repo), because an unclaimed pull is only yours
@@ -730,7 +740,7 @@ _LFR_PULLS_JQ='
 			else "-" end)
 		elif ($owners | any(. == $me)) then "on-review"
 		elif ($repoOwner == $me) and $unclaimed then "on-review"
-		elif ($yours == "true") and $unclaimed and
+		elif ($yours == "true") and $unclaimed and (onHold | not) and
 			(($status == "REVIEW") or
 				(([ "CONFLICT", "NO-CHECK" ] | any(. == $status)) and reviewNeeded))
 			then "need-review"
