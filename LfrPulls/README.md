@@ -5,17 +5,21 @@ its own liferay-portal fork, and `ci:forward` then sends them to the Brian CI
 mirror to be merged, so bare `lfrPulls` shows all three queues at once: yours on
 the mirror, your team's fork narrowed to what concerns you, and your own fork,
 where teammates open the pulls waiting on your review. Beyond that, list any team's or any user's fork, look up
-every pull ever opened for one ticket, and count what you have sent, merged, and
-had rejected per month.
+every pull ever opened for one ticket, count what you have sent, merged, and
+had rejected per month, and list the rejections you still owe a resend.
 
 ## Commands
 
-- `lfrPulls` (alias `lfrp`) - the three queues, in the order a change travels
-  them: the mirror (yours), your team's fork (`LFR_PULLS_TEAM`), and your own
-  fork. The team fork is the one carrying everybody, so it is narrowed to the
-  pulls you wrote, the ones `ON YOU` speaks for, and the ones with no workflow
-  label at all, since an untriaged pull is itself worth seeing. The count line
-  still gives the section total, and `lfrPulls <team>` lists every one.
+- `lfrPulls` (alias `lfrp`) - the four queues, in the order a change travels
+  them: the mirror (yours), your team's fork (`LFR_PULLS_TEAM`), your own fork,
+  and your backports on the EE repo. The team fork is the one carrying
+  everybody, so it is narrowed to the pulls you wrote, the ones `ON YOU` speaks
+  for, and the ones with no workflow label at all, since an untriaged pull is
+  itself worth seeing. The count line still gives the section total, and
+  `lfrPulls <team>` lists every one. Directly under the mirror's own section
+  comes the other half of what that repo has to say: the pulls Brian sent back
+  that never landed, which is work you owe. See
+  [Rejected pulls](#rejected-pulls).
 Anywhere `mine` is accepted a GitHub login works in its place and asks the same
 question about that person: `lfrPulls stats nikki-pru`,
 `lfrPulls week 30 nikki-pru`, `lfrPulls page-management achaparro`,
@@ -54,6 +58,12 @@ and their mirror pulls come from `lfrPulls stats <login>`.
   per-month counts of PRs sent, merged, and rejected, with a TOTAL row. Yours by
   default, or one person's when you name a login;
   months default to 12 (reading at most your last 500 PRs).
+- `lfrPulls rejected [days|all] [<login>]` (`rej` or `r`, alias `lfrpr`) - the
+  pulls Brian sent back that never landed, as
+  PR / CLOSED / TRIES / RESENT / WHY / TITLE. Days default 30
+  (`LFR_PULLS_REJECTED_DAYS`), and `all` drops the window. The `#number` links
+  to the rejection comment rather than to the pull. See
+  [Rejected pulls](#rejected-pulls).
 
 ```bash
 lfrPulls               # the mirror (yours), your team's fork (narrowed), your own fork
@@ -76,6 +86,11 @@ lfrPulls week 30 nikki-pru # ...somebody else's
 lfrPulls stats         # your PRs per month, last 12 months
 lfrPulls stats all 6   # whole-repo PRs per month, last 6 months
 lfrPulls stats nikki-pru   # their month table, then their four queues
+lfrPulls rejected      # what Brian sent back in the last 30 days and you owe
+lfrPulls rejected 90   # ...in the last 90 days
+lfrPulls rejected all  # ...ever, which is slow: it reads every closed pull
+lfrpr                  # same, via the alias
+LFR_PULLS_LINKS=off lfrPulls rejected  # a COMMENT column of URLs instead of links
 lfrPulls --help
 ```
 
@@ -284,8 +299,55 @@ just the ticket, means a superseded resend of a ticket whose other work merged
 still counts as rejected. Keep the ref fetched (e.g. `lfrGitUpdateMaster`).
 
 Limitation: if Brian reworded the commit subject, or a pull's work landed under
-a different subject, title-matching undercounts merges (shows rejected). Recent
-work matches well; older months may read low on `MERGED`.
+a different subject, title-matching undercounts merges (shows rejected). It is
+not a corner case. Brian merges a branch's own commits, not one squashed commit
+named after the pull, so a pull of more than one commit often puts no commit
+named after its title on the ref at all: of the 15 pulls of mine closed in the
+30 days to 2026-09-21, `week` called 11 `REJECTED`, and 3 of those carry a
+"Merged. Thank you." from Brian (`#180766`, `#181746` and `#181869`). `#181746`
+is the shape of it: its 13 `LPD-104558` commits all landed, each under its own
+subject, and none of them is the pull's title. Counting the closing comment
+instead gives 7 merged and 8 rejected over the same 15, which is what
+`lfrPulls rejected` uses.
+
+## Rejected pulls
+
+`lfrPulls rejected` answers one question: what did Brian send back that you have
+not got in yet.
+
+A pull counts as rejected when it was closed and the last comment posted at or
+before the close was neither "Merged. Thank you." nor a `ci:close` of your own.
+That comment is the reason, so the `#number` links straight to it instead of to
+the pull, and `WHY` carries its first line. Pipe the output, or set
+`LFR_PULLS_LINKS=off`, and the URL comes back as a `COMMENT` column instead,
+since an escape nobody can see is worse than a wide table.
+
+Only the newest rejection per ticket is a row, because that is the one on you:
+
+- `TRIES` - how many times the ticket has been sent back, which is what an older
+  row would have carried.
+- `RESENT` - the open pull already answering it, so a rejection still to answer
+  is a row with `-` there.
+
+A ticket whose work has since landed on the master ref drops out entirely, which
+is what "still not landed" means. The ref is scanned only from the oldest
+rejection in hand, so a ticket that landed something *before* this pull was sent
+back still counts as owed. Keep the ref fetched (e.g. `lfrGitUpdateMaster`);
+without one the section lists every rejection and says so on the count line.
+
+Bare `lfrPulls` prints this directly under the mirror's open pulls, over the
+same 30 days, because both are the same repo answering the two halves of one
+question: what Brian is holding, then what he sent back. It is not a queue, so
+it is not one of the four, and it is skipped on `lfrPulls all`, where
+"rejected" over the whole repo is every pull Brian ever turned down and says
+nothing about anybody.
+
+The window is bounded with GitHub's `updated:` qualifier and the close date is
+filtered here, never with `closed:`, which is wrong on this repo. Measured
+2026-09-21 against the unbounded listing: `closed:>=2026-06-01` returned 34 of
+the 48 pulls that actually closed in that window, and `closed:>=2026-08-01`
+returned 0 of 6. `updated:` returned exactly the 6 over 30 days and a complete
+superset (81 for 48) over four months, since closing a pull updates it.
 
 ## How "yours" works
 
@@ -343,6 +405,10 @@ cp lfr-pulls.local.conf.example lfr-pulls.local.conf
   clickable link to its pull, carried in an OSC 8 escape so the visible text
   stays `#12345` and no column grows. On a terminal by default, plain whenever
   the output is piped or redirected; `on` forces it through a pipe, `off`
-  disables it. Click or ctrl-click the number.
+  disables it. Click or ctrl-click the number. In `rejected` the number links
+  to the rejection comment, and `off` prints those URLs as a `COMMENT` column
+  rather than dropping them.
+- `LFR_PULLS_REJECTED_DAYS` - how far back `rejected` looks, and the fifth
+  section of bare `lfrPulls` with it (default 30).
 - `LFR_PULLS_MASTER_REF` - master ref to grep (default `brian/master`), used by
   the same three.

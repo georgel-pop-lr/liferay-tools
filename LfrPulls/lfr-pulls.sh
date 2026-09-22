@@ -1,8 +1,10 @@
 # lfr-pulls.sh - list open pull requests along the road a change travels.
 #
 # Source this from your shell rc (normally via the root lfrTools.sh). It defines:
-#     lfrPulls        the four queues a pull of yours passes through
-#     lfrPulls stats  per-month counts of PRs sent, merged, and rejected
+#     lfrPulls           the four queues a pull of yours passes through, and
+#                        the rejections off the first of them
+#     lfrPulls stats     per-month counts of PRs sent, merged, and rejected
+#     lfrPulls rejected  the pulls sent back that never landed, and why
 #
 # A change is reviewed on its team's own liferay-portal fork, then ci:forward
 # sends it to the Brian CI mirror to be merged, so bare `lfrPulls` shows all
@@ -51,7 +53,10 @@ _lfrPullsHelp() {
 		                                   mirror, your team's fork (narrowed, see
 		                                   below), your own fork (teammates waiting
 		                                   on your review), and your backports on
-		                                   the EE repo
+		                                   the EE repo. Under the mirror's own
+		                                   section comes the other half of what it
+		                                   has to say: your rejections off it that
+		                                   never landed
 		  lfrPulls [mine|all]              the mirror alone (yours, or every PR)
 		  lfrPulls ee [mine|all|<login>]  (lfrpe)
 		                                   backports on liferay/liferay-portal-ee,
@@ -77,6 +82,13 @@ _lfrPullsHelp() {
 		                                   oldest first, then what the ticket has
 		                                   landed on the master ref. A bare ticket
 		                                   works too: lfrPulls LPD-12345
+		  lfrPulls rejected [days|all] [<login>]  (rej, r, lfrpr)
+		                                   your pulls closed on the mirror without
+		                                   being merged, whose ticket has still not
+		                                   landed on the master ref, so the work is
+		                                   owed: PR / CLOSED / TRIES / RESENT / WHY
+		                                   / TITLE. Days default 30, and `all`
+		                                   drops the window
 		  lfrPulls week [days] [<login>]  (w, lfrpw)
 		                                   your pulls closed in the last days
 		                                   (default 7), forwarded or direct:
@@ -209,6 +221,29 @@ _lfrPullsHelp() {
 		the same four queues in full, adding each pull's age and its own labels,
 		and stats all widens the mirror section to every open pull as well.
 
+		rejected answers one question: what did Brian send back that you have not
+		got in yet. A pull is rejected when it was closed and the last comment
+		posted at or before the close was not "Merged. Thank you." and was not a
+		ci:close of your own; that comment is the reason, so the #number links
+		straight to it rather than to the pull, and WHY carries its first line. Pipe
+		the output, or set LFR_PULLS_LINKS=off, and the URL comes back as a COMMENT
+		column instead, since an escape nobody can see is worse than a wide table.
+
+		It sits directly under the mirror's open pulls, since both are the same repo:
+		what Brian is holding, then what he sent back. It is not a queue, so it is
+		not one of the four, and it is left out of lfrPulls all, where "rejected"
+		over the whole repo says nothing about anybody.
+
+		Only the newest rejection per ticket is a row, because that is the one on
+		you: TRIES says how many times the ticket has been sent back, and RESENT
+		names the open pull already answering it, so a rejection still to answer is
+		a row with "-" there. A ticket whose work has since landed on the master ref
+		drops out of the listing entirely, which is what "still not landed" means;
+		the ref is scanned only from the oldest rejection in hand, so a ticket that
+		landed something before this pull was sent back still counts as owed. Keep
+		the ref fetched (lfrGitUpdateMaster); without one the section lists every
+		rejection and says so.
+
 		Config (lfr-pulls.local.conf):
 		  LFR_PULLS_REPO         repo to list (default brianchandotcom/liferay-portal)
 		  LFR_PULLS_MINE_ORG     the owner in the -sender-<owner> of a pull you
@@ -222,6 +257,8 @@ _lfrPullsHelp() {
 		  LFR_PULLS_MASTER_REF   master ref to grep (default brian/master)
 		  LFR_PULLS_LINKS        on|off|auto (default auto): make each #number a
 		                         clickable link on a terminal, plain when piped
+		  LFR_PULLS_REJECTED_DAYS  how far back rejected looks, and the rejected
+		                         section of bare lfrPulls with it (default 30)
 	EOF
 }
 
@@ -438,6 +475,264 @@ _lfrPullsWeek() {
 	printf 'PR\tSENDER\tSTATUS\tTITLE\n%s' "${rows}" | column -t -s $'\t' |
 		_lfrPullsLinkify "${LFR_PULLS_REPO}"
 }
+
+# The outcome a closed pull ended on, and the comment that carries it.
+#
+# Brian comments and closes in the same action, so the word on a pull is its
+# last comment posted at or before closedAt. Checked over the 25 most recently
+# closed pulls of mine on the mirror, where it separated every one of them:
+# "Merged. Thank you." from brianchandotcom, a "@<you> ..." review note from
+# him, the CI bot's merge-conflict close, and a ci:close of your own. A pull
+# whose last comment predates its close was closed with no word at all, which
+# is NO-WORD and still counts as work of yours that never landed.
+#
+# This is a stronger merge signal than matching the title against the master
+# ref, which is what week and stats use: it is the closer's own statement
+# rather than an inference, so a superseded resend of a ticket whose other work
+# merged is not read as merged. It is not swapped in there because those two
+# count over a year of pulls and would pay the comments field on every one.
+_LFR_PULLS_REJECTED_JQ='
+	def sender:
+		if (.headRefName | test("-sender-")) then (.headRefName | sub(".*-sender-"; "")) else .author.login end;
+	def closingComment:
+		.closedAt as $closedAt |
+		[ (.comments // [])[] | select(.createdAt <= $closedAt) ] | last;
+	def outcome:
+		closingComment as $comment |
+		($comment.body // "") as $body |
+		($comment.author.login // "") as $author |
+		if $comment == null then "NO-WORD"
+		elif $body | test("^Merged\\. Thank you\\.") then "MERGED"
+		elif $body | test("^\\s*ci:close") then "SELF"
+		elif $body | test("merge conflict and has been closed"; "i") then "CONFLICT"
+		elif ($author == $me) or ($author == sender) then "SELF"
+		else "REJECTED" end;
+	# The first line of the rejection worth reading. The @-mention Brian opens
+	# with goes, and so do the fence lines of a code block, which would
+	# otherwise be the whole column. Tabs go too: the table is tab separated
+	# and a quoted line of Java is nothing but tabs.
+	def why:
+		(closingComment.body // "") | gsub("\r"; "") | gsub("\t"; " ") |
+		gsub("@[A-Za-z0-9_-]+"; "") | split("\n") |
+		map(gsub("^ +| +$"; "")) |
+		map(select(. != "" and ((test("^`{3,}")) | not))) |
+		(.[0] // "-");
+	# The ticket a pull is for, which is what decides whether its work landed:
+	# a resend carries a new number and often a new title, but never a new
+	# ticket. A pull with no key in its title is its own group, so two of them
+	# are never folded together.
+	def ticketKey:
+		((.title // "") |
+			(capture("^(?<key>[A-Za-z]+[- ][0-9]+)") | .key | ascii_upcase | gsub(" "; "-"))) //
+		"#\(.number)";
+'
+
+# One person's closed pulls on the mirror, carrying their comments, as one JSON
+# array over the fields $3. Both ways a pull reaches the mirror, same as
+# _lfrPullsMirrorPersonJson, but fetched at once rather than one after the
+# other because the comments field roughly triples what each call brings back.
+#
+# Bounded by `updated:` and filtered on closedAt by the caller, never by
+# `closed:`, which is wrong on this repo. Measured 2026-09-21 against the
+# unbounded listing: closed:>=2026-06-01 returned 34 of the 48 pulls that
+# actually closed in that window, and closed:>=2026-08-01 returned 0 of 6.
+# updated: returned exactly the 6 over 30 days and a complete superset (81 for
+# 48) over four months, since closing a pull updates it.
+_lfrPullsClosedPersonJson() {
+	local person="${1}" since="${2}" fields="${3}" senderOwner dir authored forwarded
+	senderOwner="$(_lfrPullsSenderOwner "${person}")"
+
+	dir="$(mktemp -d -t lfr-pulls-closed.XXXXXXXX 2>/dev/null)" || return 1
+	(
+		gh pr list --repo "${LFR_PULLS_REPO}" --state closed --limit 500 \
+			--search "author:${person} updated:>=${since}" --json "${fields}" \
+			>"${dir}/authored" 2>/dev/null &
+		gh pr list --repo "${LFR_PULLS_REPO}" --state closed --limit 500 \
+			--search "mentions:${person} updated:>=${since}" --json "${fields}" \
+			>"${dir}/forwarded" 2>/dev/null &
+		wait
+	)
+
+	# Empty is how a failed fetch arrives; a person with nothing closed in the
+	# window still gets "[]" from both, so an empty file is never a real answer.
+	if [ ! -s "${dir}/authored" ] || [ ! -s "${dir}/forwarded" ]; then
+		rm -rf "${dir}"
+		echo "lfrPulls rejected: could not list closed pulls on ${LFR_PULLS_REPO}." >&2
+		return 1
+	fi
+	authored="$(cat "${dir}/authored")"
+	forwarded="$(cat "${dir}/forwarded")"
+	rm -rf "${dir}"
+
+	# On stdin rather than as --argjson for the same reason the open listing
+	# does it: two fetches of a prolific person run past ARG_MAX together.
+	printf '%s\n%s\n' "${authored}" "${forwarded}" |
+		jq -s --arg senderOwner "${senderOwner}" \
+			'.[0] + [.[1][] | select(.headRefName | test("-sender-" + $senderOwner + "$"))] |
+				unique_by(.number)'
+}
+
+# Load into the associative array named $3 the ticket keys, out of the newline
+# list $4, that have a commit on the master ref since $2 in the clone $1.
+# Narrowed to the keys asked about for the same reason _lfrPullsLoadMasterSubjects
+# narrows to the titles: the ref carries tens of thousands of subjects a year
+# and a handful of them can match.
+#
+# Matched on the subject's own prefix, not by a full-text grep, so a commit that
+# merely mentions another ticket is not read as that ticket landing.
+_lfrPullsLoadMasterTickets() {
+	local -n _landed="${3}"
+	local keys="${4}" key
+	[ -z "${keys}" ] && return 0
+	while IFS= read -r key; do
+		[ -n "${key}" ] && _landed["${key}"]=1
+	done < <(git -C "${1}" log "${LFR_PULLS_MASTER_REF}" --since="${2}" --format='%s' 2>/dev/null |
+		grep -oiE '^[A-Za-z]+[- ][0-9]+' |
+		tr '[:lower:] ' '[:upper:]-' |
+		grep -Fxf <(printf '%s\n' "${keys}") | sort -u)
+}
+
+# The pulls that came back off the road: closed on the mirror without being
+# merged, and whose ticket has still not landed on the master ref, so the work
+# is owed. Newest first. $1 whose pulls, $2 how many days back.
+#
+# One row per ticket, the newest rejection, because that is the one that is on
+# you; TRIES says how many times the ticket has been sent back, which is what
+# an older row would have carried. RESENT names the open pull already answering
+# it, so a rejection still to answer is a row with "-" there.
+#
+# Its own fetch rather than a job in the open prefetch: this is the only listing
+# on the closed side, and its two calls already run together, so folding it in
+# would buy the dashboard a second or so at the cost of coupling the two.
+_lfrPullsRejectedSection() {
+	local person="${1}" days="${2}"
+	local me="${LFR_PULLS_USER:-$(gh api user --jq '.login' 2>/dev/null)}" senderMe
+	senderMe="$(_lfrPullsSenderOwner "${me}" "${me}")"
+
+	printf '\n%s rejected pulls (%s, last %s day(s), still not landed on %s)\n' \
+		"${LFR_PULLS_REPO}" "${person}" "${days}" "${LFR_PULLS_MASTER_REF}"
+
+	local since sinceTs json
+	since="$(date -u -d "${days} days ago" +%Y-%m-%d)"
+	sinceTs="$(date -u -d "${days} days ago" +%Y-%m-%dT%H:%M:%SZ)"
+	json="$(_lfrPullsClosedPersonJson "${person}" "${since}" \
+		number,title,headRefName,author,closedAt,comments)" || return 1
+
+	# Every closed pull in the window that was neither merged nor closed by its
+	# own sender, before the master ref has its say.
+	local candidates
+	candidates="$(printf '%s' "${json}" | jq -c --arg me "${me}" --arg sinceTs "${sinceTs}" \
+		"${_LFR_PULLS_REJECTED_JQ}"'
+		[ .[] | select((.closedAt // "") >= $sinceTs) |
+			{ number, title, closedAt, key: ticketKey, outcome: outcome,
+				why: why, url: (closingComment.url // "") } |
+			select(.outcome != "MERGED" and .outcome != "SELF") ]')"
+
+	local closedCount
+	closedCount="$(printf '%s' "${json}" | jq --arg sinceTs "${sinceTs}" \
+		'[.[] | select((.closedAt // "") >= $sinceTs)] | length')"
+
+	if [ "$(printf '%s' "${candidates}" | jq 'length')" -eq 0 ]; then
+		printf '  none of the %s closed pull(s).\n' "${closedCount}"
+		return 0
+	fi
+
+	# The landing check is what "still not landed" means, so a missing clone or
+	# ref widens the section rather than failing it, and says so.
+	local dir landedJson='{}' landedNote=""
+	if dir="$(_lfrPullsMasterDir rejected 2>/dev/null)"; then
+		# Scanned from the oldest rejection in hand, not from the start of the
+		# window, because the question is whether anything landed AFTER the
+		# rejection: a ticket with several pulls can have landed other work
+		# before this one was sent back, and that is still work owed. It is also
+		# what keeps `all` off a full-history scan of the ref, which cost 15s of
+		# CPU for the few months the rejections actually spanned.
+		local landedSince
+		landedSince="$(printf '%s' "${candidates}" |
+			jq -r 'map(.closedAt) | min | .[:10]')"
+		local -A landed=()
+		_lfrPullsLoadMasterTickets "${dir}" "${landedSince:-${since}}" landed \
+			"$(printf '%s' "${candidates}" | jq -r '.[].key' | sort -u)"
+		# An object, not an array: a lookup has to read its key off the
+		# candidate, and `$landed | index(.key)` would evaluate .key against
+		# $landed itself, which is what `$landed[.key]` gets right.
+		landedJson="$(printf '%s\n' "${!landed[@]}" |
+			jq -sRc 'split("\n") | map(select(. != "")) |
+				map({ key: ., value: true }) | from_entries')"
+	else
+		landedNote="  (no ${LFR_PULLS_MASTER_REF} to check against: every rejection is listed, landed or not)"
+	fi
+
+	# Which of these tickets already has an open pull of yours on the mirror.
+	# Served from the dashboard's prefetch when it ran, so no call of its own
+	# there.
+	local resentJson='{}' openJson
+	openJson="$(_lfrPullsOpenJson "${LFR_PULLS_REPO}")"
+	[ -n "${openJson}" ] && resentJson="$(printf '%s' "${openJson}" |
+		jq -c --arg me "${me}" --arg senderMe "${senderMe}" \
+			"${_LFR_PULLS_REJECTED_JQ}"'
+			[ .[] | select((.author.login == $me) or (sender == $senderMe)) |
+				{ key: ticketKey, value: "#\(.number)" } ] | from_entries')"
+
+	local rowsWithUrl
+	rowsWithUrl="$(printf '%s' "${candidates}" | jq -r \
+		--argjson landed "${landedJson}" --argjson resent "${resentJson}" '
+		[ .[] | select($landed[.key] | not) ] |
+		group_by(.key) |
+		map(sort_by(.closedAt) | { newest: last, tries: length }) |
+		sort_by(.newest.closedAt) | reverse | .[] |
+		"#\(.newest.number)\t\(.newest.closedAt[:10])\t\(.tries)\t\($resent[.newest.key] // "-")\t\(.newest.why[0:52])\t\(.newest.title[0:52])\t\(.newest.url)"')"
+
+	if [ -z "${rowsWithUrl}" ]; then
+		printf '  none of the %s closed pull(s): every rejection has landed since.\n' "${closedCount}"
+		return 0
+	fi
+
+	# The URL rides as the last field so the same rows can serve both renderings:
+	# it becomes the link on the #number on a terminal, and a column of its own
+	# when links are off, where an OSC 8 escape would take the URL away with it.
+	local rows tickets resent
+	if _lfrPullsLinksOn; then
+		rows="$(printf '%s\n' "${rowsWithUrl}" | cut -f1-6)"
+		printf 'PR\tCLOSED\tTRIES\tRESENT\tWHY\tTITLE\n%s\n' "${rows}" |
+			column -t -s $'\t' | sed 's/^/  /' |
+			_lfrPullsLinkifyUrls "$(printf '%s\n' "${rowsWithUrl}" | cut -f1,7 | sed 's/^#//')"
+	else
+		printf 'PR\tCLOSED\tTRIES\tRESENT\tWHY\tTITLE\tCOMMENT\n%s\n' "${rowsWithUrl}" |
+			column -t -s $'\t' | sed 's/^/  /'
+	fi
+
+	tickets="$(printf '%s\n' "${rowsWithUrl}" | grep -c .)"
+	resent="$(printf '%s\n' "${rowsWithUrl}" | awk -F'\t' '$4 != "-"' | grep -c .)"
+	printf '  %s of %s closed pull(s) rejected and not landed, over %s ticket(s), %s already resent.\n' \
+		"$(printf '%s' "${candidates}" | jq --argjson landed "${landedJson}" \
+			'[.[] | select($landed[.key] | not)] | length')" \
+		"${closedCount}" "${tickets}" "${resent}"
+	[ -n "${landedNote}" ] && printf '%s\n' "${landedNote}"
+	return 0
+}
+
+# Your rejected pulls that never landed. A number sets how many days back
+# (default 30), `all` drops the window, and a login asks about somebody else.
+_lfrPullsRejected() {
+	local days="${LFR_PULLS_REJECTED_DAYS:-30}" person="" a
+	for a in "$@"; do
+		case "${a}" in
+		-h | --help) _lfrPullsHelp; return 0 ;;
+		all | -a | --all) days=3650 ;;
+		mine | -m | --mine) person="" ;;
+		'') ;;
+		*[!0-9]*) person="${a#@}" ;;
+		*) days="${a}" ;;
+		esac
+	done
+
+	if [ -z "${person}" ]; then
+		person="$(_lfrPullsMineUser rejected)" || return 1
+	fi
+	_lfrPullsRejectedSection "${person}" "${days}"
+}
+
 # Every pull ever opened on the mirror for one ticket, oldest first, then what that
 # ticket has landed on the master ref.
 #
@@ -792,16 +1087,45 @@ _LFR_PULLS_JQ='
 # a file full of escapes is worse than no links. LFR_PULLS_LINKS forces it
 # either way: `on` even when piped, `off` never.
 _lfrPullsLinkify() {
-	local repo="${1}" links="${LFR_PULLS_LINKS:-auto}" esc
+	local repo="${1}" esc
 
-	case "${links}" in
-	off) cat; return ;;
-	on) ;;
-	*) if [ ! -t 1 ]; then cat; return; fi ;;
-	esac
+	_lfrPullsLinksOn || { cat; return; }
 
 	esc=$'\033'
 	sed -E "s|^([[:space:]]*)#([0-9]+)|\1${esc}]8;;https://github.com/${repo}/pull/\2${esc}\\\\#\2${esc}]8;;${esc}\\\\|"
+}
+
+# Whether a #number should be rendered as an OSC 8 link at all: on a terminal
+# by default, never when the output is piped or redirected, and forced either
+# way by LFR_PULLS_LINKS. Its own predicate because a listing that has a URL
+# per row (the rejected one) prints that URL as a column instead when the
+# answer is no, rather than losing it inside an escape nobody will see.
+_lfrPullsLinksOn() {
+	case "${LFR_PULLS_LINKS:-auto}" in
+	off) return 1 ;;
+	on) return 0 ;;
+	*) [ -t 1 ] ;;
+	esac
+}
+
+# The same OSC 8 rewrite, but each #number goes to its own URL rather than to
+# the pull it names. $1 is the map, one "number<TAB>url" per line, and a number
+# missing from it is left as plain text. Runs AFTER column -t for the reason
+# _lfrPullsLinkify does: the escape is bytes the layout must not count.
+_lfrPullsLinkifyUrls() {
+	local map="${1}" esc script number url
+
+	_lfrPullsLinksOn || { cat; return; }
+
+	esc=$'\033'
+	script=""
+	while IFS=$'\t' read -r number url; do
+		[ -z "${number}" ] || [ -z "${url}" ] && continue
+		script="${script}s|^([[:space:]]*)#${number}\\b|\\1${esc}]8;;${url}${esc}\\\\#${number}${esc}]8;;${esc}\\\\|;"
+	done <<<"${map}"
+
+	[ -z "${script}" ] && { cat; return; }
+	sed -E "${script}"
 }
 
 # The open pulls on a repo, with everything STATUS is derived from. headRefOid
@@ -1133,6 +1457,10 @@ _lfrPullsEE() {
 # the mirror it is waiting to be merged on, your team's fork where it was
 # reviewed, your own fork where teammates are waiting on you, and the EE repo,
 # which a backport goes to instead of travelling that road.
+#
+# The mirror answers twice, so its rejections come directly under its open
+# pulls rather than at the end: both are the same repo, one saying what Brian
+# is holding and the other what he sent back.
 _lfrPullsDashboard() {
 	local detail="${1:-}" mirrorMode="${2:-mine}" person="" forkUser
 
@@ -1159,6 +1487,16 @@ _lfrPullsDashboard() {
 	_lfrPullsPrefetchOpen _lfrPullsOpenCache "${openRepos[@]}"
 
 	_lfrPullsMirrorSection "${mirrorMode}" "${detail}" || return 1
+
+	# Straight under the mirror's open pulls, because it is the same repo
+	# answering the other half of the question: what Brian is holding, then
+	# what he sent back. Not a queue, so it is not one of the four, and only a
+	# rejection whose ticket has still not landed is printed, which makes it
+	# work owed and nothing else. Skipped on `all`, where "rejected" over the
+	# whole repo is every pull Brian ever turned down and says nothing about
+	# anybody.
+	[ "${mirrorMode}" != "all" ] &&
+		_lfrPullsRejectedSection "${forkUser}" "${LFR_PULLS_REJECTED_DAYS:-30}"
 
 	# The team fork is the one queue that carries everybody, so on `mine` it is
 	# narrowed to what concerns you: your own pulls, the ones ON YOU speaks for,
@@ -1196,6 +1534,7 @@ lfrPulls() {
 	case "${1:-}" in
 	stats | st | s) shift; _lfrPullsStats "$@"; return ;;
 	week | recent | w) shift; _lfrPullsWeek "$@"; return ;;
+	rejected | rej | r) shift; _lfrPullsRejected "$@"; return ;;
 	ticket | t) shift; _lfrPullsTicket "$@"; return ;;
 	teams) shift; _lfrPullsTeams "$@"; return ;;
 	ee | backport | backports) shift; _lfrPullsEE "$@"; return ;;
@@ -1220,6 +1559,7 @@ lfrPulls() {
 # Short aliases.
 lfrp() { lfrPulls "$@"; }
 lfrpw() { lfrPulls week "$@"; }
+lfrpr() { lfrPulls rejected "$@"; }
 lfrps() { lfrPulls stats "$@"; }
 lfrpt() { lfrPulls ticket "$@"; }
 lfrpf() { lfrPulls team "$@"; }

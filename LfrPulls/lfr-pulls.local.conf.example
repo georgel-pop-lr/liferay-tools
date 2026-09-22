@@ -37,3 +37,8 @@ LFR_PULLS_USER="your-github-login"
 
 # The master ref grepped in that clone. Keep it fetched (lfrGitUpdateMaster).
 #LFR_PULLS_MASTER_REF="brian/master"
+
+# How far back lfrPulls rejected looks, and the rejected section of bare
+# lfrPulls with it. Every closed pull in the window is read with its comments, so a long
+# window is slow.
+#LFR_PULLS_REJECTED_DAYS="30"
