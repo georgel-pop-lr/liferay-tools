@@ -264,12 +264,12 @@ if [ "$PICK" = "1" ]; then
 		exit 1
 	fi
 
-	# fzf when available (shows each bundle's parent root so duplicate names
-	# across locations stay distinguishable); numbered menu otherwise.
+	# fzf when available (shows each bundle's full path so duplicate names across
+	# locations stay distinguishable); numbered menu otherwise.
 	if command -v fzf >/dev/null 2>&1; then
 		choice="$(
 			for entry in "${bundles[@]}"; do
-				printf '%s\t%s  (%s)\n' "$entry" "$(basename "$entry")" "$(dirname "$entry")"
+				printf '%s\t%s\n' "$entry" "$entry"
 			done | fzf \
 				--delimiter=$'\t' \
 				--height=40% \

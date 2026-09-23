@@ -56,7 +56,7 @@ _lfrCacheToggle() {
 			state="cache: off"
 		fi
 		entries+="${path}"$'\t'"${name}  [${state}]"$'\n'
-	done < <(_lfrRepoEntries)
+	done < <(_lfrRepoEntries --branch)
 	[ -z "${entries}" ] && { echo "lfrCache: no repos found" >&2; return 1; }
 	sel="$(printf '%s' "${entries}" | _lfrPick 'toggle cache> ')" || return 1
 	if [ -f "${sel}/.gradle/init.d/lfr-build-cache.gradle" ]; then

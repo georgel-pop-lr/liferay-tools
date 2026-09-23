@@ -63,10 +63,23 @@ _lfrShareGetBundle() {
 		echo "lfrShare: bundle picker needs LfrCommon loaded; pass a bundle path." >&2
 		return 1
 	fi
-	local entries
-	entries="$(_lfrBundleEntries)"
+	local entries="" epath branches map=""
+
+	# Lead with the branch of the checkout already deploying into each bundle, then
+	# the bundle's full path, the same layout as the lfrBundle picker, since the
+	# branch is what says which ticket a bundle is for before you share into it.
+	declare -F _lfrBundleRepoLabel >/dev/null 2>&1 && map="$(_lfrBundleRepoBranches)"
+	while IFS=$'\t' read -r epath _; do
+		[ -n "${epath}" ] || continue
+		branches=""
+		[ -n "${map}" ] && branches="$(_lfrBundleRepoLabel "${epath}" "${map}" branch)"
+		entries+="${epath}"$'\t'"${branches:--}"$'\t'"${epath}"$'\n'
+	done < <(_lfrBundleEntries)
 	[ -z "${entries}" ] && { echo "lfrShare: no bundles found under: ${LFR_BUNDLES_DIRS[*]}" >&2; return 1; }
-	printf '%s\n' "${entries}" | _lfrPick 'bundle> '
+	printf '%s' "${entries}" | awk -F'\t' '
+		{ path[NR] = $1; branch[NR] = $2; rest[NR] = $3; if (length($2) > width && length($2) <= 30) width = length($2) }
+		END { for (i = 1; i <= NR; i++) printf "%s\t%-*s  %s\n", path[i], width, branch[i], rest[i] }' |
+		_lfrPick 'bundle> '
 }
 
 # Print one repo's effective bundle pointer.
@@ -179,7 +192,7 @@ _lfrShareToggle() {
 			state="not shared"
 		fi
 		entries+="${path}"$'\t'"${name}  [${state}]"$'\n'
-	done < <(_lfrRepoEntries)
+	done < <(_lfrRepoEntries --branch)
 	[ -z "${entries}" ] && { echo "lfrShare: no liferay-portal* repos found" >&2; return 1; }
 	sel="$(printf '%s' "${entries}" | _lfrPick 'toggle share> ')" || return 1
 	if [ -f "${sel}/app.server.${USER}.lfrshare-bak.properties" ]; then

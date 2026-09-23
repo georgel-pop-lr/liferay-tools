@@ -91,11 +91,27 @@ _lfrBundleLaunchLabel() {
 # Echo "<repo>@<branch>" for every repo pointing at the bundle <1>, comma
 # separated, marking the ones lfrShare repointed. <2> is the map from
 # _lfrBundleRepoBranches, passed in so a whole list costs one pass over the
-# repos. Nothing is echoed when no repo deploys into that bundle.
+# repos. <3> set to "branch" echoes only the branches, "repo" the full path of
+# each repo (two clones can share a name, so the name alone does not say which),
+# and "branch-repo" each branch followed by its repo name, so a caller can lead
+# with the branch. Nothing is echoed when no repo deploys into that
+# bundle.
 _lfrBundleRepoLabel() {
-	printf '%s\n' "${2}" | awk -F'\t' -v bundle="$(readlink -m "${1}" 2>/dev/null)" '
+	printf '%s\n' "${2}" | awk -F'\t' -v bundle="$(readlink -m "${1}" 2>/dev/null)" -v mode="${3-}" '
 		$1 == bundle {
-			printf "%s%s@%s%s", separator, $2, $3, ($4 == "" ? "" : " (" $4 ")")
+			shared = ($4 == "" ? "" : " (" $4 ")")
+			if (mode == "branch") {
+				printf "%s%s", separator, $3
+			}
+			else if (mode == "branch-repo") {
+				printf "%s%s (%s%s)", separator, $3, $2, shared
+			}
+			else if (mode == "repo") {
+				printf "%s%s%s", separator, $5, shared
+			}
+			else {
+				printf "%s%s@%s%s", separator, $2, $3, shared
+			}
 			separator = ", "
 		}
 		END { if (separator != "") print "" }'
@@ -203,7 +219,7 @@ _lfrBundleResolve() {
 # Picker over every known bundle, each labelled with its current state; $1 is
 # the prompt. Echoes the chosen bundle path.
 _lfrBundlePickWithState() {
-	local prompt="${1}" running pid base entries epath ename launch pidfor state repos map=""
+	local prompt="${1}" running pid base entries epath ename launch pidfor state branches repos map=""
 	if ! declare -F _lfrBundleEntries >/dev/null 2>&1; then
 		echo "lfrBundle: bundle list needs LfrCommon loaded; pass a bundle name." >&2
 		return 1
@@ -232,11 +248,27 @@ _lfrBundlePickWithState() {
 		# is on, since that is what says which ticket a bundle is for. A repo
 		# marked (shared) got here through lfrShare, so it is a deploy target of
 		# someone else's worktree before you stop it.
-		repos="$(_lfrBundleRepoLabel "${epath}" "${map}")"
-		entries+="${epath}"$'\t'"${ename}  [${state}]${repos:+  <- ${repos}}"$'\n'
+		# The branch leads the line, since it is what tells the bundles apart at a
+		# glance. When more than one checkout deploys into the bundle, each branch
+		# carries its repo, so the list does not read as one branch rebased on
+		# another. A running bundle also says so next to its branch, because on a
+		# narrow screen the state at the end of the line is cut off.
+		branches="$(_lfrBundleRepoLabel "${epath}" "${map}" branch)"
+		repos="$(_lfrBundleRepoLabel "${epath}" "${map}" repo)"
+		case "${branches}" in
+			*", "*) branches="$(_lfrBundleRepoLabel "${epath}" "${map}" branch-repo)" ;;
+		esac
+		entries+="${epath}"$'\t'"${branches:--}${pidfor:+ RUNNING}"$'\t'"${epath}  [${state}]${repos:+  <- ${repos}}"$'\n'
 	done < <(_lfrBundleEntries)
 	[ -z "${entries}" ] && { echo "lfrBundle: no bundles found under: ${LFR_BUNDLES_DIRS[*]}" >&2; return 1; }
-	printf '%s' "${entries}" | _lfrPick "${prompt}"
+
+	# Pad the branch column to its widest entry so the bundle names line up,
+	# capped so one bundle with several checkouts does not push every other line
+	# off a narrow screen; the few wider entries just overflow the column.
+	printf '%s' "${entries}" | awk -F'\t' '
+		{ path[NR] = $1; branch[NR] = $2; rest[NR] = $3; if (length($2) > width && length($2) <= 30) width = length($2) }
+		END { for (i = 1; i <= NR; i++) printf "%s\t%-*s  %s\n", path[i], width, branch[i], rest[i] }' |
+		_lfrPick "${prompt}"
 }
 
 # Resolve an optional bundle name/path ($1), opening the picker with prompt $2

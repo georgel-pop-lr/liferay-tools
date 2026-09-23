@@ -41,11 +41,12 @@ _lfrBundleEntries() {
 	} | sort -t$'\t' -k1,1n -k2,2n | cut -f3-
 }
 
-# Emit "<bundle>\t<repo>\t<branch>\t<shared>" for every repo that points at a
-# bundle through app.server.parent.dir, so a caller can say what each bundle is
-# for. <bundle> is the resolved path (${project.dir} expanded), <branch> the
-# checked-out branch or the short sha when HEAD is detached, and <shared> is
-# "shared" when lfrShare repointed that repo (its backup file is still there).
+# Emit "<bundle>\t<repo>\t<branch>\t<shared>\t<path>" for every repo that points
+# at a bundle through app.server.parent.dir, so a caller can say what each bundle
+# is for. <bundle> is the resolved path (${project.dir} expanded), <branch> the
+# checked-out branch or the short sha when HEAD is detached, <shared> is "shared"
+# when lfrShare repointed that repo (its backup file is still there), and <path>
+# the repo's own path, since two clones can share the name <repo>.
 #
 # One pass over every repo, since the callers label a whole list of bundles: a
 # per-bundle lookup would re-read all 30-odd repos for each of them.
@@ -61,8 +62,9 @@ _lfrBundleRepoBranches() {
 		value="${value//\$\{project.dir\}/${path}}"
 		branch="$(git -C "${path}" symbolic-ref --short -q HEAD ||
 			git -C "${path}" rev-parse --short HEAD 2>/dev/null)"
-		printf '%s\t%s\t%s\t%s\n' "$(readlink -m "${value}")" "$(basename "${path}")" \
+		printf '%s\t%s\t%s\t%s\t%s\n' "$(readlink -m "${value}")" "$(basename "${path}")" \
 			"${branch:-?}" \
-			"$([ -f "${path}/app.server.${USER}.lfrshare-bak.properties" ] && echo shared)"
+			"$([ -f "${path}/app.server.${USER}.lfrshare-bak.properties" ] && echo shared)" \
+			"${path}"
 	done < <(_lfrRepoEntries)
 }

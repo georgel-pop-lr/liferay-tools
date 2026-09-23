@@ -21,11 +21,13 @@ LFR_WORKTREE_BASE="${LFR_WORKTREE_BASE:-upstream/master}"
 # Emit "<path>\t<name>  (<root>)" for every git repo under the configured roots,
 # with LFR_REPO_PRIORITY prefixes sorted first (stable within each rank).
 #
-# With --branch the label also carries the checked-out branch (or the short sha
-# when HEAD is detached), which is what tells two clones of the same repo apart
-# and shows when a worktree is not on the branch its directory is named after.
-# It costs a git call per repo, so callers that only need the names (the tab
-# completion, the bundle-to-repo map) leave it off.
+# With --branch the label is the checked-out branch (or the short sha when HEAD
+# is detached) followed by the repo's full path, which already ends in its name:
+# the branch is what tells two clones of the same repo apart and shows when a
+# worktree is not on the branch its directory is named after. The branch column
+# is padded to its widest entry, capped like the bundle picker's. It costs a git
+# call per repo, so callers that only need the names (the tab completion, the
+# bundle-to-repo map) leave it off.
 _lfrRepoEntries() {
 	local root dir name rank i seq=0 branch label branches=0
 	[ "${1-}" = --branch ] && branches=1
@@ -46,13 +48,21 @@ _lfrRepoEntries() {
 				if [ "${branches}" = 1 ]; then
 					branch="$(git -C "${dir%/}" symbolic-ref --short -q HEAD ||
 						git -C "${dir%/}" rev-parse --short HEAD 2>/dev/null)"
-					label="$(printf '%-36s @%-24s (%s)' "${name}" "${branch:-?}" "${root}")"
+					label="${branch:-?}"$'\t'"${dir%/}"
 				fi
 				printf '%d\t%d\t%s\t%s\n' "${rank}" "${seq}" "${dir%/}" "${label}"
 				seq=$((seq + 1))
 			done
 		done
-	} | sort -t$'\t' -k1,1n -k2,2n | cut -f3-
+	} | sort -t$'\t' -k1,1n -k2,2n | cut -f3- | {
+		if [ "${branches}" = 1 ]; then
+			awk -F'\t' '
+				{ path[NR] = $1; branch[NR] = $2; dir[NR] = $3; if (length($2) > width && length($2) <= 30) width = length($2) }
+				END { for (i = 1; i <= NR; i++) printf "%s\t%-*s  %s\n", path[i], width, branch[i], dir[i] }'
+		else
+			cat
+		fi
+	}
 }
 
 # Generic picker. Reads "value<TAB>label" lines from stdin, shows the labels in
@@ -148,7 +158,7 @@ _lfrRepoPick() {
 	fi
 	if [ -n "${query}" ]; then
 		mapfile -t matches < <(printf '%s\n' "${entries}" |
-			awk -F'\t' -v q="${query}" '{split($2, label, " "); if (index(label[1], q)) print $1}')
+			awk -F'\t' -v q="${query}" '{name = $1; sub(/.*\//, "", name); if (index(name, q)) print $1}')
 		if [ "${#matches[@]}" -eq 1 ]; then
 			printf '%s\n' "${matches[0]}"
 			return 0
