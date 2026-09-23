@@ -74,6 +74,9 @@ _lfrRepoEntries() {
 # to start the cursor on instead of the first line, so a caller that reopens the
 # picker in a loop keeps the entry you were on. The last three are fzf's; the
 # numbered-menu fallback below ignores them, since it is answered with a number.
+# Set LFR_PICK_TOOLTIP=1 on the call to show the highlighted line's whole label,
+# wrapped, in a strip under the list, since a long label is cut off at the right
+# edge of a narrow terminal. It only applies when there is no preview of its own.
 # Used by the repo picker below and by other tools (e.g. lfrShare's bundle picker).
 _lfrPick() {
 	local prompt="${1:-> }" query="${2:-}" preview="${3:-}" toolbar="${4:-}" start="${5:-}"
@@ -95,7 +98,16 @@ _lfrPick() {
 	input="$(cat)"
 	[ -z "${input}" ] && return 1
 
-	[ -n "${preview}" ] && fzfArgs+=(--preview="${preview}" --preview-window='right,60%,wrap')
+	if [ -n "${preview}" ]; then
+		fzfArgs+=(--preview="${preview}" --preview-window='right,60%,wrap')
+	elif [ "${LFR_PICK_TOOLTIP-}" = 1 ]; then
+		# Only a label wider than the list (the terminal less fzf's 2-column pointer)
+		# is cut off, so the strip stays blank for one that fits rather than say it twice.
+		fzfArgs+=(
+			--preview="label={2..}; [ \${#label} -gt \$((FZF_PREVIEW_COLUMNS - 2)) ] && printf '%s\n' \"\${label}\""
+			--preview-window='down,3,wrap,border-top'
+		)
+	fi
 	[ -n "${toolbar}" ] &&
 		fzfArgs+=(--border=sharp --border-label=" ${toolbar} " --border-label-pos=bottom)
 
@@ -164,5 +176,5 @@ _lfrRepoPick() {
 			return 0
 		fi
 	fi
-	printf '%s\n' "${entries}" | _lfrPick 'repo> ' "${query}"
+	printf '%s\n' "${entries}" | LFR_PICK_TOOLTIP=1 _lfrPick 'repo> ' "${query}"
 }

@@ -265,7 +265,9 @@ if [ "$PICK" = "1" ]; then
 	fi
 
 	# fzf when available (shows each bundle's full path so duplicate names across
-	# locations stay distinguishable); numbered menu otherwise.
+	# locations stay distinguishable); numbered menu otherwise. The preview
+	# strip is the tooltip _lfrPick gives with LFR_PICK_TOOLTIP=1: the whole label,
+	# only when it is too wide for the list.
 	if command -v fzf >/dev/null 2>&1; then
 		choice="$(
 			for entry in "${bundles[@]}"; do
@@ -273,6 +275,8 @@ if [ "$PICK" = "1" ]; then
 			done | fzf \
 				--delimiter=$'\t' \
 				--height=40% \
+				--preview="label={2..}; [ \${#label} -gt \$((FZF_PREVIEW_COLUMNS - 2)) ] && printf '%s\n' \"\${label}\"" \
+				--preview-window='down,3,wrap,border-top' \
 				--prompt='bundle> ' \
 				--reverse \
 				--select-1 \

@@ -268,7 +268,7 @@ _lfrBundlePickWithState() {
 	printf '%s' "${entries}" | awk -F'\t' '
 		{ path[NR] = $1; branch[NR] = $2; rest[NR] = $3; if (length($2) > width && length($2) <= 30) width = length($2) }
 		END { for (i = 1; i <= NR; i++) printf "%s\t%-*s  %s\n", path[i], width, branch[i], rest[i] }' |
-		_lfrPick "${prompt}"
+		LFR_PICK_TOOLTIP=1 _lfrPick "${prompt}"
 }
 
 # Resolve an optional bundle name/path ($1), opening the picker with prompt $2

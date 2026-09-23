@@ -79,7 +79,7 @@ _lfrShareGetBundle() {
 	printf '%s' "${entries}" | awk -F'\t' '
 		{ path[NR] = $1; branch[NR] = $2; rest[NR] = $3; if (length($2) > width && length($2) <= 30) width = length($2) }
 		END { for (i = 1; i <= NR; i++) printf "%s\t%-*s  %s\n", path[i], width, branch[i], rest[i] }' |
-		_lfrPick 'bundle> '
+		LFR_PICK_TOOLTIP=1 _lfrPick 'bundle> '
 }
 
 # Print one repo's effective bundle pointer.
@@ -194,7 +194,7 @@ _lfrShareToggle() {
 		entries+="${path}"$'\t'"${name}  [${state}]"$'\n'
 	done < <(_lfrRepoEntries --branch)
 	[ -z "${entries}" ] && { echo "lfrShare: no liferay-portal* repos found" >&2; return 1; }
-	sel="$(printf '%s' "${entries}" | _lfrPick 'toggle share> ')" || return 1
+	sel="$(printf '%s' "${entries}" | LFR_PICK_TOOLTIP=1 _lfrPick 'toggle share> ')" || return 1
 	if [ -f "${sel}/app.server.${USER}.lfrshare-bak.properties" ]; then
 		lfrShare reset "${sel}"
 	else
