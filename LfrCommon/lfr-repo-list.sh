@@ -25,11 +25,11 @@ LFR_WORKTREE_BASE="${LFR_WORKTREE_BASE:-upstream/master}"
 # is detached) followed by the repo's full path, which already ends in its name:
 # the branch is what tells two clones of the same repo apart and shows when a
 # worktree is not on the branch its directory is named after. The branch column
-# is padded to its widest entry, capped like the bundle picker's. It costs a git
-# call per repo, so callers that only need the names (the tab completion, the
-# bundle-to-repo map) leave it off.
+# is padded to its widest entry by _lfrPickAlign, like the bundle picker, and the
+# two are coloured apart. It costs a git call per repo, so callers that only need
+# the names (the tab completion, the bundle-to-repo map) leave it off.
 _lfrRepoEntries() {
-	local root dir name rank i seq=0 branch label branches=0
+	local root dir name rank i seq=0 branch label branches=0 path
 	[ "${1-}" = --branch ] && branches=1
 	{
 		for root in "${LFR_REPO_ROOTS[@]}"; do
@@ -56,13 +56,59 @@ _lfrRepoEntries() {
 		done
 	} | sort -t$'\t' -k1,1n -k2,2n | cut -f3- | {
 		if [ "${branches}" = 1 ]; then
-			awk -F'\t' '
-				{ path[NR] = $1; branch[NR] = $2; dir[NR] = $3; if (length($2) > width && length($2) <= 30) width = length($2) }
-				END { for (i = 1; i <= NR; i++) printf "%s\t%-*s  %s\n", path[i], width, branch[i], dir[i] }'
+			while IFS=$'\t' read -r path branch dir; do
+				printf '%s\t%s\t\t%s\n' "${path}" "${branch}" "$(_lfrPickPath "${LFR_PICK_COLOR_PATH}" "${dir}")"
+			done | _lfrPickAlign
 		else
 			cat
 		fi
 	}
+}
+
+# Light colours for the picker labels, one per kind of text, so the parts of a
+# line read apart at a glance. fzf renders them (--ansi, which also keeps them out
+# of the match); the numbered-menu fallback strips them.
+LFR_PICK_COLOR_BRANCH=$'\033[38;5;117m' # light blue: branch, or what a line is
+LFR_PICK_COLOR_PATH=$'\033[38;5;229m'   # light yellow: the last folder of every path, sha
+LFR_PICK_COLOR_STATE=$'\033[38;5;250m'  # light grey: stopped, off, counts, dates
+LFR_PICK_COLOR_ON=$'\033[38;5;157m'     # light green: running, on, shared
+LFR_PICK_COLOR_ARROW=$'\033[38;5;244m'  # grey: the < between a bundle and its repos
+LFR_PICK_COLOR_SUBJECT=$'\033[38;5;218m'   # light pink: a commit subject
+LFR_PICK_COLOR_ROOT=$'\033[38;5;250m'   # light grey: the first folder of a path, /media or /home, the disk it is on
+LFR_PICK_COLOR_DIR=$'\033[38;5;245m'    # grey: the parent folders of a path, so its name stands out
+LFR_PICK_COLOR_OFF=$'\033[0m'
+
+# Colour the text in $2 with $1, except the parent folders of every absolute path
+# in it: the first in light grey, since /media or /home says which disk it is on, the
+# rest receding in grey so the last folder (liferay-portal-ee,
+# liferay-bundle-master) is what the eye lands on. Paths end at a space, a comma
+# or a parenthesis, which is how the repo labels join them.
+_lfrPickPath() {
+	printf '%s' "${2}" | sed -E \
+		"s#(/[^/ ,()]+)(/([^/ ,()]+/)*)([^/ ,()]+)#${LFR_PICK_COLOR_ROOT}\\1${LFR_PICK_COLOR_DIR}\\2${1}\\4#g; s#^#${1}#; s#\$#${LFR_PICK_COLOR_OFF}#"
+}
+
+# Turn "value<TAB>branch<TAB>tag<TAB>rest" lines into the picker's
+# "value<TAB>label": the branch in its colour, then the tag (already coloured,
+# e.g. a RUNNING marker) right after it, the pair padded to the widest one so the
+# rest lines up. The width is capped so one bundle with several checkouts does
+# not push every other line off a narrow screen; the few wider entries just
+# overflow the column. Padding is counted on the plain text, so the colour codes
+# never skew it.
+_lfrPickAlign() {
+	awk -F'\t' -v branchColor="${LFR_PICK_COLOR_BRANCH}" -v off="${LFR_PICK_COLOR_OFF}" '
+		function plain(s) { gsub(/\033\[[0-9;]*m/, "", s); return s }
+		{
+			value[NR] = $1; branch[NR] = $2; tag[NR] = $3; rest[NR] = $4
+			n[NR] = length($2 plain($3))
+			if (n[NR] > width && n[NR] <= 30) width = n[NR]
+		}
+		END {
+			for (i = 1; i <= NR; i++) {
+				pad = width - n[i]
+				printf "%s\t%s%s%s%s%*s  %s\n", value[i], branchColor, branch[i], off, tag[i], (pad > 0 ? pad : 0), "", rest[i]
+			}
+		}'
 }
 
 # Generic picker. Reads "value<TAB>label" lines from stdin, shows the labels in
@@ -76,14 +122,16 @@ _lfrRepoEntries() {
 # numbered-menu fallback below ignores them, since it is answered with a number.
 # Set LFR_PICK_TOOLTIP=1 on the call to show the highlighted line's whole label,
 # wrapped, in a strip under the list, since a long label is cut off at the right
-# edge of a narrow terminal. It only applies when there is no preview of its own.
+# edge of a narrow terminal, in the same colours as the line. It only applies when
+# there is no preview of its own.
 # Used by the repo picker below and by other tools (e.g. lfrShare's bundle picker).
 _lfrPick() {
 	local prompt="${1:-> }" query="${2:-}" preview="${3:-}" toolbar="${4:-}" start="${5:-}"
-	local input selection line
+	local input selection line tooltip=""
 	local -a fzfArgs=(
 		# Right/Left alias Enter/Esc, so the whole picker can be driven with the
 		# arrow keys: up and down to move, right to take the entry, left to leave.
+		--ansi
 		--bind='right:accept,left:abort'
 		--delimiter=$'\t'
 		--exit-0
@@ -100,11 +148,16 @@ _lfrPick() {
 
 	if [ -n "${preview}" ]; then
 		fzfArgs+=(--preview="${preview}" --preview-window='right,60%,wrap')
-	elif [ "${LFR_PICK_TOOLTIP-}" = 1 ]; then
+	elif [ "${LFR_PICK_TOOLTIP-}" = 1 ] && command -v fzf >/dev/null 2>&1; then
 		# Only a label wider than the list (the terminal less fzf's 2-column pointer)
 		# is cut off, so the strip stays blank for one that fits rather than say it twice.
+		# With --ansi fzf hands the preview {2..} with its colours stripped, which is
+		# right for measuring the width, so the coloured label is read back from a copy
+		# of the input by {n}, the line's index in it (unchanged by the query).
+		tooltip="$(mktemp)"
+		printf '%s\n' "${input}" > "${tooltip}"
 		fzfArgs+=(
-			--preview="label={2..}; [ \${#label} -gt \$((FZF_PREVIEW_COLUMNS - 2)) ] && printf '%s\n' \"\${label}\""
+			--preview="label={2..}; [ \${#label} -gt \$((FZF_PREVIEW_COLUMNS - 2)) ] && sed -n \"\$(({n} + 1))p\" $(printf '%q' "${tooltip}") | cut -f2-"
 			--preview-window='down,3,wrap,border-top'
 		)
 	fi
@@ -120,6 +173,7 @@ _lfrPick() {
 
 	if command -v fzf >/dev/null 2>&1; then
 		selection="$(printf '%s\n' "${input}" | fzf "${fzfArgs[@]}")"
+		[ -n "${tooltip}" ] && rm -f "${tooltip}"
 		[ -z "${selection}" ] && return 1
 		printf '%s\n' "${selection%%$'\t'*}"
 		return 0
@@ -129,7 +183,7 @@ _lfrPick() {
 	while IFS=$'\t' read -r v l; do
 		values+=("${v}")
 		labels+=("${l}")
-	done <<< "${input}"
+	done < <(printf '%s\n' "${input}" | sed 's/\x1b\[[0-9;]*m//g')
 
 	if [ -n "${query}" ]; then
 		local matches=()

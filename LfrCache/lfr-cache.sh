@@ -51,11 +51,11 @@ _lfrCacheToggle() {
 	while IFS=$'\t' read -r path name; do
 		[ -n "${path}" ] || continue
 		if [ -f "${path}/.gradle/init.d/lfr-build-cache.gradle" ]; then
-			state="cache: ON"
+			state="${LFR_PICK_COLOR_ON}[cache: ON]"
 		else
-			state="cache: off"
+			state="${LFR_PICK_COLOR_STATE}[cache: off]"
 		fi
-		entries+="${path}"$'\t'"${name}  [${state}]"$'\n'
+		entries+="${path}"$'\t'"${name}  ${state}${LFR_PICK_COLOR_OFF}"$'\n'
 	done < <(_lfrRepoEntries --branch)
 	[ -z "${entries}" ] && { echo "lfrCache: no repos found" >&2; return 1; }
 	sel="$(printf '%s' "${entries}" | LFR_PICK_TOOLTIP=1 _lfrPick 'toggle cache> ')" || return 1

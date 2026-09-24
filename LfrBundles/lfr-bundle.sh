@@ -219,7 +219,7 @@ _lfrBundleResolve() {
 # Picker over every known bundle, each labelled with its current state; $1 is
 # the prompt. Echoes the chosen bundle path.
 _lfrBundlePickWithState() {
-	local prompt="${1}" running pid base entries epath ename launch pidfor state branches repos map=""
+	local prompt="${1}" running pid base entries epath ename launch pidfor state stateColor branches repos map=""
 	if ! declare -F _lfrBundleEntries >/dev/null 2>&1; then
 		echo "lfrBundles: bundle list needs LfrCommon loaded; pass a bundle name." >&2
 		return 1
@@ -258,17 +258,17 @@ _lfrBundlePickWithState() {
 		case "${branches}" in
 			*", "*) branches="$(_lfrBundleRepoLabel "${epath}" "${map}" branch-repo)" ;;
 		esac
-		entries+="${epath}"$'\t'"${branches:--}${pidfor:+ RUNNING}"$'\t'"${epath}  [${state}]${repos:+  <- ${repos}}"$'\n'
+		stateColor="${LFR_PICK_COLOR_STATE}"
+		[ -n "${pidfor}" ] && stateColor="${LFR_PICK_COLOR_ON}"
+		entries+="${epath}"$'\t'"${branches:--}"$'\t'"${pidfor:+${LFR_PICK_COLOR_ON} RUNNING${LFR_PICK_COLOR_OFF}}"
+		entries+=$'\t'"$(_lfrPickPath "${LFR_PICK_COLOR_PATH}" "${epath}")  ${stateColor}[${state}]${LFR_PICK_COLOR_OFF}"
+		[ -n "${repos}" ] &&
+			entries+="  ${LFR_PICK_COLOR_ARROW}<${LFR_PICK_COLOR_OFF} $(_lfrPickPath "${LFR_PICK_COLOR_PATH}" "${repos}")"
+		entries+=$'\n'
 	done < <(_lfrBundleEntries)
 	[ -z "${entries}" ] && { echo "lfrBundles: no bundles found under: ${LFR_BUNDLES_DIRS[*]}" >&2; return 1; }
 
-	# Pad the branch column to its widest entry so the bundle names line up,
-	# capped so one bundle with several checkouts does not push every other line
-	# off a narrow screen; the few wider entries just overflow the column.
-	printf '%s' "${entries}" | awk -F'\t' '
-		{ path[NR] = $1; branch[NR] = $2; rest[NR] = $3; if (length($2) > width && length($2) <= 30) width = length($2) }
-		END { for (i = 1; i <= NR; i++) printf "%s\t%-*s  %s\n", path[i], width, branch[i], rest[i] }' |
-		LFR_PICK_TOOLTIP=1 _lfrPick "${prompt}"
+	printf '%s' "${entries}" | _lfrPickAlign | LFR_PICK_TOOLTIP=1 _lfrPick "${prompt}"
 }
 
 # Resolve an optional bundle name/path ($1), opening the picker with prompt $2

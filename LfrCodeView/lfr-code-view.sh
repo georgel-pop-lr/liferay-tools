@@ -70,10 +70,21 @@ _lfrCodeViewBase() {
 	return 1
 }
 
+# Emit the "<value>\t<label>" picker line for the local or range entry: $1 is the
+# value, $2 to $4 the three columns, each padded and coloured apart.
+_lfrCodeViewLine() {
+	printf '%s\t%s%-7s%s %s%-19s%s %s%s%s' "${1}" \
+		"${LFR_PICK_COLOR_BRANCH}" "${2}" "${LFR_PICK_COLOR_OFF}" \
+		"${LFR_PICK_COLOR_PATH}" "${3}" "${LFR_PICK_COLOR_OFF}" \
+		"${LFR_PICK_COLOR_STATE}" "${4}" "${LFR_PICK_COLOR_OFF}"
+}
+
 # Emit one "commit:<sha>\t<label>" picker line per commit, newest first, for the
 # git log arguments given.
 _lfrCodeViewCommits() {
-	git log --max-count=50 --format=$'commit:%H\t%h  %cd  %s' --date=format:'%Y-%m-%d' "$@"
+	git log --max-count=50 --date=format:'%Y-%m-%d' \
+		--format="commit:%H"$'\t'"${LFR_PICK_COLOR_PATH}%h${LFR_PICK_COLOR_OFF}  ${LFR_PICK_COLOR_STATE}%cd${LFR_PICK_COLOR_OFF}  ${LFR_PICK_COLOR_SUBJECT}%s${LFR_PICK_COLOR_OFF}" \
+		"$@"
 }
 
 # Echo the path of a lesskey file that rebinds b and the left arrow to "quit with
@@ -219,11 +230,11 @@ lfrCodeView() {
 		count="$(git status --porcelain | grep -c .)"
 
 		[ "${count}" -gt 0 ] &&
-			entries="$(printf 'local\t%-7s %-19s %s' "local" "uncommitted" "${count} file(s), untracked included")"
+			entries="$(_lfrCodeViewLine local "local" "uncommitted" "${count} file(s), untracked included")"
 
 		if [ -n "${commits}" ]; then
-			entries="$(printf '%s\nrange\t%-7s %-19s %s\n%s' "${entries}" "branch" "vs ${base}" \
-				"$(printf '%s\n' "${commits}" | grep -c .) commit(s) on top of it" "${commits}")"
+			entries="$(printf '%s\n%s\n%s' "${entries}" "$(_lfrCodeViewLine range "branch" "vs ${base}" \
+				"$(printf '%s\n' "${commits}" | grep -c .) commit(s) on top of it")" "${commits}")"
 		fi
 
 		# grep drops the blank line left when the worktree is clean.

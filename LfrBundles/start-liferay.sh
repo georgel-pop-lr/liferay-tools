@@ -267,15 +267,20 @@ if [ "$PICK" = "1" ]; then
 	# fzf when available (shows each bundle's full path so duplicate names across
 	# locations stay distinguishable); numbered menu otherwise. The preview
 	# strip is the tooltip _lfrPick gives with LFR_PICK_TOOLTIP=1: the whole label,
-	# only when it is too wide for the list.
+	# only when it is too wide for the list. The path is coloured the way the lfrTools
+	# pickers colour one: the first folder (the disk) in light grey, the other parent
+	# folders in grey, the bundle's own folder in light yellow.
 	if command -v fzf >/dev/null 2>&1; then
 		choice="$(
 			for entry in "${bundles[@]}"; do
-				printf '%s\t%s\n' "$entry" "$entry"
+				rest="${entry#/*/}"
+				printf '%s\t\033[38;5;250m%s\033[38;5;245m/%s/\033[38;5;229m%s\033[0m\n' \
+					"$entry" "${entry%/"$rest"}" "${rest%/*}" "${entry##*/}"
 			done | fzf \
+				--ansi \
 				--delimiter=$'\t' \
 				--height=40% \
-				--preview="label={2..}; [ \${#label} -gt \$((FZF_PREVIEW_COLUMNS - 2)) ] && printf '%s\n' \"\${label}\"" \
+				--preview="label={2..}; [ \${#label} -gt \$((FZF_PREVIEW_COLUMNS - 2)) ] && rest=\"\${label#/*/}\" && printf '\\033[38;5;250m%s\\033[38;5;245m/%s/\\033[38;5;229m%s\\033[0m\n' \"\${label%/\"\$rest\"}\" \"\${rest%/*}\" \"\${label##*/}\"" \
 				--preview-window='down,3,wrap,border-top' \
 				--prompt='bundle> ' \
 				--reverse \

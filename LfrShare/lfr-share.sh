@@ -73,13 +73,10 @@ _lfrShareGetBundle() {
 		[ -n "${epath}" ] || continue
 		branches=""
 		[ -n "${map}" ] && branches="$(_lfrBundleRepoLabel "${epath}" "${map}" branch)"
-		entries+="${epath}"$'\t'"${branches:--}"$'\t'"${epath}"$'\n'
+		entries+="${epath}"$'\t'"${branches:--}"$'\t\t'"$(_lfrPickPath "${LFR_PICK_COLOR_PATH}" "${epath}")"$'\n'
 	done < <(_lfrBundleEntries)
 	[ -z "${entries}" ] && { echo "lfrShare: no bundles found under: ${LFR_BUNDLES_DIRS[*]}" >&2; return 1; }
-	printf '%s' "${entries}" | awk -F'\t' '
-		{ path[NR] = $1; branch[NR] = $2; rest[NR] = $3; if (length($2) > width && length($2) <= 30) width = length($2) }
-		END { for (i = 1; i <= NR; i++) printf "%s\t%-*s  %s\n", path[i], width, branch[i], rest[i] }' |
-		LFR_PICK_TOOLTIP=1 _lfrPick 'bundle> '
+	printf '%s' "${entries}" | _lfrPickAlign | LFR_PICK_TOOLTIP=1 _lfrPick 'bundle> '
 }
 
 # Print one repo's effective bundle pointer.
@@ -187,11 +184,11 @@ _lfrShareToggle() {
 			pf="${path}/app.server.${USER}.properties"
 			val="$(grep -m1 '^app.server.parent.dir=' "${pf}" 2>/dev/null)"
 			val="${val#app.server.parent.dir=}"
-			state="shared -> $(basename "${val}")"
+			state="${LFR_PICK_COLOR_ON}[shared -> $(basename "${val}")]"
 		else
-			state="not shared"
+			state="${LFR_PICK_COLOR_STATE}[not shared]"
 		fi
-		entries+="${path}"$'\t'"${name}  [${state}]"$'\n'
+		entries+="${path}"$'\t'"${name}  ${state}${LFR_PICK_COLOR_OFF}"$'\n'
 	done < <(_lfrRepoEntries --branch)
 	[ -z "${entries}" ] && { echo "lfrShare: no liferay-portal* repos found" >&2; return 1; }
 	sel="$(printf '%s' "${entries}" | LFR_PICK_TOOLTIP=1 _lfrPick 'toggle share> ')" || return 1
