@@ -130,7 +130,7 @@ _lfrBundleList() {
 		repos="$(_lfrBundleRepoLabel "${dir}" "${map}")"
 		launch="$(_lfrBundleLaunchLabel "${pid}")"
 		printf '  PID %-7s ports: %-22s %s\n' "${pid}" "${ports:-?}" "${dir}"
-		[ -n "${repos}" ] && printf '      <- %s\n' "${repos}"
+		[ -n "${repos}" ] && printf '      < %s\n' "${repos}"
 		[ -n "${launch}" ] && printf '      run %s\n' "${launch}"
 		n=$((n + 1))
 	done < <(_lfrBundleProcs)

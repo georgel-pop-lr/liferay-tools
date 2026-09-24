@@ -72,5 +72,5 @@ schema/upgrade mismatches. Deploying from one worktree overwrites whatever code
 was in the bundle.
 
 Other tools see the share: the `lfrBundles` picker lists the sharing repo among
-the bundle's checkouts as `<- <repo>@<branch> (shared)`, and `lfrAntAll` refuses
+the bundle's checkouts as `< <repo>@<branch> (shared)`, and `lfrAntAll` refuses
 a full build into it until you `lfrShare reset` (or `--force`).

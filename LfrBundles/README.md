@@ -221,7 +221,7 @@ the JDK it resolved to, and how long it has been up:
 
 ```
   PID 1008717 ports: 8005 8080 11311 32763 42763 /media/.../liferay-bundle-LPD-104387
-      <- liferay-portal-LPD-104387@LPD-104387
+      < liferay-portal-LPD-104387@LPD-104387
       run -t -c, jdk zulu17.54.21-ca-jdk17.0.13-linux_x64, up 02:05:01
 ```
 
@@ -262,14 +262,14 @@ bundle outside those roots. `status`/`ls`, `stop-all`/`stopall`, and
 back-compat aliases (they now toggle, like `lfrBundles`).
 
 Every entry names the checkouts that deploy into it and the branch each one has
-checked out, as `<- <repo>@<branch>`, so you can tell what a bundle is for
+checked out, as `< <repo>@<branch>`, so you can tell what a bundle is for
 without remembering which worktree built it. A running one also carries the flags
 it was launched with and how long it has been up, since that is what says whether
 its database was wiped or whether it is a testIntegration target:
 
 ```
-liferay-bundle-master  (/media/.../bundles)  [RUNNING pid 2977484, ports: 8005 8080 11311 32763 42763, -c -t, up 17:07:23]  <- liferay-portal@LPD-102542
-liferay-bundle-7.4.x   (/home/.../bundles)   [stopped]  <- liferay-portal-7.4.x@82daaa19f1c91, liferay-portal-ee@master-brian
+liferay-bundle-master  (/media/.../bundles)  [RUNNING pid 2977484, ports: 8005 8080 11311 32763 42763, -c -t, up 17:07:23]  < liferay-portal@LPD-102542
+liferay-bundle-7.4.x   (/home/.../bundles)   [stopped]  < liferay-portal-7.4.x@82daaa19f1c91, liferay-portal-ee@master-brian
 ```
 
 The picker uses a brief form of that, without the JDK: its line already carries the
@@ -282,7 +282,7 @@ bundle repointed with [lfrShare](../LfrShare/README.md) shows the sharing repo
 and is marked `(shared)`: you can see a bundle is someone else's deploy target
 before you stop it. A detached HEAD shows the short sha instead of a branch, and
 a bundle no repo points at (the downloaded `liferay-dxp-tomcat-*` ones) just
-shows its run state. `lfrBundles status` prints the same `<- ` line under each
+shows its run state. `lfrBundles status` prints the same `< ` line under each
 running bundle.
 
 ### JDK selection (older bundles need older JDKs)
