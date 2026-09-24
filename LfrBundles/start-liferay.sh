@@ -1085,6 +1085,55 @@ _status_bar_url_line() {
 	printf '%s%s%s' "$url" "$flags" "$suffix"
 }
 
+# The panel's colours, the ones the lfrTools pickers use, on a dark grey band rather
+# than reverse video so they read. Only foreground codes are set inside a row, so the
+# band's background carries through to the reset at its end.
+STATUS_BAR_BG=$'\033[48;5;236m'
+STATUS_BAR_BLUE=$'\033[38;5;117m'   # the URL
+STATUS_BAR_YELLOW=$'\033[38;5;229m' # the bundle folder
+STATUS_BAR_PINK=$'\033[38;5;218m'   # the port numbers
+STATUS_BAR_LGREY=$'\033[38;5;250m'  # the first folder of the path, the port labels, the stop hint
+STATUS_BAR_GREEN=$'\033[38;5;157m'  # the launch flags
+STATUS_BAR_GREY=$'\033[38;5;245m'   # the parent folders, the | separators
+STATUS_BAR_OFF=$'\033[0m'
+
+# Colour one row, already truncated and padded as plain text ($1 names it, $2 is the
+# text), so the colour codes never change what fits: the path's first folder in light
+# grey, its other parent folders (or the "..." of a truncated one) in grey and the
+# bundle folder in light yellow; each port label in light grey and its number in
+# light pink; the URL in light blue, the flags in light green, the stop hint in
+# light grey and the | between them in grey.
+_status_bar_color() {
+	local text="$2" segment first=1 out=""
+
+	case "$1" in
+		path)
+			out="$(printf '%s' "$text" | sed -E \
+				"s#^( )(/[^/]+)?(.*/)([^/ ]+)#\\1${STATUS_BAR_LGREY}\\2${STATUS_BAR_GREY}\\3${STATUS_BAR_YELLOW}\\4#")"
+			;;
+		ports)
+			out="$(printf '%s' "$text" | sed -E \
+				"s#([A-Z]+) ([0-9]+)#${STATUS_BAR_LGREY}\\1 ${STATUS_BAR_PINK}\\2#g")"
+			;;
+		url)
+			while [ -n "$text" ]; do
+				segment="${text%%   |   *}"
+				[ "$first" = 1 ] || out+="${STATUS_BAR_GREY}   |   "
+				case "$first:$segment" in
+					1:*) out+="${STATUS_BAR_BLUE}$segment" ;;
+					*:Ctrl+C*) out+="${STATUS_BAR_LGREY}$segment" ;;
+					*) out+="${STATUS_BAR_GREEN}$segment" ;;
+				esac
+				first=0
+				[ "$segment" = "$text" ] && break
+				text="${text#*   |   }"
+			done
+			;;
+	esac
+
+	printf '%s%s%s' "$STATUS_BAR_BG" "$out" "$STATUS_BAR_OFF"
+}
+
 _STATUS_BAR_ON=0
 
 # Echo the row the cursor is on, asked of the terminal itself: DSR (\033[6n) is
@@ -1106,9 +1155,10 @@ _cursor_row() {
 }
 
 # Reserve the bottom three rows (a DECSTBM scroll region over the rest of the
-# screen) and draw the three-row status panel there in reverse video, so Tomcat's
-# logs scroll above it while the bundle, the ports and the URL stay pinned. No-op on
-# short terminals, where three reserved rows would leave too little to read.
+# screen) and draw the three-row status panel there, coloured by _status_bar_color,
+# so Tomcat's logs scroll above it while the bundle, the ports and the URL stay
+# pinned. No-op on short terminals, where three reserved rows would leave too little
+# to read.
 #
 # Setting the region homes the cursor (DECSTBM does that by definition), so the
 # row the output had reached has to be put back afterwards, or the log would
@@ -1129,9 +1179,9 @@ _setup_status_bar() {
 	path="$(_status_bar_path_line "$cols")"; path="${path:0:$cols}"; printf -v path '%-*s' "$cols" "$path"
 	url="$(_status_bar_url_line "$cols")"; url="${url:0:$cols}"; printf -v url '%-*s' "$cols" "$url"
 	printf '\033[1;%dr' "$((rows - 3))"                          # scroll region = all but bottom 3 rows
-	printf '\033[%d;1H\033[7m%s\033[0m' "$((rows - 2))" "$path"  # upper row: bundle path + launch flags
-	printf '\033[%d;1H\033[7m%s\033[0m' "$((rows - 1))" "$ports" # middle row: the ports
-	printf '\033[%d;1H\033[7m%s\033[0m' "$rows" "$url"           # lower row: URL + stop hint
+	printf '\033[%d;1H%s' "$((rows - 2))" "$(_status_bar_color path "$path")"  # upper row: bundle path
+	printf '\033[%d;1H%s' "$((rows - 1))" "$(_status_bar_color ports "$ports")" # middle row: the ports
+	printf '\033[%d;1H%s' "$rows" "$(_status_bar_color url "$url")"             # lower row: URL, flags + stop hint
 	printf '\033[%d;1H' "$row"                                   # cursor back where the output was
 	_STATUS_BAR_ON=1
 }
