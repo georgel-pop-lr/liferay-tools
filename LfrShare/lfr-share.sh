@@ -18,7 +18,7 @@
 # is already in the bundle.
 
 # LFR_BUNDLES_DIRS and the bundle list (_lfrBundleEntries) live in the shared
-# module LfrCommon/lfr-bundle-list.sh (also used by lfrBundle).
+# module LfrCommon/lfr-bundle-list.sh (also used by lfrBundles).
 
 # Resolve a repo path from an argument, or open the shared repo picker.
 _lfrShareRepo() {
@@ -66,7 +66,7 @@ _lfrShareGetBundle() {
 	local entries="" epath branches map=""
 
 	# Lead with the branch of the checkout already deploying into each bundle, then
-	# the bundle's full path, the same layout as the lfrBundle picker, since the
+	# the bundle's full path, the same layout as the lfrBundles picker, since the
 	# branch is what says which ticket a bundle is for before you share into it.
 	declare -F _lfrBundleRepoLabel >/dev/null 2>&1 && map="$(_lfrBundleRepoBranches)"
 	while IFS=$'\t' read -r epath _; do
@@ -97,7 +97,7 @@ _lfrShareShow() {
 
 # Echo the names of repos currently sharing <bundle> via lfrShare (those with an
 # lfrShare backup whose app.server.parent.dir resolves to <bundle>), comma
-# separated, or nothing if none. lfrBundle calls this to flag a shared bundle in
+# separated, or nothing if none. lfrBundles calls this to flag a shared bundle in
 # its picker, so a bundle that is a deploy target is visible before you stop it.
 _lfrShareReposForBundle() {
 	local bundle="${1}" target path pf val names=""

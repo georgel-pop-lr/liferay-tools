@@ -20,7 +20,7 @@ pointer, so switching is instant:
 ## Commands
 
 You pick both the bundle and the repo. With no argument each opens the same
-picker `lfrRepo` uses (`fzf`, or a numbered menu). For the repo, a name
+picker `lfrRepos` uses (`fzf`, or a numbered menu). For the repo, a name
 prefilters the picker and a path skips it. For the bundle, a name must match
 exactly one directory name under `LFR_BUNDLES_DIRS` (ambiguous or unknown names
 error out; pass an absolute path then).
@@ -71,6 +71,6 @@ database, search index, and OSGi state. Use it for branches of the same schema
 schema/upgrade mismatches. Deploying from one worktree overwrites whatever code
 was in the bundle.
 
-Other tools see the share: the `lfrBundle` picker lists the sharing repo among
+Other tools see the share: the `lfrBundles` picker lists the sharing repo among
 the bundle's checkouts as `<- <repo>@<branch> (shared)`, and `lfrAntAll` refuses
 a full build into it until you `lfrShare reset` (or `--force`).

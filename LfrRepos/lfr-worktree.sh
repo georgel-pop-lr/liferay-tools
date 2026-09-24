@@ -169,7 +169,7 @@ _lfrWorktreeKeepSurvivingBundle() {
 	echo "lfrWorktree: moved the old bundle to ${aside}" >&2
 
 	if [ -n "${db_name}" ]; then
-		echo "lfrWorktree: the ${db_name} database still holds its data; reset it with lfrBundle -c, or drop it with dropdb ${db_name}" >&2
+		echo "lfrWorktree: the ${db_name} database still holds its data; reset it with lfrBundles -c, or drop it with dropdb ${db_name}" >&2
 	fi
 
 	return 1

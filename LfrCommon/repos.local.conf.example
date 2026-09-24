@@ -1,6 +1,6 @@
 # Liferay repo per-user config. Copy to repos.local.conf and edit.
 # repos.local.conf is gitignored, so your machine-specific paths stay local.
-# Shared by lfrRepo, lfrWorktree, lfrCache, lfrShare, lfrBundle, and lfrCodeView.
+# Shared by lfrRepos, lfrWorktree, lfrCache, lfrShare, lfrBundles, and lfrCodeView.
 
 # Roots searched for git repos, in order.
 LFR_REPO_ROOTS=(
@@ -21,7 +21,7 @@ LFR_WORKTREE_BASE="upstream/master"
 # there is not the one carrying your run configurations.
 LFR_IDEA_TEMPLATE="${HOME}/liferay/repos/liferay-portal"
 
-# Bundle config, used by lfrShare and lfrBundle. Roots searched for bundles:
+# Bundle config, used by lfrShare and lfrBundles. Roots searched for bundles:
 LFR_BUNDLES_DIRS=(
 	"${HOME}/liferay/bundles"
 	"/media/${USER}/Data/liferay/bundles"

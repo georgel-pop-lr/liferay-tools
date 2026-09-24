@@ -27,7 +27,7 @@ view> local   uncommitted         2 file(s), untracked included
 
 ## What the picker offers
 
-The same picker `lfrRepo` uses (`fzf`, or a numbered menu when `fzf` is missing),
+The same picker `lfrRepos` uses (`fzf`, or a numbered menu when `fzf` is missing),
 with the highlighted entry previewed in the side pane: a diffstat for a commit
 or the branch range, `git status --short` for the local entry. With exactly one
 entry, `fzf` auto-selects it and its diff opens without showing the list:
@@ -78,7 +78,7 @@ and the list comes back on a clean screen. The fallback default is `less -FRX`,
 where a one-screen diff exits immediately and stays on screen.
 
 The list keys and the preview are `fzf`'s. Without `fzf` the list is the numbered
-menu `lfrRepo` falls back to, answered with a number; the diff keys work either
+menu `lfrRepos` falls back to, answered with a number; the diff keys work either
 way.
 
 There is no ticket filter on the branch listing, on purpose: every commit the

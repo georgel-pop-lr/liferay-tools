@@ -1,15 +1,15 @@
-# lfr-bundle.sh - manage Liferay bundles (the lfrBundle command): toggle
+# lfr-bundle.sh - manage Liferay bundles (the lfrBundles command): toggle
 # start/stop, cd to one, or run its database upgrade tool.
 #
-# Loaded via the root lfrTools.sh. Defines lfrBundle (short alias lfrb):
-#   lfrBundle [<bundle>] [start-flags]  toggle a bundle: start it if stopped
-#                                       (forwarding start-flags to start-liferay.sh),
-#                                       stop it if running. With no <bundle> a
-#                                       picker shows every bundle's state; Esc cancels.
-#   lfrBundle status                    list the running bundles, their ports, and how each was launched
-#   lfrBundle stop-all                  stop every running bundle (confirms)
-#   lfrBundle cd [<bundle>]             jump to a bundle's Liferay home, no start
-#   lfrBundle upgrade [<bundle>]        run the bundle's database upgrade tool
+# Loaded via the root lfrTools.sh. Defines lfrBundles (short alias lfrb):
+#   lfrBundles [<bundle>] [start-flags]  toggle a bundle: start it if stopped
+#                                        (forwarding start-flags to start-liferay.sh),
+#                                        stop it if running. With no <bundle> a
+#                                        picker shows every bundle's state; Esc cancels.
+#   lfrBundles status                    list the running bundles, their ports, and how each was launched
+#   lfrBundles stop-all                  stop every running bundle (confirms)
+#   lfrBundles cd [<bundle>]             jump to a bundle's Liferay home, no start
+#   lfrBundles upgrade [<bundle>]        run the bundle's database upgrade tool
 #
 # A running bundle is a java process started by `catalina.sh run`, so it carries
 # -Dcatalina.base=<bundle>/tomcat-x.y.z; that is how we find them. Ports come
@@ -17,7 +17,7 @@
 # safely (a second instance shares the same catalina.base, database, and OSGi
 # state), so there is only a toggle, never a blind second start.
 #
-# lfrRunBundle / lfrrb remain as back-compat aliases for lfrBundle.
+# lfrRunBundle / lfrrb remain as back-compat aliases for lfrBundles.
 
 _lfrBundleDir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -210,8 +210,8 @@ _lfrBundleResolve() {
 	done < <(_lfrBundleEntries)
 	case "${#matches[@]}" in
 	1) printf '%s\n' "${matches[0]}" ;;
-	0) echo "lfrBundle: bundle '${arg}' not found under: ${LFR_BUNDLES_DIRS[*]}" >&2; return 1 ;;
-	*) echo "lfrBundle: '${arg}' matches multiple, pass a path:" >&2
+	0) echo "lfrBundles: bundle '${arg}' not found under: ${LFR_BUNDLES_DIRS[*]}" >&2; return 1 ;;
+	*) echo "lfrBundles: '${arg}' matches multiple, pass a path:" >&2
 		printf '  %s\n' "${matches[@]}" >&2; return 1 ;;
 	esac
 }
@@ -221,7 +221,7 @@ _lfrBundleResolve() {
 _lfrBundlePickWithState() {
 	local prompt="${1}" running pid base entries epath ename launch pidfor state branches repos map=""
 	if ! declare -F _lfrBundleEntries >/dev/null 2>&1; then
-		echo "lfrBundle: bundle list needs LfrCommon loaded; pass a bundle name." >&2
+		echo "lfrBundles: bundle list needs LfrCommon loaded; pass a bundle name." >&2
 		return 1
 	fi
 	map="$(_lfrBundleRepoBranches)"
@@ -260,7 +260,7 @@ _lfrBundlePickWithState() {
 		esac
 		entries+="${epath}"$'\t'"${branches:--}${pidfor:+ RUNNING}"$'\t'"${epath}  [${state}]${repos:+  <- ${repos}}"$'\n'
 	done < <(_lfrBundleEntries)
-	[ -z "${entries}" ] && { echo "lfrBundle: no bundles found under: ${LFR_BUNDLES_DIRS[*]}" >&2; return 1; }
+	[ -z "${entries}" ] && { echo "lfrBundles: no bundles found under: ${LFR_BUNDLES_DIRS[*]}" >&2; return 1; }
 
 	# Pad the branch column to its widest entry so the bundle names line up,
 	# capped so one bundle with several checkouts does not push every other line
@@ -322,18 +322,18 @@ _lfrBundleUpgrade() {
 	path="$(_lfrBundleNameOrPick "${name}" 'upgrade bundle> ')" || return 1
 	pid="$(_lfrBundlePidForDir "${path}")"
 	if [ -n "${pid}" ]; then
-		echo "lfrBundle: $(basename "${path}") is running (PID ${pid}); stop it before upgrading." >&2
+		echo "lfrBundles: $(basename "${path}") is running (PID ${pid}); stop it before upgrading." >&2
 		return 1
 	fi
 	dir="$(_lfrBundleHome "${path}")/tools/portal-tools-db-upgrade-client"
 	if [ ! -x "${dir}/db_upgrade_client.sh" ]; then
-		echo "lfrBundle: no upgrade client at ${dir}" >&2
+		echo "lfrBundles: no upgrade client at ${dir}" >&2
 		return 1
 	fi
 	(cd "${dir}" && ./db_upgrade_client.sh "$@")
 }
 
-lfrBundle() {
+lfrBundles() {
 	case "${1-}" in
 	status | ls)
 		if [ -z "$(_lfrBundleProcs)" ]; then
@@ -361,20 +361,20 @@ lfrBundle() {
 		;;
 	help | -h | --help)
 		cat <<-'EOF'
-			lfrBundle - Liferay server bundles: toggle start/stop, jump to one,
+			lfrBundles - Liferay server bundles: toggle start/stop, jump to one,
 			or run its database upgrade.
 
 			Usage:
-			  lfrBundle                    pick a bundle from a list, then toggle it
-			  lfrBundle <bundle>           toggle the named bundle (by name or path)
-			  lfrBundle <bundle> -d        start it with the flags below
-			  lfrBundle status             list the running bundles, their ports, and
-			                               the flags each was launched with
-			  lfrBundle stop-all           stop every running bundle (asks first)
-			  lfrBundle cd [<bundle>]      cd to a bundle's Liferay home; never
-			                               starts or stops anything
-			  lfrBundle upgrade [<bundle>] run a stopped bundle's database upgrade
-			                               tool (extra args go to db_upgrade_client.sh)
+			  lfrBundles                    pick a bundle from a list, then toggle it
+			  lfrBundles <bundle>           toggle the named bundle (by name or path)
+			  lfrBundles <bundle> -d        start it with the flags below
+			  lfrBundles status             list the running bundles, their ports, and
+			                                the flags each was launched with
+			  lfrBundles stop-all           stop every running bundle (asks first)
+			  lfrBundles cd [<bundle>]      cd to a bundle's Liferay home; never
+			                                starts or stops anything
+			  lfrBundles upgrade [<bundle>] run a stopped bundle's database upgrade
+			                                tool (extra args go to db_upgrade_client.sh)
 
 			Toggle means a stopped bundle is started and a running one is stopped.
 			Press Esc to cancel the picker.
@@ -406,7 +406,9 @@ lfrBundle() {
 	_lfrBundleToggle "${name}" "$@"
 }
 
-# Short alias, plus back-compat aliases (they now toggle like lfrBundle).
-lfrb() { lfrBundle "$@"; }
-lfrRunBundle() { lfrBundle "$@"; }
-lfrrb() { lfrBundle "$@"; }
+# Short alias, plus back-compat aliases: lfrBundle is the name before the
+# plural, and lfrRunBundle / lfrrb predate the toggle.
+lfrb() { lfrBundles "$@"; }
+lfrBundle() { lfrBundles "$@"; }
+lfrRunBundle() { lfrBundles "$@"; }
+lfrrb() { lfrBundles "$@"; }

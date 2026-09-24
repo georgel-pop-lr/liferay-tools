@@ -54,9 +54,9 @@ notice is held back and printed after the wipe for the same reason.
 `--no-clear` / `-nc` keeps the terminal as it is for a single build, and
 `LFR_CLEAR_SCREEN=0` (in `repos.local.conf`, or exported) keeps it for good. The
 wipe is a no-op off a TTY, so piped or redirected output is never touched. The
-bundle launcher does the same thing at its own launch (see `LfrBundle`).
+bundle launcher does the same thing at its own launch (see `LfrBundles`).
 
-Bundle detection is shared with `LfrBundle` (`_lfrBundleProcs`,
+Bundle detection is shared with `LfrBundles` (`_lfrBundleProcs`,
 `_lfrBundlePidForDir`, `_lfrBundleList`); the shared-bundle lookup with
 `LfrShare` (`_lfrShareReposForBundle`). Guards 1 and 2 are no-ops when those
 modules are not loaded.

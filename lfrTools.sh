@@ -1,8 +1,8 @@
 # lfr.sh - single entry point for every Liferay tool under this folder.
 #
 # Source this one file from your shell rc. It loads every lfr-*.sh tool from
-# each tool subfolder (LfrRepo, LfrCache, ...), defining their functions
-# (lfrRepo, lfrWorktree, lfrCache, ...). It must be sourced, not executed, so
+# each tool subfolder (LfrRepos, LfrCache, ...), defining their functions
+# (lfrRepos, lfrWorktree, lfrCache, ...). It must be sourced, not executed, so
 # the functions and their `cd`s land in your current shell:
 #
 #     source /path/to/liferay-tools/lfrTools.sh
@@ -39,7 +39,7 @@ lfrTools() {
 		Liferay helper commands. Run any with -h (or --help) for details.
 
 		Repos and worktrees
-		  lfrRepo               jump to a Liferay repo (picker, or by name)
+		  lfrRepos              jump to a Liferay repo (picker, or by name)
 		  lfrWorktree           create a git worktree + branch for a ticket,
 		                        wired to its own bundle, offering the IntelliJ
 		                        project at the end
@@ -56,9 +56,9 @@ lfrTools() {
 		  lfrShare              point a repo at an already-built bundle (no rebuild)
 
 		Server bundle
-		  lfrBundle     start or stop a Liferay server (toggle); show status;
+		  lfrBundles    start or stop a Liferay server (toggle); show status;
 		                cd to a bundle; run its database upgrade tool
-		  lfrRunBundle  same as lfrBundle
+		  lfrRunBundle  same as lfrBundles (so is lfrBundle, its old name)
 
 		Build
 		  lfrAntAll     run `ant all`, guarded (running server, shared bundle, one at a time)

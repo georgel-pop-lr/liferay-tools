@@ -1,7 +1,7 @@
 # lfr-bundle-list.sh - shared bundle discovery for the Liferay tools.
 #
 # Loaded via the root lfrTools.sh. Owns LFR_BUNDLES_DIRS, _lfrBundleEntries and
-# _lfrBundleRepoBranches, reused by lfrShare (its bundle picker) and lfrBundle
+# _lfrBundleRepoBranches, reused by lfrShare (its bundle picker) and lfrBundles
 # (the run/stop toggle). Export LFR_BUNDLES_DIRS to override the search roots.
 
 if [ -z "${LFR_BUNDLES_DIRS+x}" ]; then
@@ -16,7 +16,7 @@ fi
 # roots (a Tomcat dir directly or under liferay-dxp/, matching start-liferay.sh),
 # with LFR_BUNDLES_PRIORITY prefixes sorted first (stable within each rank).
 # Empty shells (a bare .liferay-home, no server) and non-Tomcat (Wildfly/JBoss)
-# bundles are skipped, since lfrBundle only launches Tomcat.
+# bundles are skipped, since lfrBundles only launches Tomcat.
 _lfrBundleEntries() {
 	local root d name rank i seq=0
 	{

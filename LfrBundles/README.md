@@ -10,7 +10,7 @@ one without manually editing `server.xml` or hunting for a free port.
 | File | Purpose |
 |---|---|
 | `start-liferay.sh` | Launches a bundle with auto-port selection. Rewrites `tomcat/conf/server.xml` in place when the resolved ports differ from what the file holds, after backing it up. |
-| `lfr-bundle.sh` | Defines `lfrBundle` (alias `lfrb`): toggles a bundle (start if stopped, stop if running) via a picker or by name, plus `status`, `stop-all`, `cd` (jump to a bundle without starting it), and `upgrade` (run its database upgrade tool). `lfrRunBundle` / `lfrrb` remain as back-compat aliases. |
+| `lfr-bundle.sh` | Defines `lfrBundles` (alias `lfrb`): toggles a bundle (start if stopped, stop if running) via a picker or by name, plus `status`, `stop-all`, `cd` (jump to a bundle without starting it), and `upgrade` (run its database upgrade tool). `lfrRunBundle` / `lfrrb` remain as back-compat aliases. |
 | `com.liferay.portal.search.elasticsearch7.configuration.ElasticsearchConfiguration.config` | Embedded-Elasticsearch configuration for ES7-era bundles. Regenerated into the bundle's `osgi/configs/` directory on every run (with a per-instance transport port), so search works out of the box without an external Elasticsearch server. |
 | `com.liferay.portal.search.elasticsearch8.configuration.ElasticsearchConfiguration.config` | Same, for ES8-era bundles. The launcher picks the right one based on the bundle's Elasticsearch sidecar version. |
 | `start-liferay.conf` | Machine-specific config (bundle roots and JDK paths). Gitignored - yours alone. |
@@ -24,7 +24,7 @@ together you can move the folder freely.
 
    ```bash
    git clone https://github.com/georgel-pop-lr/liferay-tools.git
-   cd liferay-tools/LfrBundle
+   cd liferay-tools/LfrBundles
    ```
 
 2. Create your machine config by copying the tracked example, then edit it
@@ -35,7 +35,7 @@ together you can move the folder freely.
    ```
 
 3. Source the Liferay Tools aggregator from your shell rc (see the top-level
-   README). That defines `lfrBundle` (short alias `lfrb`; `lfrRunBundle`/`lfrrb`
+   README). That defines `lfrBundles` (short alias `lfrb`; `lfrRunBundle`/`lfrrb`
    are back-compat aliases for it), so you can call it from anywhere:
 
    ```bash
@@ -58,7 +58,7 @@ back to built-in defaults and prints a hint.
 
 | Key | Purpose |
 |---|---|
-| `BUNDLES_DIRS` | Array of directories that hold your Liferay bundles. `start-liferay.sh`'s own picker scans all of them; missing directories are silently skipped. Note: the `lfrBundle` picker uses a separate list, `LFR_BUNDLES_DIRS` from `LfrCommon` (override it in `LfrCommon/repos.local.conf`), so keep the two in sync if you change either. |
+| `BUNDLES_DIRS` | Array of directories that hold your Liferay bundles. `start-liferay.sh`'s own picker scans all of them; missing directories are silently skipped. Note: the `lfrBundles` picker uses a separate list, `LFR_BUNDLES_DIRS` from `LfrCommon` (override it in `LfrCommon/repos.local.conf`), so keep the two in sync if you change either. |
 | `JDK_8` / `JDK_11` / `JDK_17` | JDK roots by major version. The launcher picks one from the bundle name (see [JDK selection](#jdk-selection-older-bundles-need-older-jdks)); leave a version empty if you never run that family. |
 | `JDK_21` | JDK root usable via `--jdk`/`JAVA_HOME` only; the name-based detection never selects it. |
 | `JPDA_SUSPEND` | Set to `y` to make `--debug` wait for the debugger before starting (same as `--suspend`). |
@@ -93,9 +93,9 @@ locations stay distinguishable:
 ./start-liferay.sh --debug   # picker, then debug mode
 ```
 
-(This is the launcher's own picker. `lfrBundle`/`lfrRunBundle` open the
+(This is the launcher's own picker. `lfrBundles`/`lfrRunBundle` open the
 state-labelled *toggle* picker instead; see
-[the `lfrBundle` command](#running-and-stopping-the-lfrbundle-command).)
+[the `lfrBundles` command](#running-and-stopping-the-lfrbundle-command).)
 
 When [`fzf`](https://github.com/junegunn/fzf) is installed it drives a fuzzy
 picker (type to filter, `Enter` to choose); otherwise the launcher falls back
@@ -140,7 +140,7 @@ Pass `--debug` to start Tomcat with the JVM's JPDA debug agent enabled, so
 IntelliJ / Eclipse / VS Code can attach to it:
 
 ```bash
-lfrBundle <name> -d
+lfrBundles <name> -d
 ./start-liferay.sh --debug /path/to/another/liferay-bundle
 ```
 
@@ -171,7 +171,7 @@ boots whether a debugger is attached or not. Pass `--suspend` (or set
 before starting:
 
 ```bash
-lfrBundle <name> -s
+lfrBundles <name> -s
 ```
 
 Attach from your IDE using:
@@ -183,13 +183,13 @@ Attach from your IDE using:
 ### Running from anywhere
 
 Once you source the Liferay Tools aggregator (`lfrTools.sh`) from your shell rc,
-`lfrBundle` (and its back-compat alias `lfrRunBundle`) is available from any
+`lfrBundles` (and its back-compat alias `lfrRunBundle`) is available from any
 directory:
 
 ```bash
-lfrBundle
-lfrBundle <name> -d
-lfrBundle /path/to/bundle
+lfrBundles
+lfrBundles <name> -d
+lfrBundles /path/to/bundle
 ```
 
 These are the toggle (defined in `lfr-bundle.sh`): a stopped bundle is started
@@ -198,9 +198,9 @@ only on the start path. The launcher resolves its own location internally, so
 the bundled Elasticsearch config is still found regardless of where you call
 it from.
 
-### Running and stopping: the `lfrBundle` command
+### Running and stopping: the `lfrBundles` command
 
-`lfrBundle` (alias `lfrb`) is the single entry point, and it toggles: it starts
+`lfrBundles` (alias `lfrb`) is the single entry point, and it toggles: it starts
 a stopped bundle or stops a running one, so you never blindly start a second
 copy (a bundle cannot run twice safely, since a second instance shares the same
 `catalina.base`, database, and OSGi state). A running bundle is a java process
@@ -210,11 +210,11 @@ same-named bundles across roots stay distinguishable), and the TCP ports it is
 listening on (read from `ss`, so auto-picked ports show their real value).
 
 ```bash
-lfrBundle                # picker over every known bundle with its state; selecting one toggles it. Esc cancels
-lfrBundle <name>         # toggle that bundle directly, no picker
-lfrBundle <name> -c      # start-flags (here --clean) are forwarded to start-liferay.sh, but only when starting
-lfrBundle <name> -t      # start as a testIntegration target (exposes the test connectors)
-lfrBundle status         # list running bundles, their ports, and how each was launched
+lfrBundles                # picker over every known bundle with its state; selecting one toggles it. Esc cancels
+lfrBundles <name>         # toggle that bundle directly, no picker
+lfrBundles <name> -c      # start-flags (here --clean) are forwarded to start-liferay.sh, but only when starting
+lfrBundles <name> -t      # start as a testIntegration target (exposes the test connectors)
+lfrBundles status         # list running bundles, their ports, and how each was launched
 
 Each running bundle also gets a `run` line naming the flags it was started with,
 the JDK it resolved to, and how long it has been up:
@@ -231,17 +231,17 @@ stays its parent for the life of the bundle, still holding the arguments in its 
 command line. Only `--debug` survives into the JVM itself, as `-agentlib:jdwp`, so the
 parent is the only place the rest of them exist. A bundle started outside
 `start-liferay.sh` has no such parent and gets no `run` line.
-lfrBundle stop-all       # stop every running bundle (asks to confirm)
-lfrBundle cd [<name>]    # cd to a bundle's Liferay home; never starts or stops anything
-lfrBundle upgrade [<name>] [args]   # run a stopped bundle's database upgrade tool
+lfrBundles stop-all       # stop every running bundle (asks to confirm)
+lfrBundles cd [<name>]    # cd to a bundle's Liferay home; never starts or stops anything
+lfrBundles upgrade [<name>] [args]   # run a stopped bundle's database upgrade tool
 ```
 
-`lfrBundle cd` jumps into the bundle to edit `portal-ext.properties`, read
+`lfrBundles cd` jumps into the bundle to edit `portal-ext.properties`, read
 logs, or run a tool by hand. It lands in the Liferay home: the bundle
 directory itself, or the nested `liferay-dxp/` of a packaged DXP bundle. With
 no name it opens the same state-labelled picker as the toggle.
 
-`lfrBundle upgrade` runs the bundle's
+`lfrBundles upgrade` runs the bundle's
 `tools/portal-tools-db-upgrade-client/db_upgrade_client.sh` in the foreground,
 so its output streams to your terminal and its interactive shell works; extra
 args are passed through to the client. It refuses while that bundle is
@@ -259,7 +259,7 @@ bundles under `LFR_BUNDLES_DIRS` (needs `LfrCommon` loaded, with
 `LFR_BUNDLES_PRIORITY` names floated to the top); give a path to toggle a
 bundle outside those roots. `status`/`ls`, `stop-all`/`stopall`, and
 `help`/`-h`/`--help` are synonyms. `lfrRunBundle` / `lfrrb` remain as
-back-compat aliases (they now toggle, like `lfrBundle`).
+back-compat aliases (they now toggle, like `lfrBundles`).
 
 Every entry names the checkouts that deploy into it and the branch each one has
 checked out, as `<- <repo>@<branch>`, so you can tell what a bundle is for
@@ -274,7 +274,7 @@ liferay-bundle-7.4.x   (/home/.../bundles)   [stopped]  <- liferay-portal-7.4.x@
 
 The picker uses a brief form of that, without the JDK: its line already carries the
 name, the pid, the ports and the checkouts, and the JDK is the same for every bundle.
-`lfrBundle status` has the room, so it shows the JDK too.
+`lfrBundles status` has the room, so it shows the JDK too.
 
 A repo counts as pointing at a bundle when its
 `app.server.<user>.properties` resolves `app.server.parent.dir` there, so a
@@ -282,7 +282,7 @@ bundle repointed with [lfrShare](../LfrShare/README.md) shows the sharing repo
 and is marked `(shared)`: you can see a bundle is someone else's deploy target
 before you stop it. A detached HEAD shows the short sha instead of a branch, and
 a bundle no repo points at (the downloaded `liferay-dxp-tomcat-*` ones) just
-shows its run state. `lfrBundle status` prints the same `<- ` line under each
+shows its run state. `lfrBundles status` prints the same `<- ` line under each
 running bundle.
 
 ### JDK selection (older bundles need older JDKs)
@@ -308,7 +308,7 @@ The JDK paths come from `start-liferay.conf` (`JDK_8`, `JDK_11`, `JDK_17`,
 To override the detection per-run, use `--jdk`:
 
 ```bash
-lfrBundle <name> -j ${HOME}/liferay/tools/jvm/jdk-11
+lfrBundles <name> -j ${HOME}/liferay/tools/jvm/jdk-11
 ./start-liferay.sh --jdk=/path/to/jdk /path/to/bundle
 ```
 
@@ -333,7 +333,7 @@ Pass `--test` / `-t` to turn a bundle into a target for `testIntegration` agains
 the running server (instead of a managed one the test boots itself):
 
 ```bash
-lfrBundle <name> -t
+lfrBundles <name> -t
 ```
 
 The test-support bundles (`com.liferay.portal.test`, which exports
@@ -424,8 +424,8 @@ When both are given, `--clean` wins.
 #### Full clean (`--clean`)
 
 ```bash
-lfrBundle <name> -c
-lfrBundle <name> -c -y      # skip the confirmation prompt
+lfrBundles <name> -c
+lfrBundles <name> -c -y      # skip the confirmation prompt
 ```
 
 After confirmation it:
@@ -443,7 +443,7 @@ connections.
 #### Cache clean (`--clean-cache`)
 
 ```bash
-lfrBundle <name> -cc
+lfrBundles <name> -cc
 ```
 
 The light version: it removes only `osgi/state`, `work`, and the Tomcat
@@ -460,7 +460,7 @@ aborts instead, telling you to re-run with `--db-docker`. To target a container
 directly (and skip the prompt), pass `--db-docker <container>`:
 
 ```bash
-lfrBundle <name> -c -dbd pg-db
+lfrBundles <name> -c -dbd pg-db
 ```
 
 ### A clean terminal for each launch (`--no-clear`)

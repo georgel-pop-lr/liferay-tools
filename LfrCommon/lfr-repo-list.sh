@@ -1,7 +1,7 @@
 # lfr-repo-list.sh - shared repo discovery and picker for the Liferay tools.
 #
 # Loaded via the root lfrTools.sh. Owns the per-user repo config and the two
-# helpers reused by lfrRepo, lfrWorktree, and lfrCache:
+# helpers reused by lfrRepos, lfrWorktree, and lfrCache:
 #     _lfrRepoEntries    list git repos under the configured roots (tab-separated),
 #                        with --branch labelling each with its checked-out branch
 #     _lfrRepoPick [q]    pick one via fzf or a numbered menu; echoes its path
@@ -158,7 +158,7 @@ _lfrPick() {
 #
 # A query matching exactly one repo NAME takes that repo outright, so the branch
 # now in the label cannot turn a name that used to resolve on its own into a
-# picker over every repo that happens to sit on that branch (`lfrRepo master`
+# picker over every repo that happens to sit on that branch (`lfrRepos master`
 # means the masterBrian clone, not the twenty repos parked on master).
 _lfrRepoPick() {
 	local query="${1:-}" entries

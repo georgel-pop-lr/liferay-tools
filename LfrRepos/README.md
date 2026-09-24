@@ -1,7 +1,7 @@
-# LfrRepo tools
+# LfrRepos tools
 
 A small set of shell functions for working with Liferay git repos scattered
-across more than one root directory. `lfrRepo` (short alias `lfrr`) jumps between
+across more than one root directory. `lfrRepos` (short alias `lfrr`) jumps between
 clones without typing full paths; `lfrWorktree` (short alias `lfrw`) spins up a
 worktree for a branch (new off a base ref, or an existing one checked out),
 wired to a bundle and database of its own, `lfrWorktreeRename` (short alias
@@ -17,7 +17,7 @@ script runs in a subshell and its `cd` would not reach your interactive shell.
 
 | File | Purpose |
 |---|---|
-| `lfr-repo.sh` | Defines the `lfrRepo` switcher and its tab-completion. |
+| `lfr-repo.sh` | Defines the `lfrRepos` switcher and its tab-completion. |
 | `lfr-worktree.sh` | Defines the `lfrWorktree` creator, the `lfrWorktreeRename` renamer, the `lfrWorktreeRemove` remover, `lfrWorktreeIdeaClean` for IntelliJ leftovers, and `lfrWorktreeIdeaInit` for giving a worktree an IntelliJ project. |
 
 The repo list, picker, and per-user config live in the shared module
@@ -28,7 +28,7 @@ bundle, so LfrBuild must be loaded too (the aggregator loads everything).
 
 ## Setup
 
-1. Source the top-level aggregator from your shell rc (it defines `lfrRepo`,
+1. Source the top-level aggregator from your shell rc (it defines `lfrRepos`,
    `lfrWorktree`, and the other tools):
 
    ```bash
@@ -51,7 +51,7 @@ bundle, so LfrBuild must be loaded too (the aggregator loads everything).
 
 ## Commands
 
-### `lfrRepo`: jump between repos
+### `lfrRepos`: jump between repos
 
 Scans each directory in `LFR_REPO_ROOTS` for immediate subdirectories that
 contain a `.git` entry, then `cd`s into the one you pick. When
@@ -66,22 +66,22 @@ directory is named after is visible before you jump into it.
 liferay-portal-LPD-98055    @LPD-100568   (/media/georgelpop/Data/liferay/repos)
 ```
 
-The branch is part of what the picker searches, so `lfrRepo LPD-100568` finds
+The branch is part of what the picker searches, so `lfrRepos LPD-100568` finds
 the checkout above. A query that matches exactly one repo *name* still wins
-outright, so `lfrRepo master` goes to the `masterBrian` clone rather than
+outright, so `lfrRepos master` goes to the `masterBrian` clone rather than
 opening a picker over every repo parked on `master`.
 
 | Invocation | Behavior |
 |---|---|
-| `lfrRepo` | Open the picker over every repo in all roots. |
-| `lfrRepo <name>` | Jump straight to the only match; with more than one match, open the picker prefiltered by `<name>` (fzf; the numbered fallback lists everything). |
-| `lfrRepo -l`, `lfrRepo --list` | List every repo with its branch and its root, without changing directory. |
-| `lfrRepo <prefix><Tab>` | Tab-complete repo names. |
+| `lfrRepos` | Open the picker over every repo in all roots. |
+| `lfrRepos <name>` | Jump straight to the only match; with more than one match, open the picker prefiltered by `<name>` (fzf; the numbered fallback lists everything). |
+| `lfrRepos -l`, `lfrRepos --list` | List every repo with its branch and its root, without changing directory. |
+| `lfrRepos <prefix><Tab>` | Tab-complete repo names. |
 
 ```bash
-lfrRepo                 # pick interactively
-lfrRepo portal          # filter to repos matching "portal"
-lfrRepo -l              # just list, stay put
+lfrRepos                 # pick interactively
+lfrRepos portal          # filter to repos matching "portal"
+lfrRepos -l              # just list, stay put
 ```
 
 Repos whose names match a `LFR_REPO_PRIORITY` prefix float to the top of every
@@ -112,7 +112,7 @@ It refuses to run when no branch is given, when not inside a git repo, when
 the target directory already exists, or when the base ref does not resolve,
 leaving no half-made worktree behind; an existing branch already checked out
 elsewhere is refused by git itself. Because the new directory is named
-`liferay-portal-*`, it shows up at the top of `lfrRepo` alongside your other
+`liferay-portal-*`, it shows up at the top of `lfrRepos` alongside your other
 portal clones.
 
 Whether the branch is new or already existed, the invoking clone's per-user
@@ -148,7 +148,7 @@ without the two properties that are meant to differ per bundle,
 property, so one whose value changed counts once. Answer `y` and it is reused as
 before. Answer `n` and it is moved to `<dir>.old-<timestamp>`, so nothing is
 deleted, and a fresh bundle is wired in its place; the database keeps that name
-and its data, so reset it with `lfrBundle -c` or drop it with `dropdb`. Only
+and its data, so reset it with `lfrBundles -c` or drop it with `dropdb`. Only
 `y` and `n` are accepted and anything else asks again, through the shared
 `_lfrConfirm`. With no terminal to ask
 at it is reused, which is what every run before the prompt did, and the lines

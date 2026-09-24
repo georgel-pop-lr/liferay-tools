@@ -23,7 +23,7 @@
 # terminal as it is.
 #
 # Bundle detection (_lfrBundleProcs / _lfrBundleList / _lfrBundlePidForDir) comes
-# from LfrBundle; the shared-bundle lookup (_lfrShareReposForBundle) from LfrShare.
+# from LfrBundles; the shared-bundle lookup (_lfrShareReposForBundle) from LfrShare.
 
 # Echo the app-server bundle dir that `ant all` in the current repo deploys into:
 # read app.server.parent.dir from app.server.${USER}.properties (falling back to
@@ -94,12 +94,12 @@ lfrAntAll() {
 		local pid
 		if [ -n "${mine}" ] && declare -F _lfrBundlePidForDir >/dev/null 2>&1; then
 			if pid="$(_lfrBundlePidForDir "${mine}")"; then
-				echo "lfrAntAll: this repo's bundle is running (PID ${pid}). Stop it first (lfrBundle), or pass --force:" >&2
+				echo "lfrAntAll: this repo's bundle is running (PID ${pid}). Stop it first (lfrBundles), or pass --force:" >&2
 				printf '  %s\n' "${mine}" >&2
 				return 1
 			fi
 		elif [ -n "$(_lfrBundleProcs)" ]; then
-			echo "lfrAntAll: a Liferay bundle is running. Stop it first (lfrBundle), or pass --force:" >&2
+			echo "lfrAntAll: a Liferay bundle is running. Stop it first (lfrBundles), or pass --force:" >&2
 			_lfrBundleList >&2
 			return 1
 		fi
