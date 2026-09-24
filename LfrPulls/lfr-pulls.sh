@@ -26,6 +26,7 @@ _lfrPullsDir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 : "${LFR_PULLS_REPO:=brianchandotcom/liferay-portal}"
 : "${LFR_PULLS_MASTER_REF:=brian/master}"
+: "${LFR_PULLS_UPSTREAM_REPO:=liferay/liferay-portal}"
 : "${LFR_PULLS_TEAM:=${LFR_GIT_FORK_ORG:-${LFR_PULLS_MINE_ORG:-}}}"
 : "${LFR_PULLS_FORK_REPO:=${LFR_PULLS_REPO##*/}}"
 
@@ -239,10 +240,10 @@ _lfrPullsHelp() {
 		names the open pull already answering it, so a rejection still to answer is
 		a row with "-" there. A ticket whose work has since landed on the master ref
 		drops out of the listing entirely, which is what "still not landed" means;
-		the ref is scanned only from the oldest rejection in hand, so a ticket that
-		landed something before this pull was sent back still counts as owed. Keep
-		the ref fetched (lfrGitUpdateMaster); without one the section lists every
-		rejection and says so.
+		landing is asked of GitHub's commit search on LFR_PULLS_UPSTREAM_REPO, only
+		from the oldest rejection in hand, so a ticket that landed something before
+		this pull was sent back still counts as owed. When the search fails the
+		local master ref answers instead, and the section says so.
 
 		Config (lfr-pulls.local.conf):
 		  LFR_PULLS_REPO         repo to list (default brianchandotcom/liferay-portal)
@@ -255,6 +256,8 @@ _lfrPullsHelp() {
 		  LFR_PULLS_EE_REPO      backports repo (default liferay/liferay-portal-ee)
 		  LFR_PULLS_MASTER_REPO  local clone to grep for merges (default: cwd repo)
 		  LFR_PULLS_MASTER_REF   master ref to grep (default brian/master)
+		  LFR_PULLS_UPSTREAM_REPO  repo whose commit search says a rejected
+		                         ticket landed (default liferay/liferay-portal)
 		  LFR_PULLS_LINKS        on|off|auto (default auto): make each #number a
 		                         clickable link on a terminal, plain when piped
 		  LFR_PULLS_REJECTED_DAYS  how far back rejected looks, and the rejected
@@ -592,6 +595,31 @@ _lfrPullsLoadMasterTickets() {
 		grep -Fxf <(printf '%s\n' "${keys}") | sort -u)
 }
 
+# Load into the associative array named $2 the ticket keys, out of the newline
+# list $3, that have a commit on LFR_PULLS_UPSTREAM_REPO since $1, asked of
+# GitHub's commit search one key at a time, so the answer never depends on how
+# recently a local clone was fetched. The mirror itself cannot answer: it is a
+# fork, and GitHub indexes no commits in a fork (LPD-101584 returned 0 there and
+# 12 on liferay/liferay-portal, 2026-09-24).
+#
+# Matched on the subject's own prefix, the same as _lfrPullsLoadMasterTickets.
+# Returns 1 on the first failed call, rate limit included, so the caller falls
+# back to the local ref rather than trusting half an answer.
+_lfrPullsLoadUpstreamTickets() {
+	local -n _upstreamLanded="${2}"
+	local key subjects
+	while IFS= read -r key; do
+		case "${key}" in "" | "#"*) continue ;; esac
+		subjects="$(gh api -X GET search/commits \
+			-f q="repo:${LFR_PULLS_UPSTREAM_REPO} ${key} committer-date:>=${1}" \
+			-f per_page=100 --jq '.items[].commit.message | split("\n")[0]' 2>/dev/null)" ||
+			return 1
+		printf '%s\n' "${subjects}" | grep -oiE '^[A-Za-z]+[- ][0-9]+' |
+			tr '[:lower:] ' '[:upper:]-' | grep -Fxq "${key}" && _upstreamLanded["${key}"]=1
+	done <<<"${3}"
+	return 0
+}
+
 # The pulls that came back off the road: closed on the mirror without being
 # merged, and whose ticket has still not landed on the master ref, so the work
 # is owed. Newest first. $1 whose pulls, $2 how many days back.
@@ -610,7 +638,7 @@ _lfrPullsRejectedSection() {
 	senderMe="$(_lfrPullsSenderOwner "${me}" "${me}")"
 
 	printf '\n%s rejected pulls (%s, last %s day(s), still not landed on %s)\n' \
-		"${LFR_PULLS_REPO}" "${person}" "${days}" "${LFR_PULLS_MASTER_REF}"
+		"${LFR_PULLS_REPO}" "${person}" "${days}" "${LFR_PULLS_UPSTREAM_REPO}"
 
 	local since sinceTs json
 	since="$(date -u -d "${days} days ago" +%Y-%m-%d)"
@@ -637,31 +665,35 @@ _lfrPullsRejectedSection() {
 		return 0
 	fi
 
-	# The landing check is what "still not landed" means, so a missing clone or
-	# ref widens the section rather than failing it, and says so.
-	local dir landedJson='{}' landedNote=""
-	if dir="$(_lfrPullsMasterDir rejected 2>/dev/null)"; then
-		# Scanned from the oldest rejection in hand, not from the start of the
-		# window, because the question is whether anything landed AFTER the
-		# rejection: a ticket with several pulls can have landed other work
-		# before this one was sent back, and that is still work owed. It is also
-		# what keeps `all` off a full-history scan of the ref, which cost 15s of
-		# CPU for the few months the rejections actually spanned.
-		local landedSince
-		landedSince="$(printf '%s' "${candidates}" |
-			jq -r 'map(.closedAt) | min | .[:10]')"
-		local -A landed=()
-		_lfrPullsLoadMasterTickets "${dir}" "${landedSince:-${since}}" landed \
-			"$(printf '%s' "${candidates}" | jq -r '.[].key' | sort -u)"
-		# An object, not an array: a lookup has to read its key off the
-		# candidate, and `$landed | index(.key)` would evaluate .key against
-		# $landed itself, which is what `$landed[.key]` gets right.
-		landedJson="$(printf '%s\n' "${!landed[@]}" |
-			jq -sRc 'split("\n") | map(select(. != "")) |
-				map({ key: ., value: true }) | from_entries')"
-	else
-		landedNote="  (no ${LFR_PULLS_MASTER_REF} to check against: every rejection is listed, landed or not)"
+	# The landing check is what "still not landed" means, so a failed search
+	# falls back to the local ref, and a missing clone or ref widens the section
+	# rather than failing it, saying so either way.
+	#
+	# Asked from the oldest rejection in hand, not from the start of the window,
+	# because the question is whether anything landed AFTER the rejection: a
+	# ticket with several pulls can have landed other work before this one was
+	# sent back, and that is still work owed.
+	local dir landedJson='{}' landedNote="" landedSince keys
+	landedSince="$(printf '%s' "${candidates}" |
+		jq -r 'map(.closedAt) | min | .[:10]')"
+	keys="$(printf '%s' "${candidates}" | jq -r '.[].key' | sort -u)"
+	local -A landed=()
+	if ! _lfrPullsLoadUpstreamTickets "${landedSince:-${since}}" landed "${keys}"; then
+		landed=()
+		if dir="$(_lfrPullsMasterDir rejected 2>/dev/null)"; then
+			_lfrPullsLoadMasterTickets "${dir}" "${landedSince:-${since}}" landed "${keys}"
+			landedNote="  (GitHub commit search failed: checked against the local ${LFR_PULLS_MASTER_REF}, as fresh as its last fetch)"
+		else
+			landedNote="  (GitHub commit search failed and no ${LFR_PULLS_MASTER_REF} to check against: every rejection is listed, landed or not)"
+		fi
 	fi
+
+	# An object, not an array: a lookup has to read its key off the candidate,
+	# and `$landed | index(.key)` would evaluate .key against $landed itself,
+	# which is what `$landed[.key]` gets right.
+	[ "${#landed[@]}" -gt 0 ] && landedJson="$(printf '%s\n' "${!landed[@]}" |
+		jq -sRc 'split("\n") | map(select(. != "")) |
+			map({ key: ., value: true }) | from_entries')"
 
 	# Which of these tickets already has an open pull of yours on the mirror.
 	# Served from the dashboard's prefetch when it ran, so no call of its own
