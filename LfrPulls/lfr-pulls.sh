@@ -205,19 +205,21 @@ _lfrPullsHelp() {
 		pull merged: Brian's merge rewrites the commits, so only a subject can be
 		matched, and a ticket's resends all carry the same title, which would mark
 		every one of them merged. The footer answers it instead, listing the
-		ticket's commits on the master ref; their date tells you which resend
-		landed, and "nothing landed yet" with the ref tip tells you the ref may
-		just be stale (lfrGitUpdateMaster).
+		ticket's commits on LFR_PULLS_UPSTREAM_REPO, found by GitHub's commit
+		search; their date tells you which resend landed. When the search fails it
+		reads the local master ref instead, and says so with the ref tip.
 
 		stats (mine) counts the PRs you sent, forwarded or opened directly, by
 		month:
 		  SENT      PRs you created that month
 		  MERGED    of those closed that month, the ones whose exact title is a
-		            commit on the master ref (Brian merged that pull in)
+		            commit of yours on LFR_PULLS_UPSTREAM_REPO (Brian merged it in)
 		  REJECTED  closed that month whose title is NOT on master (just closed)
 		A pull is merged only if its own title landed, so a superseded resend of a
-		ticket whose other work merged still counts as rejected. Keep the master
-		ref fetched (e.g. lfrGitUpdateMaster). stats all cannot title-match every
+		ticket whose other work merged still counts as rejected. The subjects come
+		off the local master ref, fetched first, since a year of titles is more
+		GitHub commit searches than its rate limit allows. week asks GitHub
+		instead, falling back to the ref. stats all cannot title-match every
 		PR, so it shows only sent and closed for the whole repo. stats then prints
 		the same four queues in full, adding each pull's age and its own labels,
 		and stats all widens the mirror section to every open pull as well.
@@ -254,10 +256,11 @@ _lfrPullsHelp() {
 		  LFR_PULLS_FORK_REPO    the repo an owner with no slash means (default
 		                         liferay-portal, the name in LFR_PULLS_REPO)
 		  LFR_PULLS_EE_REPO      backports repo (default liferay/liferay-portal-ee)
-		  LFR_PULLS_MASTER_REPO  local clone to grep for merges (default: cwd repo)
+		  LFR_PULLS_UPSTREAM_REPO  repo whose commit search says what landed
+		                         (default liferay/liferay-portal)
+		  LFR_PULLS_MASTER_REPO  local clone stats greps, and the others when
+		                         that search fails (default: cwd repo)
 		  LFR_PULLS_MASTER_REF   master ref to grep (default brian/master)
-		  LFR_PULLS_UPSTREAM_REPO  repo whose commit search says a rejected
-		                         ticket landed (default liferay/liferay-portal)
 		  LFR_PULLS_LINKS        on|off|auto (default auto): make each #number a
 		                         clickable link on a terminal, plain when piped
 		  LFR_PULLS_REJECTED_DAYS  how far back rejected looks, and the rejected
@@ -310,9 +313,16 @@ _lfrPullsStatsTable() {
 
 # Your per-month PR stats, deciding merged/rejected by whether each PR's exact
 # title landed on LFR_PULLS_MASTER_REF (same signal as `lfrPulls week`).
+#
+# Off the local ref rather than GitHub's commit search, because a year of titles
+# means one search per forwarded ticket, 38 of them on 2026-09-24, past the 30 a
+# minute allowed. The ref is fetched first so it cannot be stale; a failed fetch
+# still counts, off the ref as it is, and the footer's tip says how old that is.
 _lfrPullsStatsMine() {
 	local months="${1}" person="${2}" dir
 	dir="$(_lfrPullsMasterDir)" || return 1
+	git -C "${dir}" fetch --no-tags -q "${LFR_PULLS_MASTER_REF%%/*}" "${LFR_PULLS_MASTER_REF#*/}" 2>/dev/null ||
+		echo "lfrPulls stats: could not fetch ${LFR_PULLS_MASTER_REF}; counting off it as it is." >&2
 
 	local windowStart sinceDate json
 	windowStart="$(date -d "$(date +%Y-%m-01) -$((months - 1)) month" +%Y-%m)"
@@ -406,6 +416,97 @@ _lfrPullsStats() {
 	_lfrPullsDashboard detail "${scope}"
 }
 
+# Print "<sha>\t<committer date>\t<subject>" for every commit on
+# LFR_PULLS_UPSTREAM_REPO matching the search qualifiers $1 and committed from
+# $2 through $3 (YYYY-MM-DD), newest first. This is what every landing check
+# asks first, so the answer never depends on how recently a local clone was
+# fetched. The mirror itself cannot answer: it is a fork, and GitHub indexes no
+# commits in a fork (LPD-101584 returned 0 there and 12 on
+# liferay/liferay-portal, 2026-09-24).
+#
+# GitHub serves at most 1000 results per search, so a range holding more is
+# split in half and each half asked on its own. Returns 1 on the first failed
+# call, rate limit included, so the caller falls back to the local ref rather
+# than trusting half an answer.
+_lfrPullsSearchCommits() {
+	local qualifiers="${1}" from="${2}" to="${3}" jqItems out total pages page
+	jqItems='.items[] | "\(.sha)\t\(.commit.committer.date[:10])\t\(.commit.message | split("\n")[0])"'
+	out="$(gh api -X GET search/commits \
+		-f q="repo:${LFR_PULLS_UPSTREAM_REPO} ${qualifiers} committer-date:${from}..${to}" \
+		-f sort=committer-date -f order=desc -f per_page=100 -f page=1 \
+		--jq ".total_count, (${jqItems})" 2>/dev/null)" || return 1
+	total="$(printf '%s\n' "${out}" | head -1)"
+
+	if [ "${total:-0}" -gt 1000 ] && [ "${from}" != "${to}" ]; then
+		local days mid
+		days=$(( ($(date -u -d "${to}" +%s) - $(date -u -d "${from}" +%s)) / 86400 ))
+		mid="$(date -u -d "${from} +$((days / 2)) days" +%Y-%m-%d)"
+		_lfrPullsSearchCommits "${qualifiers}" "$(date -u -d "${mid} +1 day" +%Y-%m-%d)" "${to}" || return 1
+		_lfrPullsSearchCommits "${qualifiers}" "${from}" "${mid}" || return 1
+		return 0
+	fi
+
+	printf '%s\n' "${out}" | tail -n +2 | grep .
+	[ "${total:-0}" -gt 1000 ] && total=1000
+	pages=$(( (${total:-0} + 99) / 100 ))
+	for ((page = 2; page <= pages; page++)); do
+		gh api -X GET search/commits \
+			-f q="repo:${LFR_PULLS_UPSTREAM_REPO} ${qualifiers} committer-date:${from}..${to}" \
+			-f sort=committer-date -f order=desc -f per_page=100 -f page="${page}" \
+			--jq "${jqItems}" 2>/dev/null || return 1
+	done
+	return 0
+}
+
+# Load into the associative array named $3 the subjects of commits on
+# LFR_PULLS_UPSTREAM_REPO since $2 that are the exact title of a pull in the
+# JSON $4, the same answer _lfrPullsLoadMasterSubjects gives off a clone.
+#
+# One author search on $1 answers most titles at once. It cannot answer a pull
+# $1 forwarded with a teammate's commits in it, which is a real share: four of
+# the 59 merged in `stats 12` on 2026-09-24. So each ticket still unmatched gets
+# a search of its own. That is a handful over a week and 38 over a year, which
+# is why stats reads a fetched clone instead and only week comes here.
+#
+# Returns 1 when a search fails; the caller then asks the local ref and says so
+# on stderr.
+_lfrPullsLoadUpstreamSubjects() {
+	local -n _upstreamSubjects="${3}"
+	local titles subjects unmatched key s today
+	titles="$(printf '%s' "${4}" | jq -r '.[].title | select(. != "")' | sort -u)"
+	[ -z "${titles}" ] && return 0
+	today="$(date -u +%Y-%m-%d)"
+	subjects="$(_lfrPullsSearchCommits "author:${1}" "${2}" "${today}")" || return 1
+	unmatched="$(printf '%s\n' "${titles}" |
+		grep -vFxf <(printf '%s\n' "${subjects}" | cut -f3 | grep .))"
+	while IFS= read -r key; do
+		[ -z "${key}" ] && continue
+		subjects="${subjects}
+$(_lfrPullsSearchCommits "${key}" "${2}" "${today}")" || return 1
+	done < <(printf '%s\n' "${unmatched}" | grep -oiE '^[A-Za-z]+[- ][0-9]+' | sort -u)
+	while IFS= read -r s; do
+		[ -n "${s}" ] && _upstreamSubjects["${s}"]=1
+	done < <(printf '%s\n' "${subjects}" | cut -f3 | grep -Fxf <(printf '%s\n' "${titles}"))
+}
+
+# The landed subjects for week: GitHub first, the local ref when the
+# search fails, and a note on stderr saying which one answered when it was not
+# GitHub. $1 person, $2 since, $3 the array, $4 the pulls JSON, $5 the command.
+_lfrPullsLoadLandedSubjects() {
+	local -n _landedSubjects="${3}"
+	_lfrPullsLoadUpstreamSubjects "${1}" "${2}" "${3}" "${4}" && return 0
+	_landedSubjects=()
+	local dir
+	if dir="$(_lfrPullsMasterDir "${5}")"; then
+		_lfrPullsLoadMasterSubjects "${dir}" "${2}" "${3}" "${4}"
+		printf '(GitHub commit search failed: merged is read off the local %s, as fresh as its last fetch, tip %s.)\n' \
+			"${LFR_PULLS_MASTER_REF}" \
+			"$(git -C "${dir}" log -1 --format='%cd' --date=format:'%Y-%m-%d %H:%M' "${LFR_PULLS_MASTER_REF}" 2>/dev/null)" >&2
+		return 0
+	fi
+	return 1
+}
+
 # Load the subjects of commits on the master ref (in clone $1, since date $2)
 # into the associative array named $3, keeping only those that are the exact
 # title of a pull in the JSON $4. A pull merged in when its title is one of
@@ -442,11 +543,10 @@ _lfrPullsWeek() {
 		esac
 	done
 
-	local dir since json rows sender title status
+	local since json rows sender title status
 	if [ -z "${person}" ]; then
 		person="$(_lfrPullsMineUser week)" || return 1
 	fi
-	dir="$(_lfrPullsMasterDir)" || return 1
 	since="$(date -u -d "${days} days ago" +%Y-%m-%dT%H:%M:%SZ)"
 
 	json="$(_lfrPullsMirrorPersonJson "${person}" closed \
@@ -454,8 +554,8 @@ _lfrPullsWeek() {
 
 	# The pulls come first: their titles are what narrows the subject scan.
 	local -A masterSubjects=()
-	_lfrPullsLoadMasterSubjects "${dir}" "$(date -d "${days} days ago -1 month" +%Y-%m-%d)" \
-		masterSubjects "${json}"
+	_lfrPullsLoadLandedSubjects "${person}" "$(date -d "${days} days ago -1 month" +%Y-%m-%d)" \
+		masterSubjects "${json}" week || return 1
 
 	rows=""
 	while IFS=$'\t' read -r num sender title; do
@@ -596,25 +696,18 @@ _lfrPullsLoadMasterTickets() {
 }
 
 # Load into the associative array named $2 the ticket keys, out of the newline
-# list $3, that have a commit on LFR_PULLS_UPSTREAM_REPO since $1, asked of
-# GitHub's commit search one key at a time, so the answer never depends on how
-# recently a local clone was fetched. The mirror itself cannot answer: it is a
-# fork, and GitHub indexes no commits in a fork (LPD-101584 returned 0 there and
-# 12 on liferay/liferay-portal, 2026-09-24).
+# list $3, that have a commit on LFR_PULLS_UPSTREAM_REPO since $1, one search
+# per key (see _lfrPullsSearchCommits).
 #
 # Matched on the subject's own prefix, the same as _lfrPullsLoadMasterTickets.
-# Returns 1 on the first failed call, rate limit included, so the caller falls
-# back to the local ref rather than trusting half an answer.
+# Returns 1 on the first failed call, so the caller falls back to the local ref.
 _lfrPullsLoadUpstreamTickets() {
 	local -n _upstreamLanded="${2}"
 	local key subjects
 	while IFS= read -r key; do
 		case "${key}" in "" | "#"*) continue ;; esac
-		subjects="$(gh api -X GET search/commits \
-			-f q="repo:${LFR_PULLS_UPSTREAM_REPO} ${key} committer-date:>=${1}" \
-			-f per_page=100 --jq '.items[].commit.message | split("\n")[0]' 2>/dev/null)" ||
-			return 1
-		printf '%s\n' "${subjects}" | grep -oiE '^[A-Za-z]+[- ][0-9]+' |
+		subjects="$(_lfrPullsSearchCommits "${key}" "${1}" "$(date -u +%Y-%m-%d)")" || return 1
+		printf '%s\n' "${subjects}" | cut -f3 | grep -oiE '^[A-Za-z]+[- ][0-9]+' |
 			tr '[:lower:] ' '[:upper:]-' | grep -Fxq "${key}" && _upstreamLanded["${key}"]=1
 	done <<<"${3}"
 	return 0
@@ -811,27 +904,33 @@ _lfrPullsTicket() {
 			"$(printf '%s' "${json}" | jq '[.[] | select(.state != "OPEN")] | length')"
 	fi
 
-	# The landing report is a bonus, so a missing clone or ref must not fail the
-	# listing above.
-	local dir
-	dir="$(_lfrPullsMasterDir ticket)" || return 0
-
+	# The landing report is a bonus, so a failed search with no clone or ref to
+	# fall back on must not fail the listing above.
+	#
 	# GitHub's title search tokenizes, so it also finds a pull titled "LCD 52771"
 	# for LCD-52771. Match the same variants here, or the footer would miss the
 	# commits of exactly those pulls.
-	local landed count
-	landed="$(git -C "${dir}" log "${LFR_PULLS_MASTER_REF}" --grep="${ticket/-/[- ]}" \
-		--regexp-ignore-case --format='%h	%cd	%s' --date=format:'%Y-%m-%d' 2>/dev/null)"
+	local landed count where="${LFR_PULLS_UPSTREAM_REPO}" tip="" dir
+	if landed="$(_lfrPullsSearchCommits "${ticket}" 2000-01-01 "$(date -u +%Y-%m-%d)")"; then
+		landed="$(printf '%s\n' "${landed}" | grep -iE "${ticket/-/[- ]}" |
+			awk -F'\t' -v OFS='\t' '{ print substr($1, 1, 13), $2, $3 }')"
+	else
+		dir="$(_lfrPullsMasterDir ticket)" || return 0
+		where="the local ${LFR_PULLS_MASTER_REF} (GitHub commit search failed)"
+		tip="$(git -C "${dir}" log -1 --format='%cd' --date=format:'%Y-%m-%d %H:%M' "${LFR_PULLS_MASTER_REF}")"
+		landed="$(git -C "${dir}" log "${LFR_PULLS_MASTER_REF}" --grep="${ticket/-/[- ]}" \
+			--regexp-ignore-case --format='%h	%cd	%s' --date=format:'%Y-%m-%d' 2>/dev/null)"
+	fi
 	count="$(printf '%s\n' "${landed}" | grep -c .)"
 
 	if [ "${count}" -eq 0 ]; then
-		printf '%s on %s: nothing landed yet (ref tip %s).\n' "${ticket}" "${LFR_PULLS_MASTER_REF}" \
-			"$(git -C "${dir}" log -1 --format='%cd' --date=format:'%Y-%m-%d %H:%M' "${LFR_PULLS_MASTER_REF}")"
+		printf '%s on %s: nothing landed yet%s.\n' "${ticket}" "${where}" \
+			"${tip:+ (ref tip ${tip})}"
 		return 0
 	fi
 
 	printf '%s on %s: %s commit(s) landed, newest first.\n' \
-		"${ticket}" "${LFR_PULLS_MASTER_REF}" "${count}"
+		"${ticket}" "${where}" "${count}"
 	printf '%s\n' "${landed}" | head -5 | column -t -s $'\t' | sed 's/^/  /'
 	[ "${count}" -gt 5 ] && printf '  ... %s more\n' "$((count - 5))"
 
@@ -1442,18 +1541,25 @@ _lfrPullsTeams() {
 	printf '  lfrPulls liferay-frontend, lfrPulls frontend, lfrPulls experience\n'
 	printf 'A name matching no team is used as a GitHub username.\n'
 
-	dir="$(_lfrPullsMasterDir teams 2>/dev/null)" || return 0
+	# Read off GitHub so a stale clone cannot hide a new team, and off the local
+	# ref only when that fails.
+	local codeowners where="${LFR_PULLS_UPSTREAM_REPO}"
+	if ! codeowners="$(gh api -H 'Accept: application/vnd.github.raw' \
+		"repos/${LFR_PULLS_UPSTREAM_REPO}/contents/.github/CODEOWNERS" 2>/dev/null)"; then
+		dir="$(_lfrPullsMasterDir teams 2>/dev/null)" || return 0
+		codeowners="$(git -C "${dir}" show "${LFR_PULLS_MASTER_REF}:.github/CODEOWNERS" 2>/dev/null)"
+		where="${LFR_PULLS_MASTER_REF}"
+	fi
 
 	local known=" ${_LFR_PULLS_TEAMS//[$'\n\t']/ } "
 	local -a missing=()
 	while IFS= read -r t; do
 		[[ "${known}" == *" ${t} "* ]] || missing+=("${t}")
-	done < <(git -C "${dir}" show "${LFR_PULLS_MASTER_REF}:.github/CODEOWNERS" 2>/dev/null |
-		grep -oE '@[A-Za-z0-9_-]+' | tr -d '@' | sort -u)
+	done < <(printf '%s\n' "${codeowners}" | grep -oE '@[A-Za-z0-9_-]+' | tr -d '@' | sort -u)
 
 	[ "${#missing[@]}" -gt 0 ] &&
 		printf '\nCODEOWNERS on %s also owns code as: %s. Add them to _LFR_PULLS_TEAMS.\n' \
-			"${LFR_PULLS_MASTER_REF}" "${missing[*]}"
+			"${where}" "${missing[*]}"
 	return 0
 }
 

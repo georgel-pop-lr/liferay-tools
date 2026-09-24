@@ -49,7 +49,7 @@ and their mirror pulls come from `lfrPulls stats <login>`.
 - `lfrPulls teams` (alias `lfrpteams`) - the product teams with each one's open
   pull count.
 - `lfrPulls ticket <TICKET>` (`t`, alias `lfrpt`) - every pull ever opened for one
-  ticket, oldest first, then what that ticket has landed on the master ref. A bare
+  ticket, oldest first, then what that ticket has landed on `liferay/liferay-portal`. A bare
   ticket is the same thing: `lfrPulls LPD-12345`.
 - `lfrPulls week [days] [<login>]` (`w` or `recent`, alias `lfrpw`) - your pulls
   closed in the last `days` (default 7, reading at most 200 closed PRs), as
@@ -225,7 +225,8 @@ A team is a real GitHub account that owns code in `.github/CODEOWNERS`, and it
 owns the fork where that team reviews. They are not GitHub organizations and not
 GitHub teams, so there is no membership to query; the list lives in
 `_LFR_PULLS_TEAMS` in `lfr-pulls.sh`, and `lfrPulls teams` re-reads CODEOWNERS
-from your local clone and names anything the list is missing.
+from `liferay/liferay-portal` on GitHub (your local clone when that fails) and
+names anything the list is missing.
 
 `liferay-ac`, `liferay-appsec`, `liferay-bpm`, `liferay-commerce`,
 `liferay-content-management`, `liferay-core-infra`, `liferay-database-infra`,
@@ -256,9 +257,11 @@ LPD-75909 on brian/master: 10 commit(s) landed, newest first.
   ...
 ```
 
-The dates tell you which resend Brian took. When nothing matches, the footer
-prints the ref's tip date too, so you can see whether the ticket really has not
-landed or your mirror is just behind (`lfrGitUpdateMaster`).
+The dates tell you which resend Brian took. The commits come from GitHub's
+commit search on `LFR_PULLS_UPSTREAM_REPO` (default `liferay/liferay-portal`),
+so no local clone has to be fetched. The mirror itself cannot be searched: it is
+a fork, and GitHub indexes no commits in a fork. When the search fails the footer
+reads the local master ref instead, says so, and prints its tip date.
 
 The search is GitHub's title search, which tokenizes, so `LCD-52771` also finds a
 pull titled `LCD 52771 2`. That is wanted (those are the same ticket's pulls,
@@ -293,10 +296,16 @@ On the mirror your PRs are always closed, never GitHub-merged (the integration
 to master is done under the CI bot's account, and the commits are rebased so
 their SHAs change). So neither the GitHub merge flag nor commit-SHA reachability
 identifies your merges. Instead, `stats mine` and `week` decide merged vs
-rejected by matching each PR's exact title against the commit subjects on
-`LFR_PULLS_MASTER_REF` (default `brian/master`). Matching the whole title, not
-just the ticket, means a superseded resend of a ticket whose other work merged
-still counts as rejected. Keep the ref fetched (e.g. `lfrGitUpdateMaster`).
+rejected by matching each PR's exact title against commit subjects. Matching the
+whole title, not just the ticket, means a superseded resend of a ticket whose
+other work merged still counts as rejected.
+
+`week` takes the subjects from GitHub's commit search: one search on your
+commits, then one per ticket still unmatched, since a pull you forwarded can
+carry a teammate's commits. It falls back to the local ref when a search fails.
+`stats mine` reads `LFR_PULLS_MASTER_REF` (default `brian/master`) in the local
+clone instead, fetching it first: a year of titles is around 40 searches, more
+than the 30 a minute GitHub allows.
 
 Limitation: if Brian reworded the commit subject, or a pull's work landed under
 a different subject, title-matching undercounts merges (shows rejected). It is
@@ -329,11 +338,13 @@ Only the newest rejection per ticket is a row, because that is the one on you:
 - `RESENT` - the open pull already answering it, so a rejection still to answer
   is a row with `-` there.
 
-A ticket whose work has since landed on the master ref drops out entirely, which
-is what "still not landed" means. The ref is scanned only from the oldest
-rejection in hand, so a ticket that landed something *before* this pull was sent
-back still counts as owed. Keep the ref fetched (e.g. `lfrGitUpdateMaster`);
-without one the section lists every rejection and says so on the count line.
+A ticket whose work has since landed on `liferay/liferay-portal` drops out
+entirely, which is what "still not landed" means. It is asked of GitHub's commit
+search, one search per ticket, only from the oldest rejection in hand, so a
+ticket that landed something *before* this pull was sent back still counts as
+owed. When a search fails, the rate limit included, the section checks the local
+master ref instead and says so on the count line; without one it lists every
+rejection.
 
 Bare `lfrPulls` prints this directly under the mirror's open pulls, over the
 same 30 days, because both are the same repo answering the two halves of one
@@ -398,9 +409,12 @@ cp lfr-pulls.local.conf.example lfr-pulls.local.conf
   listing to override it once.
 - `LFR_PULLS_EE_REPO` - where backports go (default
   `liferay/liferay-portal-ee`), the fourth section and `lfrPulls ee`.
+- `LFR_PULLS_UPSTREAM_REPO` - the repo whose GitHub commit search says what
+  landed (default `liferay/liferay-portal`), for `rejected`, `week`, `ticket`'s
+  landing footer, and `teams`' CODEOWNERS.
 - `LFR_PULLS_MASTER_REPO` - local clone to grep for merges (defaults to the
-  current repo). Set it so `stats mine`, `week`, and `ticket`'s landing footer
-  work from any directory (`stats all` needs no clone).
+  current repo). `stats mine` needs it; the others use it only when the GitHub
+  search fails. Set it so they work from any directory.
 - `LFR_PULLS_LINKS` - `on`, `off`, or `auto` (default). Each `#number` is a
   clickable link to its pull, carried in an OSC 8 escape so the visible text
   stays `#12345` and no column grows. On a terminal by default, plain whenever
@@ -410,5 +424,5 @@ cp lfr-pulls.local.conf.example lfr-pulls.local.conf
   rather than dropping them.
 - `LFR_PULLS_REJECTED_DAYS` - how far back `rejected` looks, and the fifth
   section of bare `lfrPulls` with it (default 30).
-- `LFR_PULLS_MASTER_REF` - master ref to grep (default `brian/master`), used by
-  the same three.
+- `LFR_PULLS_MASTER_REF` - master ref to grep (default `brian/master`), which
+  `stats mine` fetches before counting.
