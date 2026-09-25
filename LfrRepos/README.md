@@ -421,6 +421,11 @@ lfrWorktree LPD-12345                  # create the worktree
 lfrWorktreeIdeaInit                    # and give it the project
 ```
 
+IntelliJ has to be closed before it starts, because the IDE writes its recent
+projects back from memory on exit and would drop the entry. When it is running,
+you are asked to close it and confirm with `y` or `n`. A `y` is checked and asked
+again while the IDE is still up; an `n` stops with nothing done.
+
 The run configurations are written to `.idea/runConfigurations`, one file each,
 which is IntelliJ's shared form: it reads them from there and shows them in the
 picker, so nothing has to be written into the `workspace.xml` the IDE owns and

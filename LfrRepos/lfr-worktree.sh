@@ -752,6 +752,38 @@ _lfrWorktreeIdeaCloseOrRefuse() {
 	echo "${caller}: IntelliJ closed after ${waited}s" >&2
 }
 
+# Hold the caller until IntelliJ is closed, by asking you to close it yourself and then
+# checking. A y is not taken on its word: the IDE takes a few seconds to flush and exit
+# after its window goes, and an edit made in that gap is undone the same way, so a y
+# while the process is still there asks again. An n stops the caller with nothing done.
+_lfrWorktreeIdeaWaitClosed() {
+	local caller="${1}"
+
+	_lfrWorktreeIdeaRunning || return 0
+
+	if [ ! -t 0 ]; then
+		echo "${caller}: IntelliJ is running; close it first, or it will write the projects back on exit" >&2
+
+		return 1
+	fi
+
+	while true; do
+		if ! _lfrConfirm "${caller}: IntelliJ is running. Please close it before we start. Is it closed?"; then
+			echo "${caller}: nothing done; close IntelliJ and run it again" >&2
+
+			return 1
+		fi
+
+		if ! _lfrWorktreeIdeaRunning; then
+			echo "${caller}: IntelliJ is closed" >&2
+
+			return 0
+		fi
+
+		echo "${caller}: IntelliJ is still running" >&2
+	done
+}
+
 # List the worktree projects IntelliJ still offers whose directory is gone: the leftovers
 # of a worktree removed by hand, by an older lfrWorktreeRemove, or while an IDE was open.
 # Echoes one path per line.
@@ -2072,18 +2104,17 @@ _lfrWorktreeIdeaInitHelp() {
 		entry, since each version keeps its own state, and the one already carrying the
 		project is left alone.
 
-		A running IntelliJ gets no entry, only the command to paste. It owns that file
-		the same way it owns workspace.xml, writing it back from memory when it closes,
-		so an entry written underneath it is gone before the restart that would show
-		it. Opening the project once is the only registration a live IDE keeps, and
-		that is the launcher line printed instead, so paying its first indexing pass
-		then is your call rather than the tool's.
+		IntelliJ has to be closed before anything starts. It owns that file the same
+		way it owns workspace.xml, writing it back from memory when it closes, so an
+		entry written underneath it is gone before the restart that would show it.
+		When it is running, you are asked to close it and confirm, y or n. A y is
+		checked, and asked again while the IDE is still up; an n stops with nothing
+		done. Without a terminal to ask at, it refuses instead.
 
 		--recent runs that last step alone, on a worktree whose project is already
 		there. It is how a project you removed from the welcome screen comes back,
 		since the alternative is a --redo, which wipes .idea and re-copies every .iml
-		to write one line of XML. Close IntelliJ first, or it prints the launcher line
-		and changes nothing, which is the same guard the full run obeys.
+		to write one line of XML. It waits for IntelliJ to be closed the same way.
 	EOF
 }
 
@@ -2161,6 +2192,8 @@ lfrWorktreeIdeaInit() {
 			return 1
 		fi
 
+		_lfrWorktreeIdeaWaitClosed lfrWorktreeIdeaInit || return 1
+
 		_lfrWorktreeIdeaRecentProject "${dir}"
 
 		return
@@ -2181,13 +2214,15 @@ lfrWorktreeIdeaInit() {
 		return 1
 	fi
 
+	if [ -f "${dir}/.idea/modules.xml" ] && [ -z "${redo}" ]; then
+		echo "lfrWorktreeIdeaInit: ${dir} already has an IntelliJ project; pass --redo to replace it" >&2
+
+		return 1
+	fi
+
+	_lfrWorktreeIdeaWaitClosed lfrWorktreeIdeaInit || return 1
+
 	if [ -f "${dir}/.idea/modules.xml" ]; then
-		if [ -z "${redo}" ]; then
-			echo "lfrWorktreeIdeaInit: ${dir} already has an IntelliJ project; pass --redo to replace it" >&2
-
-			return 1
-		fi
-
 		rm -rf "${dir}/.idea" || return 1
 
 		echo "lfrWorktreeIdeaInit: replacing the project already in ${dir}" >&2
