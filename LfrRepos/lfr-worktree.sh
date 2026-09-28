@@ -880,17 +880,101 @@ lfrWorktreeIdeaClean() {
 	done
 }
 
-# Undo an lfrWorktree: remove the worktree, delete its branch, and delete the bundle
-# dir that came with it, and make IntelliJ forget the project. Deliberately conservative,
-# since all of it is destructive: it refuses while that bundle's Tomcat runs, keeps the
-# bundle when --keep-bundle asks for it, and never touches the database - it prints the
-# name so you can drop it yourself.
+# Every portal-ext.properties or portal-setup-wizard.properties under LFR_BUNDLES_DIRS
+# whose jdbc.default.url names the database $1. The wizard file counts because it loads
+# after portal-ext.properties and overrides it, and liferay-dxp/ is searched because a
+# release bundle keeps its config one level down.
+_lfrWorktreeDatabasePointers() {
+	local db_name="${1}"
+	local file root
+
+	for root in "${LFR_BUNDLES_DIRS[@]}"; do
+		[ -d "${root}" ] || continue
+
+		for file in "${root}"/*/portal-ext.properties "${root}"/*/portal-setup-wizard.properties \
+				"${root}"/*/liferay-dxp/portal-ext.properties "${root}"/*/liferay-dxp/portal-setup-wizard.properties; do
+			[ -f "${file}" ] || continue
+
+			if sed -nE 's#^[[:space:]]*jdbc\.default\.url=jdbc:[a-z]+://[^/]+/([^?[:space:]]+).*#\1#p' "${file}" |
+					grep -qxF -- "${db_name}"; then
+				printf '%s\n' "${file}"
+			fi
+		done
+	done
+}
+
+# Drop a removed worktree's database, once nothing can still want it. $1-$4 are the host,
+# port, user and password, read before the bundle and its portal-ext.properties went, and
+# $5 the database. Leaves it and says why when its name is master-like, when any bundle
+# config still points at it, or when anything is connected to it; the drop itself carries
+# no FORCE, so a connection opened in between fails it rather than being cut.
+_lfrWorktreeDropDatabase() {
+	local host="${1}" port="${2}" user="${3}" password="${4}" db_name="${5}"
+	local connections pointers size
+
+	case "${db_name}" in
+	portal-master* | lportal)
+		echo "lfrWorktreeRemove: left the master-like ${db_name} database alone" >&2
+
+		return 0
+		;;
+	esac
+
+	if ! command -v psql >/dev/null 2>&1; then
+		echo "lfrWorktreeRemove: psql not found; drop ${db_name} yourself with dropdb ${db_name}" >&2
+
+		return 0
+	fi
+
+	if ! PGPASSWORD="${password}" psql -h "${host}" -p "${port}" -U "${user}" -tAc \
+			"select 1 from pg_database where datname = '${db_name}'" 2>/dev/null |
+			grep -q 1; then
+		echo "lfrWorktreeRemove: there is no ${db_name} database to drop" >&2
+
+		return 0
+	fi
+
+	pointers="$(_lfrWorktreeDatabasePointers "${db_name}")"
+
+	if [ -n "${pointers}" ]; then
+		echo "lfrWorktreeRemove: left the ${db_name} database alone, since other bundles still point at it:" >&2
+		printf '%s\n' "${pointers}" | sed 's/^/  /' >&2
+
+		return 0
+	fi
+
+	connections="$(PGPASSWORD="${password}" psql -h "${host}" -p "${port}" -U "${user}" -tAc \
+		"select count(*) from pg_stat_activity where datname = '${db_name}'" 2>/dev/null)"
+
+	if [ "${connections:-0}" != "0" ]; then
+		echo "lfrWorktreeRemove: left the ${db_name} database alone, since ${connections} connections are open on it" >&2
+
+		return 0
+	fi
+
+	size="$(PGPASSWORD="${password}" psql -h "${host}" -p "${port}" -U "${user}" -tAc \
+		"select pg_size_pretty(pg_database_size('${db_name}'))" 2>/dev/null)"
+
+	if PGPASSWORD="${password}" psql -h "${host}" -p "${port}" -U "${user}" -q -c \
+			"drop database \"${db_name}\"" 2>/dev/null; then
+		echo "lfrWorktreeRemove: dropped the ${db_name} database (${size:-unknown size})" >&2
+	else
+		echo "lfrWorktreeRemove: could not drop ${db_name}; drop it yourself with dropdb ${db_name}" >&2
+	fi
+}
+
+# Undo an lfrWorktree: remove the worktree, delete its branch, delete the bundle dir that
+# came with it and drop its database, and make IntelliJ forget the project. Deliberately
+# conservative, since all of it is destructive: it refuses while that bundle's Tomcat
+# runs, keeps the bundle when --keep-bundle asks for it and the database when
+# --keep-database does, and drops the database only once nothing points at it.
 #
 # Usage:
 #     lfrWorktreeRemove LPD-12345               # remove the worktree, branch, bundle
 #     lfrWorktreeRemove LPD-12345 --force       # also when the worktree is dirty or
 #                                               # the branch is unmerged
 #     lfrWorktreeRemove LPD-12345 --keep-bundle # leave the bundle dir in place
+#     lfrWorktreeRemove LPD-12345 --keep-database # leave the database in place
 lfrWorktreeRemove() {
 	case "${1-}" in
 	-h | --help)
@@ -905,7 +989,9 @@ lfrWorktreeRemove() {
 			                                            changes or the branch is
 			                                            unmerged
 			  lfrWorktreeRemove <branch> --keep-bundle  leave the bundle dir in
-			                                            place
+			                                            place, and so its database
+			  lfrWorktreeRemove <branch> --keep-database
+			                                            leave the database in place
 
 			The bundle goes with the worktree because it belongs to that checkout
 			alone: with the worktree and the branch gone nothing can deploy into it
@@ -918,8 +1004,13 @@ lfrWorktreeRemove() {
 			to close it first, before anything is removed, since it would write
 			the projects back on exit; decline and lfrWorktreeIdeaClean finishes
 			that half later. Refuses while the bundle's Tomcat is running.
-			Never drops the database; it prints the dropdb command instead. Run from
-			inside any liferay-portal clone.
+
+			Drops the bundle's database too, rather than leave it orphaned, but only
+			when nothing can still want it: never a master-like name, never while any
+			portal-ext.properties or portal-setup-wizard.properties under
+			LFR_BUNDLES_DIRS points at it (a kept bundle does), and never while
+			anything is connected to it. Otherwise it says why and leaves it. Run
+			from inside any liferay-portal clone.
 		EOF
 		return 0
 		;;
@@ -928,7 +1019,7 @@ lfrWorktreeRemove() {
 	local branch="${1}"
 
 	if [ -z "${branch}" ]; then
-		echo "usage: lfrWorktreeRemove <branch> [--force] [--keep-bundle]" >&2
+		echo "usage: lfrWorktreeRemove <branch> [--force] [--keep-bundle] [--keep-database]" >&2
 		return 1
 	fi
 
@@ -936,6 +1027,7 @@ lfrWorktreeRemove() {
 
 	local force=""
 	local keep_bundle=""
+	local keep_database=""
 
 	while [ "$#" -gt 0 ]; do
 		case "${1}" in
@@ -945,9 +1037,12 @@ lfrWorktreeRemove() {
 		--keep-bundle)
 			keep_bundle="--keep-bundle"
 			;;
+		--keep-database)
+			keep_database="--keep-database"
+			;;
 		*)
 			echo "lfrWorktreeRemove: unknown option ${1}" >&2
-			echo "usage: lfrWorktreeRemove <branch> [--force] [--keep-bundle]" >&2
+			echo "usage: lfrWorktreeRemove <branch> [--force] [--keep-bundle] [--keep-database]" >&2
 			return 1
 			;;
 		esac
@@ -991,11 +1086,15 @@ lfrWorktreeRemove() {
 	local bundle_dir
 	bundle_dir="$(cd "${dir}" && _lfrRepoBundleDir)" || bundle_dir=""
 
-	local db=""
+	# And the database's connection with it, since deleting the bundle takes the file.
+	local db="" db_host="" db_password="" db_port="" db_user=""
 	if [ -f "${bundle_dir}/portal-ext.properties" ]; then
 		db="$(sed -nE 's/^[[:space:]]*jdbc\.default\.url=//p' "${bundle_dir}/portal-ext.properties" | tail -n 1)"
 		db="${db%%\?*}"
 		db="${db##*/}"
+
+		IFS=$'\t' read -r db_host db_port db_user db_password \
+			< <(_lfrWorktreeConnection "${bundle_dir}/portal-ext.properties")
 	fi
 
 	# Extract each running catalina.base and compare, rather than grepping ps for the
@@ -1045,8 +1144,8 @@ lfrWorktreeRemove() {
 	# derived output, not work product: with the checkout and the branch gone nothing
 	# can deploy into it again, and adopting it from another branch is a defect rather
 	# than a saving, so keeping it only leaks its gigabytes silently. --keep-bundle is
-	# there for the logs or the data. The database is the real exception, since
-	# dropping one cannot be undone.
+	# there for the logs or the data. The database goes too, once nothing points at it,
+	# since an orphaned one is only the same leak in PostgreSQL.
 	if [ -z "${bundle_dir}" ] || [ ! -d "${bundle_dir}" ]; then
 		return 0
 	fi
@@ -1061,8 +1160,20 @@ lfrWorktreeRemove() {
 		echo "lfrWorktreeRemove: deleted the bundle ${bundle_dir} (${bundle_size:-unknown size})" >&2
 	fi
 
-	if [ -n "${db}" ]; then
-		echo "lfrWorktreeRemove: left the ${db} database alone; drop it with dropdb ${db}" >&2
+	if [ -z "${db}" ]; then
+		return 0
+	fi
+
+	# A kept bundle still points at its database, wherever it lives, so the database
+	# stays with it without relying on the pointer scan to find it.
+	if [ -n "${keep_bundle}" ]; then
+		echo "lfrWorktreeRemove: kept the ${db} database with its bundle" >&2
+	elif [ -n "${keep_database}" ]; then
+		echo "lfrWorktreeRemove: kept the ${db} database as asked" >&2
+	elif [ -z "${db_host}" ]; then
+		echo "lfrWorktreeRemove: ${db} is not on PostgreSQL; drop it yourself" >&2
+	else
+		_lfrWorktreeDropDatabase "${db_host}" "${db_port}" "${db_user}" "${db_password}" "${db}"
 	fi
 }
 

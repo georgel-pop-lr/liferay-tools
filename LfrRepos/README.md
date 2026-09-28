@@ -317,8 +317,16 @@ it. The bundle goes with the worktree because it belongs to that checkout
 alone: with the worktree and the branch gone nothing can deploy into it, and
 adopting a built bundle from another branch is a defect rather than a saving.
 `--keep-bundle` is the way out, and recreating that worktree later asks before
-reusing what it kept. The database is always left alone, its name printed so
-you can drop it yourself (e.g. `dropdb portal-<branch>`).
+reusing what it kept.
+
+The database goes too, since an orphaned one is the same leak in PostgreSQL,
+but only once nothing can still want it. It is left, with the reason printed,
+when its name is master-like (`portal-master*`), when any
+`portal-ext.properties` or `portal-setup-wizard.properties` under
+`LFR_BUNDLES_DIRS` still names it, or when anything is connected to it; the
+drop carries no `FORCE`, so a connection opened in between fails it. A kept
+bundle keeps its database with it, and `--keep-database` keeps the database
+alone.
 
 ### `lfrWorktreeIdeaClean`: forget worktree projects that are gone
 
