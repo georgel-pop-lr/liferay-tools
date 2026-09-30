@@ -21,6 +21,7 @@ cp lfr-git.local.conf.example lfr-git.local.conf
 | `LFR_GIT_UPSTREAM_REMOTE` | Remote `lfrGitUpdateBranch` and `lfrGitCheckoutTag` take release branches and patch tags from | `upstream` |
 | `LFR_GIT_MASTER_MIRRORS` | Master mirrors `lfrGitUpdateMaster` keeps current, as `branch:remote` pairs | `("master:upstream")` |
 | `LFR_GIT_REBASE_MAX` | Most commits a rebase may replay before it is refused | `50` |
+| `LFR_GIT_REBASE_ALL_EXCLUDE` | Branches `lfrGitUpdateMaster -a` leaves alone, as glob patterns | `("KEEP-*")` |
 
 ## Commands
 
@@ -32,7 +33,7 @@ cp lfr-git.local.conf.example lfr-git.local.conf
 | `lfrGitSyncEE [org]` | `lfrgse` | Same for `liferay-portal-ee` master. |
 | `lfrGitRebase [N]` | `lfrgr` | `git rebase -i HEAD~N` (N defaults to 20). |
 | `lfrGitRebaseOnto [target]` | `lfrgro` | Replay only the current branch's own commits onto `target` (default `upstream/master`), dropping the mirror history it was rebased onto in between. The fix for a branch that ended up on `masterBrian` and belongs on `master`. Local changes are stashed and put back on top. Updates no mirror and syncs no fork. |
-| `lfrGitUpdateMaster [-r] [-f] [-o] [-p] [rebase-target]` | `lfrgum` | Update each mirror configured in `LFR_GIT_MASTER_MIRRORS` from its `<remote>/master` (e.g. `master` from upstream, `masterBrian` from brian) and sync the team fork; `-r` rebases the current branch onto a target (default `upstream/master`, or pass a remote/branch), `-f` forces the rebase (implies `-r`), `-o` cuts at the branch's own fork point (implies `-r`), `-p` force-pushes it after (implies `-r`). A target without `-r` is an error. Local changes are stashed and put back around the rebase. |
+| `lfrGitUpdateMaster [-r] [-a] [-f] [-o] [-p] [rebase-target]` | `lfrgum` | Update each mirror configured in `LFR_GIT_MASTER_MIRRORS` from its `<remote>/master` (e.g. `master` from upstream, `masterBrian` from brian) and sync the team fork; `-r` rebases the current branch onto a target (default `upstream/master`, or pass a remote/branch), `-a` rebases the branch of every worktree instead (implies `-r`, not with `-p`), `-f` forces the rebase (implies `-r`), `-o` cuts at the branch's own fork point (implies `-r`), `-p` force-pushes it after (implies `-r`). A target without `-r` is an error. Local changes are stashed and put back around the rebase. |
 | `lfrGitUpdateBranch [branch] [-n]` | `lfrgub` | Update one branch (e.g. `release-2026.q1`) from upstream and push it to your fork. The branch defaults to the one you are on, and is created locally when you do not have it. `-n` skips the push. |
 | `lfrGitCheckoutTag <tag> [branch] [-n]` | `lfrgct` | Check out a tag (e.g. `2026.q1.8`, `fix-pack-de-85-7010`) on a local branch: fetch the tag from upstream, branch off it, push the branch to your fork. The branch defaults to the tag's name and is reused when it exists. `-n` skips the push. |
 
@@ -75,7 +76,24 @@ both `master` and `masterBrian`.
    rebase is skipped when the branch already sits on the latest target;
    `-f`/`--force-rebase` forces it, and `-p`/`--push` (implies `-r`) then
    force-pushes the rebased branch with `--force-with-lease`. A dirty working
-   tree does not turn the rebase away any more: see below.
+   tree does not turn the rebase away any more: see below. Every rebase names the
+   branch and the worktree it moves (`Rebasing LPD-12345 in
+   liferay-portal-LPD-12345 onto upstream/master...`), since `-r` only ever
+   touches the worktree you run it from.
+4. With `-a`/`--all`, rebase the branch of every worktree onto the target instead
+   of the current one alone, so it no longer matters where you run it. The
+   worktree you run it from is handled exactly as `-r` handles it. Any other
+   worktree may have someone at work in it, so it is only touched when that is
+   safe: it is skipped when it has uncommitted changes to tracked files (another
+   worktree's changes are never stashed), and a rebase that conflicts there is
+   aborted, leaving the branch as it was. Everywhere, a worktree is skipped when
+   it is on a detached HEAD or a `master*` mirror, when its branch matches
+   `LFR_GIT_REBASE_ALL_EXCLUDE` (default `("KEEP-*")`), when it is missing on
+   disk, or when a rebase, merge, cherry-pick, revert, bisect or index lock is
+   under way there. The run ends with one line per worktree (`rebased`,
+   `current`, `skipped`, `refused`, `stopped` or `aborted`, with the reason) and
+   returns 1 when any rebase did not go through. `-p` is refused with `-a`, since
+   force-pushing every branch at once is not something to do by accident.
 
 ## Release branches and patch tags
 

@@ -7,7 +7,7 @@
 #     lfrGitSyncEE     sync a fork's liferay-portal-ee master from upstream ([org] optional)
 #     lfrGitRebase     interactive rebase over the last N commits (default 20)
 #     lfrGitRebaseOnto replay only this branch's own commits onto a target (default upstream/master), dropping the mirror history it was rebased onto ([target])
-#     lfrGitUpdateMaster  update each master* mirror from the <remote>/master it tracks + sync; -r rebase current branch onto a target (default upstream), -f force, -o cut at the fork point, -p force-push ([-r] [-f] [-o] [-p] [rebase-target])
+#     lfrGitUpdateMaster  update each master* mirror from the <remote>/master it tracks + sync; -r rebase current branch onto a target (default upstream), -a rebase every worktree's branch, -f force, -o cut at the fork point, -p force-push ([-r] [-a] [-f] [-o] [-p] [rebase-target])
 #     lfrGitUpdateBranch  update one branch (e.g. release-2026.q1) from upstream and push it to your fork, creating it locally if you do not have it ([branch] [-n])
 #     lfrGitCheckoutTag   check out a tag (e.g. 2026.q1.8) on a local branch, fetching the tag from upstream and reusing the branch if it exists (<tag> [branch] [-n])
 #
@@ -19,6 +19,9 @@ _lfrGitDir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 : "${LFR_GIT_UPSTREAM_ORG:=liferay}"
 : "${LFR_GIT_UPSTREAM_REMOTE:=upstream}"
+
+# Branches lfrGitUpdateMaster -a leaves alone, as glob patterns.
+declare -p LFR_GIT_REBASE_ALL_EXCLUDE >/dev/null 2>&1 || LFR_GIT_REBASE_ALL_EXCLUDE=("KEEP-*")
 
 # Files kept during a clean: IDE project files and per-developer properties.
 _lfrGitCleanExcludes=(
@@ -49,15 +52,19 @@ _lfrGitHelp() {
 		                       history it was rebased onto in between: use it when
 		                       a branch ended up on masterBrian and belongs on
 		                       master. Updates no mirror and syncs no fork.
-		  lfrGitUpdateMaster [-r] [-f] [-o] [-p] [target]
+		  lfrGitUpdateMaster [-r] [-a] [-f] [-o] [-p] [target]
 		                       refresh your master mirror branches from their
 		                       remotes and sync your fork, from any worktree: a
 		                       mirror checked out elsewhere is fast-forwarded
 		                       inside that worktree, so it lands wherever it
 		                       lives; with -r also rebase the current branch onto
-		                       <target> (default upstream/master), -f forces the
-		                       rebase, -o cuts at the branch's own fork point,
-		                       -p then force-pushes it
+		                       <target> (default upstream/master), -a rebases
+		                       the branch of every worktree instead (skipping
+		                       mirrors, detached, dirty or busy worktrees and
+		                       LFR_GIT_REBASE_ALL_EXCLUDE, aborting any that
+		                       conflict), -f forces the rebase, -o cuts at the
+		                       branch's own fork point, -p then force-pushes it
+		                       (not with -a)
 		  lfrGitUpdateBranch [branch] [-n]
 		                       update one branch (e.g. release-2026.q1) from
 		                       upstream and push it to your fork; the branch
@@ -291,8 +298,10 @@ _lfrGitForkPoint() {
 # Args: <branch> <target> <force_rebase 0|1> <rebase_onto 0|1>
 _lfrGitRebaseOnto() {
 	local cur="${1}" target="${2}" force_rebase="${3}" rebase_onto="${4}"
-	local base target_base replay max rc dirty=0
+	local base target_base replay max rc wt dirty=0
 	local -a rebase_args
+
+	wt="$(basename "$(git rev-parse --show-toplevel)")"
 
 	target_base="$(git merge-base "${target}" HEAD)" || return 1
 	base="$(_lfrGitForkPoint "${target}")" || return 1
@@ -300,7 +309,7 @@ _lfrGitRebaseOnto() {
 	if [ "${base}" != "${target_base}" ] || [ "${rebase_onto}" = 1 ]; then
 		rebase_args=(--onto "${target}" "${base}")
 	elif [ "${force_rebase}" != 1 ] && git merge-base --is-ancestor "${target}" HEAD 2>/dev/null; then
-		echo "${cur} already on latest ${target}; nothing to rebase."
+		echo "${cur} in ${wt} already on latest ${target}; nothing to rebase."
 		return 2
 	elif [ "${force_rebase}" = 1 ]; then
 		rebase_args=(--force-rebase "${target}")
@@ -311,7 +320,7 @@ _lfrGitRebaseOnto() {
 	replay="$(git rev-list --count "${base}..HEAD")"
 	max="${LFR_GIT_REBASE_MAX:-50}"
 	if [ "${replay}" -gt "${max}" ]; then
-		echo "lfrGitRebaseOnto: rebasing ${cur} onto ${target} would replay ${replay} commits (limit ${max})." >&2
+		echo "lfrGitRebaseOnto: rebasing ${cur} in ${wt} onto ${target} would replay ${replay} commits (limit ${max})." >&2
 		echo "  No branch owns that many, so the fork point is wrong and those commits are someone else's." >&2
 		echo "  See them with: git log --oneline $(git rev-parse --short "${base}")..HEAD" >&2
 		echo "  Override for this run with LFR_GIT_REBASE_MAX=${replay}." >&2
@@ -319,9 +328,9 @@ _lfrGitRebaseOnto() {
 	fi
 
 	if [ "${base}" != "${target_base}" ]; then
-		echo "${cur} sits on $(git rev-parse --short "${base}"), not on ${target}; replaying only its ${replay} own commit(s) onto ${target}..."
+		echo "${cur} in ${wt} sits on $(git rev-parse --short "${base}"), not on ${target}; replaying only its ${replay} own commit(s) onto ${target}..."
 	else
-		echo "Rebasing ${cur} onto ${target}..."
+		echo "Rebasing ${cur} in ${wt} onto ${target}..."
 	fi
 
 	# A dirty tree makes git refuse the rebase outright, so stash it and put it
@@ -349,6 +358,124 @@ _lfrGitRebaseOnto() {
 	fi
 
 	return "${rc}"
+}
+
+# Every worktree of the repo, one per line as "<path><TAB><branch>", the branch
+# empty when the worktree is on a detached HEAD. The bare entry is left out.
+_lfrGitWorktrees() {
+	git worktree list --porcelain | awk '
+		/^worktree / { wt = substr($0, 10); br = "" }
+		/^branch / { br = substr($0, 8); sub("^refs/heads/", "", br) }
+		/^bare$/ { wt = "" }
+		/^$/ { if (wt != "") print wt "\t" br; wt = "" }
+		END { if (wt != "") print wt "\t" br }'
+}
+
+# Why a worktree cannot be rebased right now, or nothing when it can: a rebase,
+# merge, cherry-pick, revert or bisect already under way there, or a git command
+# holding its index lock.
+_lfrGitWorktreeBusy() {
+	local wt="${1}" op path
+	for op in rebase-merge rebase-apply MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD BISECT_LOG index.lock; do
+		path="$(git -C "${wt}" rev-parse --path-format=absolute --git-path "${op}")"
+		if [ -e "${path}" ]; then
+			case "${op}" in
+			rebase-*) echo "a rebase is under way there" ;;
+			MERGE_HEAD) echo "a merge is under way there" ;;
+			CHERRY_PICK_HEAD) echo "a cherry-pick is under way there" ;;
+			REVERT_HEAD) echo "a revert is under way there" ;;
+			BISECT_LOG) echo "a bisect is under way there" ;;
+			index.lock) echo "a git command holds its index.lock" ;;
+			esac
+			return 0
+		fi
+	done
+}
+
+# Rebase the branch of every worktree onto <target>, for lfrGitUpdateMaster -a.
+# The current worktree is rebased the way -r does it, local changes stashed and
+# a conflict left for you to resolve. Every other worktree may have someone at
+# work in it, so it is only touched when that is safe: it is skipped when it
+# has uncommitted changes to tracked files (another worktree's changes are never
+# stashed), and a rebase that stops on a conflict there is aborted, leaving the
+# branch as it was. Detached worktrees, master* mirrors, branches matching
+# LFR_GIT_REBASE_ALL_EXCLUDE, worktrees missing on disk and worktrees with a git
+# operation under way are skipped everywhere. Ends with one line per worktree
+# saying what happened to it, and returns 1 when any rebase was refused, stopped
+# or aborted.
+# Args: <target> <force_rebase 0|1> <rebase_onto 0|1>
+_lfrGitRebaseAll() {
+	local target="${1}" force_rebase="${2}" rebase_onto="${3}"
+	local here worktrees wt branch name reason pattern rc failed=0
+	local -a report=()
+
+	here="$(git rev-parse --show-toplevel)"
+	worktrees="$(_lfrGitWorktrees)"
+
+	while IFS=$'\t' read -r wt branch; do
+		# Two clones can share a folder name, so fall back to the path for those.
+		name="${wt##*/}"
+		if [ "$(printf '%s\n' "${worktrees}" | cut -f1 | awk -F/ -v n="${name}" '$NF == n' | wc -l)" -gt 1 ]; then
+			name="${wt/#${HOME}/\~}"
+		fi
+		reason=""
+		if [ ! -d "${wt}" ]; then
+			reason="missing on disk"
+		else
+			reason="$(_lfrGitWorktreeBusy "${wt}")"
+		fi
+		if [ -n "${reason}" ]; then
+			:
+		elif [ -z "${branch}" ]; then
+			reason="detached HEAD"
+		else
+			case "${branch}" in master*) reason="a master mirror" ;; esac
+		fi
+		if [ -z "${reason}" ]; then
+			for pattern in "${LFR_GIT_REBASE_ALL_EXCLUDE[@]}"; do
+				# shellcheck disable=SC2254
+				case "${branch}" in ${pattern})
+					reason="excluded by LFR_GIT_REBASE_ALL_EXCLUDE (${pattern})"
+					break
+					;;
+				esac
+			done
+		fi
+		if [ -z "${reason}" ] && [ "${wt}" != "${here}" ] &&
+			[ -n "$(git -C "${wt}" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+			reason="uncommitted changes"
+		fi
+		if [ -n "${reason}" ]; then
+			report+=("skipped  ${branch:-(detached)} in ${name}: ${reason}")
+			continue
+		fi
+
+		echo
+		(cd "${wt}" && _lfrGitRebaseOnto "${branch}" "${target}" "${force_rebase}" "${rebase_onto}")
+		rc="$?"
+		case "${rc}" in
+		0) report+=("rebased  ${branch} in ${name}") ;;
+		2) report+=("current  ${branch} in ${name}") ;;
+		3)
+			report+=("refused  ${branch} in ${name}: more than ${LFR_GIT_REBASE_MAX:-50} commits to replay")
+			failed=1
+			;;
+		*)
+			if [ "${wt}" = "${here}" ]; then
+				report+=("stopped  ${branch} in ${name}: conflicts, resolve them here")
+			else
+				git -C "${wt}" rebase --abort >/dev/null 2>&1
+				report+=("aborted  ${branch} in ${name}: conflicts, left as it was; rebase it there by hand")
+			fi
+			failed=1
+			;;
+		esac
+	done <<<"${worktrees}"
+
+	echo
+	echo "Worktrees onto ${target}:"
+	printf '  %s\n' "${report[@]}"
+	return "${failed}"
 }
 
 # Replay only the current branch's own commits onto <target> (default
@@ -386,7 +513,9 @@ lfrGitRebaseOnto() {
 # together. Then sync the team fork.
 #
 # With -r, rebase the current branch onto a target once the mirrors are fresh
-# (skipped when you are on a master* mirror). The target defaults to
+# (skipped when you are on a master* mirror). With -a, rebase the branch of every
+# worktree instead, so it no longer matters which one you run it from (see
+# _lfrGitRebaseAll); -p does not combine with it. The target defaults to
 # upstream/master; pass a remote (e.g. `brian` -> brian/master) or a branch (e.g.
 # `masterBrian`) to rebase onto Brian's line instead. The rebase is skipped when
 # the branch already sits on the latest target; -f forces it, and -p (implies -r)
@@ -397,14 +526,15 @@ lfrGitRebaseOnto() {
 # put back on top of the rebased branch. When that reapply conflicts, -p still
 # pushes, since the rebase itself succeeded and only the tree is left conflicted;
 # the conflict is then repeated after the push output, where it is the last line.
-# Args: [-r|--rebase] [-f|--force-rebase] [-o|--rebase-onto] [-p|--push] [rebase-target].
+# Args: [-r|--rebase] [-a|--all] [-f|--force-rebase] [-o|--rebase-onto] [-p|--push] [rebase-target].
 lfrGitUpdateMaster() {
-	local cur a rebase=0 force_rebase=0 rebase_onto=0 push_branch=0
+	local cur a rebase=0 all=0 force_rebase=0 rebase_onto=0 push_branch=0
 	local -a pos=()
 	for a in "$@"; do
 		case "${a}" in
 		-h | --help) _lfrGitHelp; return 0 ;;
 		-r | --rebase) rebase=1 ;;
+		-a | --all) all=1; rebase=1 ;;
 		-f | --force-rebase) force_rebase=1; rebase=1 ;;
 		-o | --rebase-onto) rebase_onto=1; rebase=1 ;;
 		-p | --push) push_branch=1; rebase=1 ;;
@@ -412,6 +542,10 @@ lfrGitUpdateMaster() {
 		*) pos+=("${a}") ;;
 		esac
 	done
+	if [ "${all}" = 1 ] && [ "${push_branch}" = 1 ]; then
+		echo "lfrGitUpdateMaster: -p force-pushes the current branch only; it does not combine with -a." >&2
+		return 1
+	fi
 	if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
 		echo "lfrGitUpdateMaster: not inside a git repo" >&2
 		return 1
@@ -456,6 +590,14 @@ lfrGitUpdateMaster() {
 		lfrGitSync
 	fi
 
+	local target
+
+	if [ "${all}" = 1 ]; then
+		target="$(_lfrGitRebaseTarget "${pos[0]-}")" || return 1
+		_lfrGitRebaseAll "${target}" "${force_rebase}" "${rebase_onto}"
+		return "$?"
+	fi
+
 	# Never rebase a mirror branch itself.
 	case "${cur}" in
 	master*)
@@ -472,7 +614,6 @@ lfrGitUpdateMaster() {
 		return 0
 	fi
 
-	local target
 	target="$(_lfrGitRebaseTarget "${pos[0]-}")" || return 1
 
 	# -f (--force-rebase) recreates the commits even when the branch already sits on
