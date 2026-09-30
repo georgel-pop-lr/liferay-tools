@@ -1855,8 +1855,11 @@ _lfrWorktreeIdeaRunConfigurations() {
 # rename losing state it was asked to carry. It runs before _lfrWorktreeRemoveIdeaProject
 # takes the old entry out, since that entry is where the answer is read from.
 #
-# The answer is copied rather than assumed: an entry can say value="false", and a rename
-# is no place to turn a no into a yes. Listing the repos directory in the neighbouring
+# lfrWorktreeIdeaInit carries the source clone's answer to the worktree for the same
+# reason: a worktree checks out the same repository, so its authors are the clone's.
+#
+# The answer is copied rather than assumed: an entry can say value="false", and neither
+# caller is a place to turn a no into a yes. Listing the repos directory in the neighbouring
 # Trusted.Paths.Settings component would cost no code at all and is deliberately not
 # done, since it would trust anything cloned there later, sight unseen.
 #
@@ -2222,10 +2225,14 @@ _lfrWorktreeIdeaInitHelp() {
 		checked, and asked again while the IDE is still up; an n stops with nothing
 		done. Without a terminal to ask at, it refuses instead.
 
-		--recent runs that last step alone, on a worktree whose project is already
-		there. It is how a project you removed from the welcome screen comes back,
-		since the alternative is a --redo, which wipes .idea and re-copies every .iml
-		to write one line of XML. It waits for IntelliJ to be closed the same way.
+		The source clone's answer to IntelliJ's trust prompt is carried over too, in
+		every profile that has one, so the worktree opens without asking. A profile
+		never asked about the source gets nothing, and a no stays a no.
+
+		--recent runs the trust and recent projects steps alone, on a worktree whose
+		project is already there. It is how a project you removed from the welcome
+		screen comes back, since the alternative is a --redo, which wipes .idea and
+		re-copies every .iml to write one line of XML. It waits for IntelliJ to be closed the same way.
 	EOF
 }
 
@@ -2292,8 +2299,8 @@ lfrWorktreeIdeaInit() {
 		return 1
 	fi
 
-	# --recent is the whole run for a worktree already carrying its project, so it takes
-	# neither a source nor anything the source is checked for.
+	# --recent is the whole run for a worktree already carrying its project, so the source
+	# is read only for its trust answer and checked for nothing else.
 	if [ -n "${recent}" ]; then
 		dir="$(cd "${dir}" && pwd)" || return 1
 
@@ -2304,6 +2311,10 @@ lfrWorktreeIdeaInit() {
 		fi
 
 		_lfrWorktreeIdeaWaitClosed lfrWorktreeIdeaInit || return 1
+
+		if src="$(cd "${src}" 2>/dev/null && pwd)" && [ "${dir}" != "${src}" ]; then
+			_lfrWorktreeIdeaTrustProject "${src}" "${dir}" lfrWorktreeIdeaInit
+		fi
 
 		_lfrWorktreeIdeaRecentProject "${dir}"
 
@@ -2388,6 +2399,8 @@ lfrWorktreeIdeaInit() {
 	rm -f "${list}" "${tracked}"
 
 	_lfrWorktreeIdeaRunConfigurations "${src}" "${dir}" || return 1
+
+	_lfrWorktreeIdeaTrustProject "${src}" "${dir}" lfrWorktreeIdeaInit
 
 	_lfrWorktreeIdeaRecentProject "${dir}"
 }
