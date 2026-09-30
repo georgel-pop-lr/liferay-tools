@@ -516,6 +516,11 @@ _lfrWorktreeRemoveIdeaEntry() {
 		return 1
 	fi
 
+	# Trim the copy, never the live file, as in _lfrWorktreeIdeaRecentProject below.
+	if [ "${trailing_newline}" -eq 0 ]; then
+		truncate -s -1 "${tmp}"
+	fi
+
 	cat "${tmp}" >"${file}" || {
 		rm -f "${tmp}"
 
@@ -523,10 +528,6 @@ _lfrWorktreeRemoveIdeaEntry() {
 	}
 
 	rm -f "${tmp}"
-
-	if [ "${trailing_newline}" -eq 0 ]; then
-		truncate -s -1 "${file}"
-	fi
 
 	printf '%s\n' "${id}"
 }
@@ -610,6 +611,11 @@ _lfrWorktreeRemoveIdeaRecentFile() {
 		return 1
 	fi
 
+	# Trim the copy, never the live file, as in _lfrWorktreeIdeaRecentProject below.
+	if [ "${trailing_newline}" -eq 0 ]; then
+		truncate -s -1 "${tmp}"
+	fi
+
 	cat "${tmp}" >"${file}" || {
 		rm -f "${tmp}"
 
@@ -617,10 +623,6 @@ _lfrWorktreeRemoveIdeaRecentFile() {
 	}
 
 	rm -f "${tmp}"
-
-	if [ "${trailing_newline}" -eq 0 ]; then
-		truncate -s -1 "${file}"
-	fi
 }
 
 # Make every IntelliJ forget the project at $1 and delete its caches. $2 is the calling
@@ -1967,6 +1969,11 @@ _lfrWorktreeIdeaTrustProject() {
 			continue
 		}
 
+		# Trim the copy, never the live file, as in _lfrWorktreeIdeaRecentProject below.
+		if [ "${trailing_newline}" -eq 0 ]; then
+			truncate -s -1 "${tmp}"
+		fi
+
 		# The file is the live configuration of an IDE that is merely closed, so prove the
 		# edit parses before it lands rather than after.
 		if command -v python3 >/dev/null 2>&1 &&
@@ -1987,10 +1994,6 @@ _lfrWorktreeIdeaTrustProject() {
 		}
 
 		rm -f "${tmp}"
-
-		if [ "${trailing_newline}" -eq 0 ]; then
-			truncate -s -1 "${trusted}"
-		fi
 
 		echo "${caller}: ${config_dir##*/} carried the trust answer ${value} over to ${new_dir}" >&2
 	done
@@ -2145,6 +2148,12 @@ _lfrWorktreeIdeaRecentProject() {
 			continue
 		}
 
+		# Trim the copy, never the live file. Two runs trimming the file after each wrote it
+		# cut its last byte twice, and the lost ">" emptied IntelliJ's recent projects list.
+		if [ "${trailing_newline}" -eq 0 ]; then
+			truncate -s -1 "${tmp}"
+		fi
+
 		# The file is the live configuration of an IDE that is merely closed, so prove the
 		# edit parses before it lands rather than after.
 		if command -v python3 >/dev/null 2>&1 &&
@@ -2165,10 +2174,6 @@ _lfrWorktreeIdeaRecentProject() {
 		}
 
 		rm -f "${tmp}"
-
-		if [ "${trailing_newline}" -eq 0 ]; then
-			truncate -s -1 "${recent}"
-		fi
 
 		echo "${caller}: ${config_dir##*/} now lists the project ${dir}" >&2
 	done
