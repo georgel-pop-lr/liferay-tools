@@ -152,7 +152,7 @@ prints the resolved value:
 Starting Liferay (Ctrl+C to stop; then press f to force-kill if it hangs).
   Editor / portal: http://<LAN-IP>:8080/ (reachable from this machine and other devices on the network)
   Logs           : .../tomcat/logs/catalina.out
-  JDK            : .../zulu17...
+  JDK            : .../msopenjdk-21-amd64
   Debug attach   : localhost:8000 (transport=dt_socket, suspend=n)
 
 Selected ports:
@@ -222,7 +222,7 @@ the JDK it resolved to, and how long it has been up:
 ```
   PID 1008717 ports: 8005 8080 11311 32763 42763 /media/.../liferay-bundle-LPD-104387
       < liferay-portal-LPD-104387@LPD-104387
-      run -t -c, jdk zulu17.54.21-ca-jdk17.0.13-linux_x64, up 02:05:01
+      run -t -c, jdk msopenjdk-21-amd64, up 02:05:01
 ```
 
 That comes from the launcher shell, not from anything written to disk. `catalina.sh`
@@ -299,7 +299,7 @@ The launcher picks a JDK automatically based on the bundle's name:
 | `liferay-dxp-7.2.*`, `liferay-dxp(-tomcat)-7.3.*` | JDK 11 |
 | `liferay-dxp(-tomcat)-7.4.*`, `liferay-dxp-tomcat-2023.*`, `liferay-dxp-tomcat-2024.*` | JDK 11 |
 | `liferay-dxp-tomcat-2025.*`, `liferay-dxp-tomcat-2026.*` | JDK 17 |
-| anything else (dev bundles like `liferay-bundle-master`) | JDK 17 |
+| anything else (dev bundles like `liferay-bundle-master`) | JDK 21 |
 
 The JDK paths come from `start-liferay.conf` (`JDK_8`, `JDK_11`, `JDK_17`,
 `JDK_21`); edit that file if your machine keeps JDKs in different locations.
@@ -580,7 +580,7 @@ portal.instance.inet.socket.address set to localhost:8080
 Starting Liferay (Ctrl+C to stop; then press f to force-kill if it hangs).
   Editor / portal: http://<LAN-IP>:8080/ (reachable from this machine and other devices on the network)
   Logs           : .../tomcat/logs/catalina.out
-  JDK            : .../zulu17...
+  JDK            : .../msopenjdk-21-amd64
 
 Selected ports:
   HTTP       8080

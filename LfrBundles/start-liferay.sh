@@ -1276,8 +1276,8 @@ choose_jdk() {
 			echo "$JDK_17"
 			;;
 		*)
-			# Unknown - fall back to JDK 17 (best for current LTS).
-			echo "$JDK_17"
+			# Unknown (dev bundles built from master) - fall back to JDK 21.
+			echo "$JDK_21"
 			;;
 	esac
 }
