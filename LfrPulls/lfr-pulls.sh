@@ -1067,9 +1067,13 @@ _LFR_PULLS_JQ='
 	# Whether the pull is waiting for a reviewer nobody has become yet. Its own
 	# predicate, not read off the status word, because NO-CHECK outranks REVIEW
 	# and collapses it: onYou still has to see the review to offer it to you.
+	# Never on the mirror: a pull gets there only once its team reviewed it,
+	# and the "review needed" labels it carries were copied over by the
+	# forward from the team fork, so they no longer ask anybody for anything.
 	def reviewNeeded:
-		(allLabels | any(test("review needed|ready to review"; "i"))) or
-		(.reviewDecision == "REVIEW_REQUIRED") or ((.reviewRequests | length) > 0);
+		($repoOwner != $mirrorOwner) and
+		((allLabels | any(test("review needed|ready to review"; "i"))) or
+		(.reviewDecision == "REVIEW_REQUIRED") or ((.reviewRequests | length) > 0));
 	# Its own predicate for the same reason: CONFLICT outranks ON-HOLD in the
 	# status word and swallows it, and an on-hold pull is not free for anybody
 	# to pick up however takeable the rest of it looks.
@@ -1337,6 +1341,7 @@ _lfrPullsPrefetchOpen() {
 _lfrPullsCensus() {
 	printf '%s' "${1}" | jq -r --arg me "${2}" --arg senderMe "${3}" \
 		--arg repoOwner "${4}" --arg yours "${5}" --arg prChecked "${6}" \
+		--arg mirrorOwner "${LFR_PULLS_REPO%%/*}" \
 		"${_LFR_PULLS_JQ}"' census(statusOrder; [.[] | status]),
 			census(onYouOrder; [.[] | onYou | select(. != "-")]),
 			censusByCount(labelWords)'
@@ -1397,7 +1402,7 @@ _lfrPullsForkSection() {
 
 	rows="$(printf '%s' "${json}" | jq -r --arg me "${me}" --arg senderMe "${senderMe}" \
 		--arg repoOwner "${repo%%/*}" --arg yours "${yours}" \
-		--arg prChecked "${prChecked}" \
+		--arg prChecked "${prChecked}" --arg mirrorOwner "${LFR_PULLS_REPO%%/*}" \
 		"${_LFR_PULLS_JQ} ${filter} | sort_by(.number) | reverse | .[] | ${row}")"
 
 	if [ -z "${rows}" ]; then
@@ -1456,7 +1461,7 @@ _lfrPullsMirrorSection() {
 	# in front of it in the merge queue; a low number means it is close.
 	rows="$(printf '%s' "${json}" | jq -r --arg me "${me}" --arg senderMe "${senderMe}" \
 		--arg repoOwner "${LFR_PULLS_REPO%%/*}" --arg yours "true" \
-		--arg prChecked "true" "${_LFR_PULLS_JQ}
+		--arg prChecked "true" --arg mirrorOwner "${LFR_PULLS_REPO%%/*}" "${_LFR_PULLS_JQ}
 		(map(.number) | sort) as \$nums |
 		${filter} | sort_by(.number) | .[] | (.number) as \$n | ${row}")" || return 1
 
