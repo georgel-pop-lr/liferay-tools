@@ -1,8 +1,9 @@
 # lfr-pulls.sh - list open pull requests along the road a change travels.
 #
 # Source this from your shell rc (normally via the root lfrTools.sh). It defines:
-#     lfrPulls           the four queues a pull of yours passes through, and
-#                        the rejections off the first of them
+#     lfrPulls           the four queues a pull of yours passes through, the
+#                        rejections off the first of them, and the forks where
+#                        a pull of yours can sit outside those queues
 #     lfrPulls stats     per-month counts of PRs sent, merged, and rejected
 #     lfrPulls rejected  the pulls sent back that never landed, and why
 #
@@ -10,7 +11,9 @@
 # sends it to the Brian CI mirror to be merged, so bare `lfrPulls` shows all
 # three queues at once: yours on the mirror, your team's fork, and your own fork
 # (where teammates open the pulls waiting on your review). A backport skips that
-# road and is opened on the EE repo, which is the fourth section.
+# road and is opened on the EE repo, which is the fourth section. Then three
+# groups of forks, kept to your pulls and the reviews asked of you: your team
+# members' forks, the AI tooling forks, and every other team's fork.
 #
 # A PR on the mirror repo is either forwarded by the CI bot (author is the bot,
 # head branch encodes the source fork owner as `...-sender-<owner>`) or opened
@@ -39,6 +42,13 @@ _lfrPullsDir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # follow, so it gets a section of its own.
 : "${LFR_PULLS_EE_REPO:=liferay/liferay-portal-ee}"
 
+# Personal forks where a pull of yours, or a review asked of you, can sit outside
+# the queues above. Your team's account is a GitHub user, not an organisation, so
+# its members cannot be read off GitHub and are listed by hand in the local conf.
+# The AI tooling forks are the people who review the .claude skills and rules.
+: "${LFR_PULLS_TEAM_MEMBERS:=}"
+: "${LFR_PULLS_AI_FORKS:=kenjiheigel 4lejandrito}"
+
 # The product teams that own code in .github/CODEOWNERS. Each is a real GitHub
 # account owning a liferay-portal fork, and that fork is where the team reviews
 # a change before ci:forward sends it to the mirror. `lfrPulls teams` re-reads
@@ -54,10 +64,14 @@ _lfrPullsHelp() {
 		                                   mirror, your team's fork (narrowed, see
 		                                   below), your own fork (teammates waiting
 		                                   on your review), and your backports on
-		                                   the EE repo. Under the mirror's own
-		                                   section comes the other half of what it
-		                                   has to say: your rejections off it that
-		                                   never landed
+		                                   the EE repo. Then three groups of forks,
+		                                   kept to your pulls and the reviews asked
+		                                   of you by name, one line each when they
+		                                   hold none: my team members, AI tooling,
+		                                   and every other team. Under the mirror's
+		                                   own section comes the other half of what
+		                                   it has to say: your rejections off it
+		                                   that never landed
 		  lfrPulls [mine|all]              the mirror alone (yours, or every PR)
 		  lfrPulls ee [mine|all|<login>]  (lfrpe)
 		                                   backports on liferay/liferay-portal-ee,
@@ -174,7 +188,7 @@ _lfrPullsHelp() {
 
 		Anywhere mine is accepted a GitHub login works in its place, and the
 		whole question is then asked about that person: lfrPulls stats nikki-pru
-		gives their month table and their four queues, lfrPulls week 30
+		gives their month table, their four queues and fork groups, lfrPulls week 30
 		nikki-pru their closed pulls, lfrPulls <team> <login> one fork of
 		theirs, lfrPulls ee <login> their backports. ON YOU keeps answering for
 		you, so it still says what a pull of theirs needs from you. The one
@@ -223,7 +237,7 @@ _lfrPullsHelp() {
 		GitHub commit searches than its rate limit allows. week asks GitHub
 		instead, falling back to the ref. stats all cannot title-match every
 		PR, so it shows only sent and closed for the whole repo. stats then prints
-		the same four queues in full, adding each pull's age and its own labels,
+		the same queues and fork groups in full, adding each pull's age and its own labels,
 		and stats all widens the mirror section to every open pull as well.
 
 		rejected answers one question: what did Brian send back that you have not
@@ -258,6 +272,10 @@ _lfrPullsHelp() {
 		  LFR_PULLS_FORK_REPO    the repo an owner with no slash means (default
 		                         liferay-portal, the name in LFR_PULLS_REPO)
 		  LFR_PULLS_EE_REPO      backports repo (default liferay/liferay-portal-ee)
+		  LFR_PULLS_TEAM_MEMBERS your team members' logins, whose forks are the
+		                         My team members group (default none)
+		  LFR_PULLS_AI_FORKS     the AI tooling group (default kenjiheigel
+		                         4lejandrito)
 		  LFR_PULLS_UPSTREAM_REPO  repo whose commit search says what landed
 		                         (default liferay/liferay-portal)
 		  LFR_PULLS_MASTER_REPO  local clone stats greps, and the others when
@@ -1413,8 +1431,10 @@ _lfrPullsCountLine() {
 # Print one fork's open pulls under <heading>, newest first, keeping only what
 # the jq expression <filter> selects. `detail` as $4 adds the age and the pull's
 # own labels; without it the table stays PR / AUTHOR / STATUS / ASSIGNEE / TITLE.
+# `quiet` as $5 prints nothing at all, heading included, when the filter keeps no
+# row, and returns 1 so the caller knows the section stayed silent.
 _lfrPullsForkSection() {
-	local repo="${1}" filter="${2}" heading="${3}" detail="${4:-}" json rows total header row
+	local repo="${1}" filter="${2}" heading="${3}" detail="${4:-}" quiet="${5:-}" json rows total header row
 	local me="${LFR_PULLS_USER:-$(gh api user --jq '.login' 2>/dev/null)}" yours="false"
 	local prChecked="true" senderMe color="false"
 	_lfrPullsColorOn && color="true"
@@ -1424,10 +1444,11 @@ _lfrPullsForkSection() {
 	esac
 	[ "${repo}" = "${LFR_PULLS_EE_REPO}" ] && prChecked="false"
 
-	printf '\n%s\n' "${heading}"
+	[ -z "${quiet}" ] && printf '\n%s\n' "${heading}"
 
 	json="$(_lfrPullsOpenJson "${repo}")"
 	if [ -z "${json}" ]; then
+		[ -n "${quiet}" ] && return 1
 		printf '  (no such repo, or it has no pulls: %s)\n' "${repo}"
 		return 0
 	fi
@@ -1447,6 +1468,7 @@ _lfrPullsForkSection() {
 		"${_LFR_PULLS_JQ} ${filter} | sort_by(.number) | reverse | .[] | ${row}")"
 
 	if [ -z "${rows}" ]; then
+		[ -n "${quiet}" ] && return 1
 		if [ "${total}" -eq 0 ]; then
 			printf '  no open pulls.\n'
 		else
@@ -1455,6 +1477,7 @@ _lfrPullsForkSection() {
 		fi
 		return 0
 	fi
+	[ -n "${quiet}" ] && printf '\n%s\n' "${heading}"
 	printf "${header}"'\n%s\n' "${rows}" | column -t -s $'\t' | _lfrPullsPaint "${color}" |
 		_lfrPullsLinkify "${repo}"
 	_lfrPullsCountLine "$(printf '%s\n' "${rows}" | grep -c .)" "${total}" \
@@ -1644,10 +1667,47 @@ _lfrPullsEE() {
 		"${LFR_PULLS_EE_REPO} open pulls, backports (${scope})" "${detail}"
 }
 
+# A group of forks that rarely hold anything of yours: your team members' own
+# forks, the AI tooling forks, every other team's fork. Only the pulls of yours
+# and the reviews asked of you by name are kept, a fork with none prints nothing,
+# so on a normal day the whole group is one line and a table appears only where
+# something of yours sits. $1 names the group, $2 is what each fork is to you,
+# $3 a login to ask about somebody else, kept to their own pulls as on the team
+# fork, $4 detail, and the owners follow. $5 as "list" names the owners in the
+# one line, which a long list of teams would only clutter.
+_lfrPullsQuietForksSection() {
+	local title="${1}" kind="${2}" person="${3}" detail="${4}" names="${5}" filter owner shown=0 scope
+	shift 5
+	[ "${#}" -eq 0 ] && return 0
+
+	filter='[.[] | select(isMine or (onYou != "-"))]'
+	scope="yours, or your review asked"
+	if [ -n "${person}" ]; then
+		filter="[.[] | select(.author.login == \"${person}\")]"
+		scope="${person}"
+	fi
+
+	for owner in "$@"; do
+		_lfrPullsForkSection "${owner}/${LFR_PULLS_FORK_REPO}" "${filter}" \
+			"${owner}/${LFR_PULLS_FORK_REPO} open pulls (${kind}: ${scope})" \
+			"${detail}" quiet && shown=$((shown + 1))
+	done
+
+	if [ "${shown}" -eq 0 ]; then
+		if [ "${names}" = "list" ]; then
+			printf '\n%s: nothing open (%s) on %s.\n' "${title}" "${scope}" "$(printf '%s\n' "$@" | paste -sd ' ')"
+		else
+			printf '\n%s: nothing open (%s) on the %s forks.\n' "${title}" "${scope}" "${#}"
+		fi
+	fi
+	return 0
+}
+
 # The four queues a change of yours passes through, in the order it travels:
 # the mirror it is waiting to be merged on, your team's fork where it was
 # reviewed, your own fork where teammates are waiting on you, and the EE repo,
-# which a backport goes to instead of travelling that road.
+# which a backport goes to instead of travelling that road. Then the quiet fork
+# groups, which print one line each on a day they hold nothing of yours.
 #
 # The mirror answers twice, so its rejections come directly under its open
 # pulls rather than at the end: both are the same repo, one saying what Brian
@@ -1673,6 +1733,26 @@ _lfrPullsDashboard() {
 	[ -n "${forkUser}" ] && [ "${forkUser}" != "${team}" ] &&
 		openRepos+=("${forkUser}/${LFR_PULLS_FORK_REPO}")
 	[ -n "${LFR_PULLS_EE_REPO}" ] && openRepos+=("${LFR_PULLS_EE_REPO}")
+
+	# The quiet groups, each owner once: you, the person asked about, and your
+	# team's account are already covered by a section of their own.
+	local owner seen=" ${forkUser} ${team} ${LFR_PULLS_USER:-} "
+	local members=() aiForks=() otherTeams=()
+	for owner in ${LFR_PULLS_TEAM_MEMBERS}; do
+		[[ "${seen}" == *" ${owner} "* ]] && continue
+		members+=("${owner}"); seen+="${owner} "
+	done
+	for owner in ${LFR_PULLS_AI_FORKS}; do
+		[[ "${seen}" == *" ${owner} "* ]] && continue
+		aiForks+=("${owner}"); seen+="${owner} "
+	done
+	for owner in ${_LFR_PULLS_TEAMS}; do
+		[[ "${seen}" == *" ${owner} "* ]] && continue
+		otherTeams+=("${owner}"); seen+="${owner} "
+	done
+	for owner in "${members[@]}" "${aiForks[@]}" "${otherTeams[@]}"; do
+		openRepos+=("${owner}/${LFR_PULLS_FORK_REPO}")
+	done
 
 	local -A _lfrPullsOpenCache=()
 	_lfrPullsPrefetchOpen _lfrPullsOpenCache "${openRepos[@]}"
@@ -1716,10 +1796,18 @@ _lfrPullsDashboard() {
 	fi
 
 	[ -n "${LFR_PULLS_EE_REPO}" ] && _lfrPullsEE "${mirrorMode}" "${detail}"
+
+	_lfrPullsQuietForksSection "My team members" "team member's fork" \
+		"${person}" "${detail}" list "${members[@]}"
+	_lfrPullsQuietForksSection "AI tooling" "AI tooling fork" \
+		"${person}" "${detail}" list "${aiForks[@]}"
+	_lfrPullsQuietForksSection "Other teams" "another team" \
+		"${person}" "${detail}" count "${otherTeams[@]}"
 	return 0
 }
 
-# With no argument, the three queues a pull travels through. `mine` or `all`
+# With no argument, the four queues a pull travels through and the fork groups
+# after them (see _lfrPullsDashboard). `mine` or `all`
 # narrows it to the mirror alone; a team or a GitHub user names one fork.
 lfrPulls() {
 	case "${1:-}" in

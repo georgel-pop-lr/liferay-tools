@@ -23,6 +23,15 @@ LFR_PULLS_USER="your-github-login"
 # Run `lfrPulls teams` for the list.
 #LFR_PULLS_TEAM="liferay-page-management"
 
+# Your team members' GitHub logins. Bare lfrPulls checks each one's fork for
+# your pulls and the reviews asked of you. A team account is a GitHub user, not
+# an organisation, so the list cannot be read off GitHub.
+#LFR_PULLS_TEAM_MEMBERS="login1 login2"
+
+# The AI tooling forks, checked the same way. Defaults to Kenji Heigel and
+# Alejandro Tardin, who review the .claude skills and rules.
+#LFR_PULLS_AI_FORKS="kenjiheigel 4lejandrito"
+
 # The fork repo name used for a team or user section (<owner>/<name>). Defaults
 # to the name part of LFR_PULLS_REPO, i.e. liferay-portal.
 #LFR_PULLS_FORK_REPO="liferay-portal"

@@ -4,7 +4,10 @@ Follow a change along the road it travels. Every team reviews its own pulls on
 its own liferay-portal fork, and `ci:forward` then sends them to the Brian CI
 mirror to be merged, so bare `lfrPulls` shows all three queues at once: yours on
 the mirror, your team's fork narrowed to what concerns you, and your own fork,
-where teammates open the pulls waiting on your review. Beyond that, list any team's or any user's fork, look up
+where teammates open the pulls waiting on your review, then your backports on
+the EE repo. After those come your pulls and the reviews asked of you on your
+team members' forks, the AI tooling forks, and every other team's fork, one line
+per group when they hold nothing. Beyond that, list any team's or any user's fork, look up
 every pull ever opened for one ticket, count what you have sent, merged, and
 had rejected per month, and list the rejections you still owe a resend.
 
@@ -16,7 +19,12 @@ had rejected per month, and list the rejections you still owe a resend.
   everybody, so it is narrowed to the pulls you wrote, the ones `ON YOU` speaks
   for, and the ones with no workflow label at all, since an untriaged pull is
   itself worth seeing. The count line still gives the section total, and
-  `lfrPulls <team>` lists every one. Directly under the mirror's own section
+  `lfrPulls <team>` lists every one. After the four come three groups of forks
+  where a pull of yours can sit outside them: your team members' own forks
+  (`LFR_PULLS_TEAM_MEMBERS`), the AI tooling forks (`LFR_PULLS_AI_FORKS`), and
+  every other team's fork. Each keeps only your pulls and the reviews asked of
+  you by name, a fork holding none prints nothing, and a group holding none is
+  one line. Directly under the mirror's own section
   comes the other half of what that repo has to say: the pulls Brian sent back
   that never landed, which is work you owe. See
   [Rejected pulls](#rejected-pulls).
@@ -85,7 +93,7 @@ lfrPulls week 14       # ...in the last 14 days
 lfrPulls week 30 nikki-pru # ...somebody else's
 lfrPulls stats         # your PRs per month, last 12 months
 lfrPulls stats all 6   # whole-repo PRs per month, last 6 months
-lfrPulls stats nikki-pru   # their month table, then their four queues
+lfrPulls stats nikki-pru   # their month table, then their queues and fork groups
 lfrPulls rejected      # what Brian sent back in the last 30 days and you owe
 lfrPulls rejected 90   # ...in the last 90 days
 lfrPulls rejected all  # ...ever, which is slow: it reads every closed pull
@@ -286,7 +294,7 @@ close month while sent is counted by create month.
 `stats all` shows only `SENT` and `CLOSED` for the whole repo (it cannot
 title-match every PR).
 
-After the month table, `stats` prints the same three queues bare `lfrPulls`
+After the month table, `stats` prints the same queues and fork groups bare `lfrPulls`
 shows, in full (following the login when you named one): each pull's age and its own workflow labels alongside the
 `STATUS`, and under each table the census that says how many pulls sit in each
 `STATUS` and whose move is next. `stats all` also widens the team fork section back to every pull. The compact list answers "where is it stuck"; the detailed one answers
@@ -411,6 +419,11 @@ cp lfr-pulls.local.conf.example lfr-pulls.local.conf
   listing to override it once.
 - `LFR_PULLS_EE_REPO` - where backports go (default
   `liferay/liferay-portal-ee`), the fourth section and `lfrPulls ee`.
+- `LFR_PULLS_TEAM_MEMBERS` - your team members' GitHub logins, whose forks form
+  the My team members group (default none). A team account is a GitHub user,
+  not an organisation, so its members cannot be read off GitHub.
+- `LFR_PULLS_AI_FORKS` - the AI tooling group, the people who review the
+  `.claude` skills and rules (default `kenjiheigel 4lejandrito`).
 - `LFR_PULLS_UPSTREAM_REPO` - the repo whose GitHub commit search says what
   landed (default `liferay/liferay-portal`), for `rejected`, `week`, `ticket`'s
   landing footer, and `teams`' CODEOWNERS.
