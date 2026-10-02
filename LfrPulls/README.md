@@ -208,7 +208,9 @@ review is counted once there and three times here, which is what makes it easy
 to see what a section is actually missing. Labels have no ranking to follow, so
 this line is ordered by count and then by name, and a pull carrying no workflow
 label counts as `untriaged`. The counts sum past the section total on purpose,
-since a pull carries as many labels as it carries.
+since a pull carries as many labels as it carries. It prints only with the
+LABELS column, in `lfrPulls stats` and with `-d`: on the team fork it counts
+every teammate's pulls, which buries the two lines above it in the plain view.
 
 It is free: both are computed from the listing already fetched, so no section
 makes an extra call for it.

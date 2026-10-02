@@ -168,7 +168,9 @@ _lfrPullsHelp() {
 		STATUS keeps the worst word per pull, so the labels line is the one
 		that shows everything: a conflicting pull that is also on hold and
 		waiting for a backend review counts once in STATUS and three times
-		there. A pull carrying no workflow label counts as untriaged.
+		there. A pull carrying no workflow label counts as untriaged. The
+		labels line prints only in stats and with -d, alongside the LABELS
+		column, since on the team fork it counts every teammate's pulls.
 
 		Anywhere mine is accepted a GitHub login works in its place, and the
 		whole question is then asked about that person: lfrPulls stats nikki-pru
@@ -1342,10 +1344,12 @@ _lfrPullsCensus() {
 
 # The count line closing a section, with that census on it: "5 of 14 open
 # pull(s): 4 CONFLICT, 3 CHANGES, ...", then "on you: 1 you, 3 need-review"
-# and "labels: ..." under it. $1 rows kept, $2 open in total, the rest what the
-# census needs.
+# and, with `detail` as $9, "labels: ..." under it. $1 rows kept, $2 open in
+# total, the rest what the census needs. The labels line is detail only because
+# on the team fork it counts every teammate's pulls, which buries the two lines
+# above it in the plain view.
 _lfrPullsCountLine() {
-	local kept="${1}" total="${2}" census statusCensus onYouCensus labelCensus
+	local kept="${1}" total="${2}" detail="${9:-}" census statusCensus onYouCensus labelCensus
 	census="$(_lfrPullsCensus "${3}" "${4}" "${5}" "${6}" "${7}" "${8}")"
 	statusCensus="$(printf '%s\n' "${census}" | sed -n 1p)"
 	onYouCensus="$(printf '%s\n' "${census}" | sed -n 2p)"
@@ -1357,7 +1361,7 @@ _lfrPullsCountLine() {
 		printf '  %s of %s open pull(s)%s.\n' "${kept}" "${total}" "${statusCensus:+: ${statusCensus}}"
 	fi
 	[ -n "${onYouCensus}" ] && printf '  on you: %s.\n' "${onYouCensus}"
-	[ -n "${labelCensus}" ] && printf '  labels: %s.\n' "${labelCensus}"
+	[ -n "${detail}" ] && [ -n "${labelCensus}" ] && printf '  labels: %s.\n' "${labelCensus}"
 	return 0
 }
 
@@ -1401,14 +1405,15 @@ _lfrPullsForkSection() {
 			printf '  no open pulls.\n'
 		else
 			_lfrPullsCountLine 0 "${total}" "${json}" "${me}" "${senderMe}" \
-				"${repo%%/*}" "${yours}" "${prChecked}"
+				"${repo%%/*}" "${yours}" "${prChecked}" "${detail}"
 		fi
 		return 0
 	fi
 	printf "${header}"'\n%s\n' "${rows}" | column -t -s $'\t' | sed 's/^/  /' |
 		_lfrPullsLinkify "${repo}"
 	_lfrPullsCountLine "$(printf '%s\n' "${rows}" | grep -c .)" "${total}" \
-		"${json}" "${me}" "${senderMe}" "${repo%%/*}" "${yours}" "${prChecked}"
+		"${json}" "${me}" "${senderMe}" "${repo%%/*}" "${yours}" "${prChecked}" \
+		"${detail}"
 }
 
 # Print the mirror's open pulls: the same STATUS as a fork, plus AHEAD, which
@@ -1461,12 +1466,13 @@ _lfrPullsMirrorSection() {
 	printf '\n%s open pulls (%s)\n' "${LFR_PULLS_REPO}" "${mode}"
 	if [ -z "${rows}" ]; then
 		_lfrPullsCountLine 0 "${total}" "${json}" "${me}" "${senderMe}" \
-			"${LFR_PULLS_REPO%%/*}" true true
+			"${LFR_PULLS_REPO%%/*}" true true "${detail}"
 	else
 		printf "${header}"'\n%s\n' "${rows}" | column -t -s $'\t' | sed 's/^/  /' |
 			_lfrPullsLinkify "${LFR_PULLS_REPO}"
 		_lfrPullsCountLine "$(printf '%s\n' "${rows}" | grep -c .)" "${total}" \
-			"${json}" "${me}" "${senderMe}" "${LFR_PULLS_REPO%%/*}" true true
+			"${json}" "${me}" "${senderMe}" "${LFR_PULLS_REPO%%/*}" true true \
+			"${detail}"
 	fi
 	printf '  %s\n' "$(_lfrPullsLastActiveLine)"
 }
