@@ -424,6 +424,11 @@ cp lfr-pulls.local.conf.example lfr-pulls.local.conf
   disables it. Click or ctrl-click the number. In `rejected` the number links
   to the rejection comment, and `off` prints those URLs as a `COMMENT` column
   rather than dropping them.
+- `LFR_PULLS_COLOR` - `on`, `off`, or `auto` (default). In the open-pulls
+  tables a pull of yours, or one whose `ON YOU` asks something of you, is
+  bright white, and every other row is light grey. Same rule as the links: a
+  terminal by default, plain when piped, and `NO_COLOR` turns it off unless
+  this says `on`.
 - `LFR_PULLS_REJECTED_DAYS` - how far back `rejected` looks, and the fifth
   section of bare `lfrPulls` with it (default 30).
 - `LFR_PULLS_MASTER_REF` - master ref to grep (default `brian/master`), which

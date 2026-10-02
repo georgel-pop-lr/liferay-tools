@@ -1177,6 +1177,8 @@ _LFR_PULLS_JQ='
 				(([ "CONFLICT", "NO-CHECK" ] | any(. == $status)) and reviewNeeded))
 			then "need-review"
 		else "-" end;
+	# The marker _lfrPullsPaint colours a row by.
+	def paint: if isMine or (onYou != "-") then "A" else "." end;
 	def age: ((now - (.createdAt | fromdate)) / 86400 | floor | tostring) + "d";
 	# The words in the order they are ranked in, so a census reads worst news
 	# first and keeps the same shape between runs, where sorting by count would
@@ -1215,6 +1217,44 @@ _LFR_PULLS_JQ='
 		isMine or (onYou != "-") or ((workflowLabels | length) == 0);
 '
 
+# Colour each row of an open-pulls table by what it is to you, then drop the
+# marker column that says so: "A" for a pull of yours or one whose ON YOU
+# asks something of you, bright white, and "." for the rest, light grey, so
+# what concerns you is what stands out. "H" marks the header, left alone. The marker rides as the first column so column(1) lays the table out
+# without counting any escape, and it is cut back off here as "X  ", one
+# character and the two spaces column(1) puts after it. Colour follows the
+# same rule as the links: a terminal by default, LFR_PULLS_COLOR to force it
+# either way, and NO_COLOR honoured. The caller decides that and passes "true"
+# as $1, because this runs mid-pipe, where [ -t 1 ] sees the pipe and never
+# the terminal.
+_lfrPullsPaint() {
+	local on="${1:-false}"
+
+	awk -v on="${on}" '{
+		marker = substr($0, 1, 1)
+		rest = substr($0, 4)
+		if ((on == "true") && (marker == "A")) {
+			print "  \033[1;38;5;231m" rest "\033[0m"
+		}
+		else if ((on == "true") && (marker == ".")) {
+			print "  \033[38;5;250m" rest "\033[0m"
+		}
+		else {
+			print "  " rest
+		}
+	}'
+}
+
+_lfrPullsColorOn() {
+	[ -n "${NO_COLOR:-}" ] && [ "${LFR_PULLS_COLOR:-auto}" != "on" ] && return 1
+
+	case "${LFR_PULLS_COLOR:-auto}" in
+	off) return 1 ;;
+	on) return 0 ;;
+	*) [ -t 1 ] ;;
+	esac
+}
+
 # Make each row's #<number> a clickable link to its pull. The URL rides in an
 # OSC 8 escape and the visible text stays "#12345", so no column grows and
 # `column -t` cannot be thrown off: this runs AFTER the table is laid out, for
@@ -1229,7 +1269,7 @@ _lfrPullsLinkify() {
 	_lfrPullsLinksOn || { cat; return; }
 
 	esc=$'\033'
-	sed -E "s|^([[:space:]]*)#([0-9]+)|\1${esc}]8;;https://github.com/${repo}/pull/\2${esc}\\\\#\2${esc}]8;;${esc}\\\\|"
+	sed -E "s|^([[:space:]]*(${esc}\\[[0-9;]*m)?)#([0-9]+)|\1${esc}]8;;https://github.com/${repo}/pull/\3${esc}\\\\#\3${esc}]8;;${esc}\\\\|"
 }
 
 # Whether a #number should be rendered as an OSC 8 link at all: on a terminal
@@ -1376,7 +1416,8 @@ _lfrPullsCountLine() {
 _lfrPullsForkSection() {
 	local repo="${1}" filter="${2}" heading="${3}" detail="${4:-}" json rows total header row
 	local me="${LFR_PULLS_USER:-$(gh api user --jq '.login' 2>/dev/null)}" yours="false"
-	local prChecked="true" senderMe
+	local prChecked="true" senderMe color="false"
+	_lfrPullsColorOn && color="true"
 	senderMe="$(_lfrPullsSenderOwner "${me}" "${me}")"
 	case "${repo}" in
 	"${me}"/* | "${LFR_PULLS_TEAM:-${LFR_GIT_FORK_ORG:-::none::}}"/* | "${LFR_PULLS_EE_REPO}" | "${LFR_PULLS_REPO}") yours="true" ;;
@@ -1393,11 +1434,11 @@ _lfrPullsForkSection() {
 	total="$(printf '%s' "${json}" | jq 'length')"
 
 	if [ -n "${detail}" ]; then
-		header='PR\tAUTHOR\tSTATUS\tON YOU\tASSIGNEE\tAGE\tLABELS\tTITLE'
-		row='"#\(.number)\t\(.author.login)\t\(status)\t\(onYou)\t\(assignee)\t\(age)\t\((workflowLabels | join(" | ")) | if . == "" then "-" else . end)\t\(.title[0:60])"'
+		header='H\tPR\tAUTHOR\tSTATUS\tON YOU\tASSIGNEE\tAGE\tLABELS\tTITLE'
+		row='"\(paint)\t#\(.number)\t\(.author.login)\t\(status)\t\(onYou)\t\(assignee)\t\(age)\t\((workflowLabels | join(" | ")) | if . == "" then "-" else . end)\t\(.title[0:60])"'
 	else
-		header='PR\tAUTHOR\tSTATUS\tON YOU\tASSIGNEE\tTITLE'
-		row='"#\(.number)\t\(.author.login)\t\(status)\t\(onYou)\t\(assignee)\t\(.title[0:60])"'
+		header='H\tPR\tAUTHOR\tSTATUS\tON YOU\tASSIGNEE\tTITLE'
+		row='"\(paint)\t#\(.number)\t\(.author.login)\t\(status)\t\(onYou)\t\(assignee)\t\(.title[0:60])"'
 	fi
 
 	rows="$(printf '%s' "${json}" | jq -r --arg me "${me}" --arg senderMe "${senderMe}" \
@@ -1414,7 +1455,7 @@ _lfrPullsForkSection() {
 		fi
 		return 0
 	fi
-	printf "${header}"'\n%s\n' "${rows}" | column -t -s $'\t' | sed 's/^/  /' |
+	printf "${header}"'\n%s\n' "${rows}" | column -t -s $'\t' | _lfrPullsPaint "${color}" |
 		_lfrPullsLinkify "${repo}"
 	_lfrPullsCountLine "$(printf '%s\n' "${rows}" | grep -c .)" "${total}" \
 		"${json}" "${me}" "${senderMe}" "${repo%%/*}" "${yours}" "${prChecked}" \
@@ -1426,7 +1467,8 @@ _lfrPullsForkSection() {
 _lfrPullsMirrorSection() {
 	local mode="${1}" detail="${2:-}" filter='.' json rows header row
 	local me="${LFR_PULLS_USER:-$(gh api user --jq '.login' 2>/dev/null)}"
-	local senderMe
+	local senderMe color="false"
+	_lfrPullsColorOn && color="true"
 	senderMe="$(_lfrPullsSenderOwner "${me}" "${me}")"
 
 	# A pull is one person's when they authored it directly or when the bot
@@ -1450,11 +1492,11 @@ _lfrPullsMirrorSection() {
 	json="$(_lfrPullsOpenJson "${LFR_PULLS_REPO}")" || return 1
 
 	if [ -n "${detail}" ]; then
-		header='PR\tSENDER\tAHEAD\tSTATUS\tON YOU\tAGE\tLABELS\tTITLE'
-		row='"#\($n)\t\(sender)\t\($nums | map(select(. < $n)) | length)\t\(status)\t\(onYou)\t\(age)\t\((workflowLabels | join(" | ")) | if . == "" then "-" else . end)\t\(.title[0:60])"'
+		header='H\tPR\tSENDER\tAHEAD\tSTATUS\tON YOU\tAGE\tLABELS\tTITLE'
+		row='"\(paint)\t#\($n)\t\(sender)\t\($nums | map(select(. < $n)) | length)\t\(status)\t\(onYou)\t\(age)\t\((workflowLabels | join(" | ")) | if . == "" then "-" else . end)\t\(.title[0:60])"'
 	else
-		header='PR\tSENDER\tAHEAD\tSTATUS\tON YOU\tTITLE'
-		row='"#\($n)\t\(sender)\t\($nums | map(select(. < $n)) | length)\t\(status)\t\(onYou)\t\(.title[0:60])"'
+		header='H\tPR\tSENDER\tAHEAD\tSTATUS\tON YOU\tTITLE'
+		row='"\(paint)\t#\($n)\t\(sender)\t\($nums | map(select(. < $n)) | length)\t\(status)\t\(onYou)\t\(.title[0:60])"'
 	fi
 
 	# AHEAD = how many open PRs are older (lower number), so roughly how many are
@@ -1473,7 +1515,7 @@ _lfrPullsMirrorSection() {
 		_lfrPullsCountLine 0 "${total}" "${json}" "${me}" "${senderMe}" \
 			"${LFR_PULLS_REPO%%/*}" true true "${detail}"
 	else
-		printf "${header}"'\n%s\n' "${rows}" | column -t -s $'\t' | sed 's/^/  /' |
+		printf "${header}"'\n%s\n' "${rows}" | column -t -s $'\t' | _lfrPullsPaint "${color}" |
 			_lfrPullsLinkify "${LFR_PULLS_REPO}"
 		_lfrPullsCountLine "$(printf '%s\n' "${rows}" | grep -c .)" "${total}" \
 			"${json}" "${me}" "${senderMe}" "${LFR_PULLS_REPO%%/*}" true true \
