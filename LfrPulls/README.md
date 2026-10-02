@@ -192,7 +192,7 @@ labels themselves under it:
 ```
   5 of 14 open pull(s): 4 CONFLICT, 3 CHANGES, 3 NO-CHECK, 3 IN-REVIEW, 1 REVIEW.
   on you: 1 you, 3 need-review.
-  labels: 10 Backend review needed, 3 Changes needed, 1 On hold, 1 Ready to merge.
+  labels: 10 Backend review needed | 3 Changes needed | 1 On hold | 1 Ready to merge
 ```
 
 All three count every open pull the section fetched, not only the rows its

@@ -164,7 +164,7 @@ _lfrPullsHelp() {
 		ON YOU and over the labels themselves under it:
 		  5 of 14 open pull(s): 4 CONFLICT, 3 CHANGES, 3 NO-CHECK, 3 IN-REVIEW.
 		  on you: 1 you, 3 need-review.
-		  labels: 10 Backend review needed, 3 Changes needed, 1 On hold.
+		  labels: 10 Backend review needed | 3 Changes needed | 1 On hold
 		STATUS keeps the worst word per pull, so the labels line is the one
 		that shows everything: a conflicting pull that is also on hold and
 		waiting for a backend review counts once in STATUS and three times
@@ -1200,7 +1200,7 @@ _LFR_PULLS_JQ='
 	# so a tie does not reshuffle between runs.
 	def censusByCount($words):
 		[ $words | group_by(.)[] | { word: .[0], n: length } ] |
-		sort_by([ -.n, .word ]) | map("\(.n) \(.word)") | join(", ");
+		sort_by([ -.n, .word ]) | map("\(.n) \(.word)") | join(" | ");
 	# Whether a pull is worth a place on the dashboard, which shows your own
 	# queues and drops what belongs to somebody else. Three ways in:
 	#   it is yours, sent either way, so it stays however healthy it looks
@@ -1361,7 +1361,7 @@ _lfrPullsCountLine() {
 		printf '  %s of %s open pull(s)%s.\n' "${kept}" "${total}" "${statusCensus:+: ${statusCensus}}"
 	fi
 	[ -n "${onYouCensus}" ] && printf '  on you: %s.\n' "${onYouCensus}"
-	[ -n "${detail}" ] && [ -n "${labelCensus}" ] && printf '  labels: %s.\n' "${labelCensus}"
+	[ -n "${detail}" ] && [ -n "${labelCensus}" ] && printf '  labels: %s\n' "${labelCensus}"
 	return 0
 }
 
@@ -1389,7 +1389,7 @@ _lfrPullsForkSection() {
 
 	if [ -n "${detail}" ]; then
 		header='PR\tAUTHOR\tSTATUS\tON YOU\tASSIGNEE\tAGE\tLABELS\tTITLE'
-		row='"#\(.number)\t\(.author.login)\t\(status)\t\(onYou)\t\(assignee)\t\(age)\t\((workflowLabels | join(", ")) | if . == "" then "-" else . end)\t\(.title[0:60])"'
+		row='"#\(.number)\t\(.author.login)\t\(status)\t\(onYou)\t\(assignee)\t\(age)\t\((workflowLabels | join(" | ")) | if . == "" then "-" else . end)\t\(.title[0:60])"'
 	else
 		header='PR\tAUTHOR\tSTATUS\tON YOU\tASSIGNEE\tTITLE'
 		row='"#\(.number)\t\(.author.login)\t\(status)\t\(onYou)\t\(assignee)\t\(.title[0:60])"'
@@ -1446,7 +1446,7 @@ _lfrPullsMirrorSection() {
 
 	if [ -n "${detail}" ]; then
 		header='PR\tSENDER\tAHEAD\tSTATUS\tON YOU\tAGE\tLABELS\tTITLE'
-		row='"#\($n)\t\(sender)\t\($nums | map(select(. < $n)) | length)\t\(status)\t\(onYou)\t\(age)\t\((workflowLabels | join(", ")) | if . == "" then "-" else . end)\t\(.title[0:60])"'
+		row='"#\($n)\t\(sender)\t\($nums | map(select(. < $n)) | length)\t\(status)\t\(onYou)\t\(age)\t\((workflowLabels | join(" | ")) | if . == "" then "-" else . end)\t\(.title[0:60])"'
 	else
 		header='PR\tSENDER\tAHEAD\tSTATUS\tON YOU\tTITLE'
 		row='"#\($n)\t\(sender)\t\($nums | map(select(. < $n)) | length)\t\(status)\t\(onYou)\t\(.title[0:60])"'
