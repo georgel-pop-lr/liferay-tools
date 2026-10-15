@@ -81,8 +81,10 @@ _lfrGitHelp() {
 		Aliases: lfrgc lfrgcd lfrgs lfrgse lfrgr lfrgro lfrgum lfrgub lfrgct
 
 		A rebase only ever moves the branch's own commits, and refuses to replay
-		more than LFR_GIT_REBASE_MAX (default 50). Local changes are stashed
-		before it and put back on top of the rebased branch.
+		more than LFR_GIT_REBASE_MAX (default 100) when another author wrote one
+		of them; a branch of only your own commits always passes. Local
+		changes are stashed before it and put back on top of the rebased
+		branch.
 	EOF
 }
 
@@ -290,15 +292,17 @@ _lfrGitForkPoint() {
 # Rebase HEAD onto <target>, replaying only the branch's own commits: cut at the
 # real fork point with --onto whenever that differs from merge-base(target, HEAD),
 # which is exactly the case a plain rebase gets wrong. Refuses a run that would
-# replay more than LFR_GIT_REBASE_MAX commits (default 50), since no branch owns
-# that many; it means the fork point is wrong and the rebase is about to rewrite
-# other people's commits as yours. Returns 2 when there is nothing to do.
+# replay more than LFR_GIT_REBASE_MAX commits (default 100) when one of them has
+# another author, since that means the fork point is wrong and the rebase is about
+# to rewrite other people's commits as yours. A branch whose commits are all
+# yours is never refused, however long it is. Returns 2 when there is nothing to
+# do.
 # Local changes are stashed with --autostash and restored on top of the rebased
 # branch, so a dirty tree no longer turns the run away.
 # Args: <branch> <target> <force_rebase 0|1> <rebase_onto 0|1>
 _lfrGitRebaseOnto() {
 	local cur="${1}" target="${2}" force_rebase="${3}" rebase_onto="${4}"
-	local base target_base replay max rc wt dirty=0
+	local base target_base replay foreign max rc wt dirty=0
 	local -a rebase_args
 
 	wt="$(basename "$(git rev-parse --show-toplevel)")"
@@ -318,10 +322,11 @@ _lfrGitRebaseOnto() {
 	fi
 
 	replay="$(git rev-list --count "${base}..HEAD")"
-	max="${LFR_GIT_REBASE_MAX:-50}"
-	if [ "${replay}" -gt "${max}" ]; then
-		echo "lfrGitRebaseOnto: rebasing ${cur} in ${wt} onto ${target} would replay ${replay} commits (limit ${max})." >&2
-		echo "  No branch owns that many, so the fork point is wrong and those commits are someone else's." >&2
+	foreign="$(git log --format='%ae' "${base}..HEAD" | command grep -cvxF "$(git config user.email)")"
+	max="${LFR_GIT_REBASE_MAX:-100}"
+	if [ "${foreign}" -gt 0 ] && [ "${replay}" -gt "${max}" ]; then
+		echo "lfrGitRebaseOnto: rebasing ${cur} in ${wt} onto ${target} would replay ${replay} commits (limit ${max}), ${foreign} of them by another author." >&2
+		echo "  The fork point is probably wrong and those commits are someone else's." >&2
 		echo "  See them with: git log --oneline $(git rev-parse --short "${base}")..HEAD" >&2
 		echo "  Override for this run with LFR_GIT_REBASE_MAX=${replay}." >&2
 		return 3
@@ -457,7 +462,7 @@ _lfrGitRebaseAll() {
 		0) report+=("rebased  ${branch} in ${name}") ;;
 		2) report+=("current  ${branch} in ${name}") ;;
 		3)
-			report+=("refused  ${branch} in ${name}: more than ${LFR_GIT_REBASE_MAX:-50} commits to replay")
+			report+=("refused  ${branch} in ${name}: more than ${LFR_GIT_REBASE_MAX:-100} commits to replay, some by another author")
 			failed=1
 			;;
 		*)

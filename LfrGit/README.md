@@ -20,7 +20,7 @@ cp lfr-git.local.conf.example lfr-git.local.conf
 | `LFR_GIT_UPSTREAM_ORG` | Upstream org to sync from | `liferay` |
 | `LFR_GIT_UPSTREAM_REMOTE` | Remote `lfrGitUpdateBranch` and `lfrGitCheckoutTag` take release branches and patch tags from | `upstream` |
 | `LFR_GIT_MASTER_MIRRORS` | Master mirrors `lfrGitUpdateMaster` keeps current, as `branch:remote` pairs | `("master:upstream")` |
-| `LFR_GIT_REBASE_MAX` | Most commits a rebase may replay before it is refused | `50` |
+| `LFR_GIT_REBASE_MAX` | Most commits a rebase may replay before it is refused, when another author wrote one of them | `100` |
 | `LFR_GIT_REBASE_ALL_EXCLUDE` | Branches `lfrGitUpdateMaster -a` leaves alone, as glob patterns | `("KEEP-*")` |
 
 ## Commands
@@ -180,9 +180,10 @@ again as the last line: which branch is in conflict, and that the changes are in
 `stash@{0}`.
 
 As a backstop, a rebase that would replay more than `LFR_GIT_REBASE_MAX` commits
-(default 50) is refused with the command to inspect them: no branch owns that
-many, so it means the fork point is wrong. Raise the variable for a run that
-genuinely needs it.
+(default 100) is refused with the command to inspect them, when another author
+wrote one of them: that means the fork point is probably wrong. A branch whose
+commits are all yours (author email equal to `git config user.email`) always
+passes. Raise the variable for a run that genuinely needs it.
 
 List your mirrors in `LFR_GIT_MASTER_MIRRORS`; each is created if missing (locally,
 tracking `<remote>/master`, and on your fork), so a fresh clone just needs the
