@@ -1573,6 +1573,7 @@ if [ -t 1 ]; then
 				case "$_key" in
 					p) _STATUS_BAR_PORTS=$((1 - _STATUS_BAR_PORTS)) ;;
 					w) _STATUS_BAR_WORKTREES=$((1 - _STATUS_BAR_WORKTREES)) ;;
+					"") echo; continue ;; # Enter, echoed as before the keys were read
 					*) continue ;;
 				esac
 				_setup_status_bar
