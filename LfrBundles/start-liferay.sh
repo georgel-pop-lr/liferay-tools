@@ -1477,6 +1477,24 @@ _trap_log() {
 		"$_stopping" "$*" >> "$_TRAP_LOG" 2>/dev/null || true
 }
 
+# The heartbeat line of the trace: the signals Tomcat ignores and catches (SIGINT
+# is the 0x2 bit), and the terminal's foreground process group next to this
+# shell's, read from /proc with no fork.
+_trap_log_state() {
+	local key value ignored="" caught="" stat="" pgrp="" tpgid=""
+	if [ -r "/proc/$_catalina_pid/status" ]; then
+		while read -r key value; do
+			case "$key" in
+				SigIgn:) ignored="$value" ;;
+				SigCgt:) caught="$value" ;;
+			esac
+		done < "/proc/$_catalina_pid/status"
+	fi
+	[ -r "/proc/$$/stat" ] && read -r stat < "/proc/$$/stat"
+	read -r _ _ pgrp _ _ tpgid _ <<< "${stat##*) }"
+	_trap_log "heartbeat tomcat SigIgn=$ignored SigCgt=$caught pgrp=$pgrp tpgid=$tpgid"
+}
+
 # Announce when the Arquillian connector's socket is actually up. It binds late
 # in OSGi startup (long after the HTTP port), with no other ready signal, so a
 # testIntegration run started too early hits "connection refused". Poll in the
@@ -1544,7 +1562,7 @@ if [ -t 1 ]; then
 	# The poll is short, since a resize is redrawn only when it returns.
 	while kill -0 "$_catalina_pid" 2>/dev/null; do
 		if [ "$SECONDS" -ge "$_next_heartbeat" ]; then
-			_trap_log "heartbeat"
+			_trap_log_state
 			_next_heartbeat=$((SECONDS + 60))
 		fi
 		if [ "$_redraw" = 1 ]; then
@@ -1585,6 +1603,9 @@ if [ -t 1 ]; then
 			wait "$_catalina_pid" && break
 		fi
 	done
+	_tomcat_status=0
+	wait "$_catalina_pid" 2>/dev/null || _tomcat_status=$?
+	_trap_log "tomcat exit status $_tomcat_status"
 else
 	exec "$CATALINA" "${catalina_args[@]}"
 fi
