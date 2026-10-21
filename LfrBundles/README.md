@@ -544,29 +544,54 @@ redirected, it just `exec`s Tomcat.)
    only when at least one port differs from what's already in the file.
    Re-running on the same setup leaves `server.xml` untouched.
 5. **Starts Tomcat**, prints the resolved HTTP URL and the `catalina.out` path,
-   and on a TTY pins a three-row status panel to the bottom that stays put while
-   the logs scroll: the bundle path on the upper row, the ports on the middle row,
-   the editor URL, this launch's flags and the stop hint on the lower one.
+   and on a TTY pins a status panel to the bottom that stays put while the logs
+   scroll. By default it has two rows: the branch of each checkout that deploys
+   into it with the bundle path, then the editor URL, this launch's flags and the
+   key hint.
 
 ```
- /media/georgelpop/Data/liferay/bundles/liferay-bundle-LPD-104387
- HTTP 8080  HTTPS 8443  OSGI 11311  ES 9301  GR 4000  ARQ 32763  DBG 8000
- http://192.168.40.213:8080/   |   -d -t -c   |   Ctrl+C stop, +f force
+ LPD-104387 > /media/georgelpop/Data/liferay/bundles/liferay-bundle-LPD-104387
+ http://192.168.40.213:8080/ | -d -t -c | Ctrl+C stop then f to force, p - ports, w - worktree
 ```
+
+   Two keys open more rows, and the same key closes its row again:
+
+   - `p` opens the ports row.
+   - `w` opens the worktrees row: the worktree of each checkout that deploys into
+     the bundle. The bundle's own worktrees come first, and the ones that
+     `lfrShare` repointed at it come after, marked `(shared)`.
+
+```
+ LPD-104387 > /media/georgelpop/Data/liferay/bundles/liferay-bundle-LPD-104387
+ http://192.168.40.213:8080/ | -d -t -c | Ctrl+C stop then f to force, p - ports, w - worktree
+ HTTP 8080  HTTPS 8443  OSGI 11311  ES 9301  GR 4000  ARQ 32763  DBG 8000
+ /media/georgelpop/Data/liferay/repos/liferay-portal-LPD-104387, /home/georgelpop/liferay/repos/liferay-portal (shared)
+```
+
+   When the panel grows, the log scrolls up first, so the new rows do not cover
+   the last lines of the log. When it shrinks, the rows it gives back are cleared.
+   The hint shows `w - worktree` only when a checkout deploys into the bundle.
 
    The flags are worth the space because they say what the running server actually
    is: `-c` wiped its database, `-t` made it a testIntegration target. They ride on
-   the bottom row rather than beside the path because a bundle path is long and
+   the URL row rather than beside the path because a bundle path is long and
    anything put next to it comes straight out of the field that identifies the
    server. Measured: with the flags on the path row, a 60-column terminal loses
-   twelve more characters of path. The three fields on the bottom row are all short
+   twelve more characters of path. The three fields on the URL row are all short
    and fixed, so they cost it nothing.
 
-   Every row degrades rather than being cut off. The path is truncated from the
-   left, behind a leading `...`, so the bundle folder survives and not the generic
-   leading directories. A port is appended only when the whole of it fits, so a
-   narrow terminal drops trailing ports rather than cutting one mid-number. On the
-   bottom row the hint goes first and the flags second, leaving the URL.
+   The branches and the worktrees are read once at launch, through the same helpers
+   that label the `lfrBundles` list, so a checkout switched later shows only on the
+   next launch. When several checkouts deploy into the bundle, each branch carries
+   its repo.
+
+   Every row degrades rather than being cut off. The branch is shown only when the
+   whole of it fits beside the path, so it never costs the path a character. The
+   path is truncated from the left, behind a leading `...`, so the bundle folder
+   survives and not the generic leading directories. A port is appended only when
+   the whole of it fits, so a narrow terminal drops trailing ports rather than
+   cutting one mid-number. On the URL row the hint goes first and the flags second,
+   leaving the URL.
 
 ### Sample output (defaults free)
 

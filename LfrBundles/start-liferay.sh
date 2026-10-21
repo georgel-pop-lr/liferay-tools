@@ -1024,24 +1024,31 @@ set_terminal_title() {
 	printf '\033]0;%s\007' "$*"
 }
 
-# The three status-bar rows, all ASCII so the field width stays byte-accurate.
-# Upper row: the bundle path and nothing else. A bundle path is long, so anything put
-# beside it comes straight out of the only field that says which server this window
-# belongs to: with the flags on this row a 60-column terminal loses twelve more
-# characters of it. Truncated left, behind a leading "...", so the identifying tail
-# (the bundle folder) survives rather than the generic leading directories.
+# The status-bar rows, all ASCII so the field width stays byte-accurate.
+# First row: the branch of each checkout that deploys into the bundle, then the
+# bundle path. A bundle path is long, so anything put beside it comes straight out of
+# the only field that says which server this window belongs to: with the flags on
+# this row a 60-column terminal loses twelve more characters of it. So the path wins:
+# the branches are shown only when the whole of them fits, and the path is truncated
+# left, behind a leading "...", so the identifying tail (the bundle folder) survives
+# rather than the generic leading directories.
 _status_bar_path_line() {
 	local cols="$1"
 	local path="$BUNDLE"
+	local checkouts="${BUNDLE_BRANCHES:+$BUNDLE_BRANCHES > }"
 
 	if [ "$cols" -ge 5 ] && [ "${#path}" -gt "$((cols - 1))" ]; then
 		path="...${path: -$((cols - 4))}"
 	fi
 
-	printf ' %s' "$path"
+	if [ "$((1 + ${#path} + ${#checkouts}))" -gt "$cols" ]; then
+		checkouts=""
+	fi
+
+	printf ' %s%s' "$checkouts" "$path"
 }
 
-# Middle row: the ports. A field is appended only when the whole of it fits, so a
+# Row the "p" key opens: the ports. A field is appended only when the whole of it fits, so a
 # narrow terminal drops trailing fields rather than cutting one mid-number. The dropped
 # ones are all in the table above anyway.
 _status_bar_ports_line() {
@@ -1062,7 +1069,7 @@ _status_bar_ports_line() {
 	printf '%s' "$text"
 }
 
-# Lower row: the editor URL, the flags this launch was given, then the stop hint. The
+# Second row: the editor URL, the flags this launch was given, then the key hint. The
 # flags ride here rather than beside the path because all three fields on this row are
 # short and fixed, so they cost the path nothing. The URL uses the LAN IP (so it works
 # both on this machine and from another device on the same network) and falls back to
@@ -1071,8 +1078,8 @@ _status_bar_ports_line() {
 _status_bar_url_line() {
 	local cols="$1"
 	local url=" http://${LAN_IP:-localhost}:$HTTP_PORT/"
-	local flags="${LAUNCH_FLAGS:+   |   $LAUNCH_FLAGS}"
-	local suffix="   |   Ctrl+C stop, +f force "
+	local flags="${LAUNCH_FLAGS:+ | $LAUNCH_FLAGS}"
+	local suffix=" | Ctrl+C stop then f to force, p - ports${BUNDLE_WORKTREES:+, w - worktree} "
 
 	if [ "$((${#url} + ${#flags} + ${#suffix}))" -gt "$cols" ]; then
 		suffix=""
@@ -1085,31 +1092,62 @@ _status_bar_url_line() {
 	printf '%s%s%s' "$url" "$flags" "$suffix"
 }
 
+# Row the "w" key opens: the worktree of every checkout that deploys into the bundle,
+# its own first and the ones lfrShare repointed at it after. Cut at the right edge
+# rather than dropped, since it is only on screen because it was asked for.
+_status_bar_worktrees_line() {
+	printf ' %s' "$BUNDLE_WORKTREES"
+}
+
 # The panel's colours, the ones the lfrTools pickers use, on a dark grey band rather
 # than reverse video so they read. Only foreground codes are set inside a row, so the
 # band's background carries through to the reset at its end.
 STATUS_BAR_BG=$'\033[48;5;236m'
-STATUS_BAR_BLUE=$'\033[38;5;117m'   # the URL
+STATUS_BAR_BLUE=$'\033[34m'         # the URL, the link blue of the Claude Code status line
 STATUS_BAR_YELLOW=$'\033[38;5;229m' # the bundle folder
+STATUS_BAR_BRANCH=$'\033[38;5;117m' # the branches, light blue like the URL and the pickers' branch
 STATUS_BAR_PINK=$'\033[38;5;218m'   # the port numbers
 STATUS_BAR_LGREY=$'\033[38;5;250m'  # the first folder of the path, the port labels, the stop hint
+STATUS_BAR_KEY=$'\033[38;5;254m'    # the keys in the hint, lighter than the text around them
 STATUS_BAR_GREEN=$'\033[38;5;157m'  # the launch flags
 STATUS_BAR_GREY=$'\033[38;5;245m'   # the parent folders, the | separators
 STATUS_BAR_OFF=$'\033[0m'
 
 # Colour one row, already truncated and padded as plain text ($1 names it, $2 is the
-# text), so the colour codes never change what fits: the path's first folder in light
-# grey, its other parent folders (or the "..." of a truncated one) in grey and the
-# bundle folder in light yellow; each port label in light grey and its number in
-# light pink; the URL in light blue, the flags in light green, the stop hint in
-# light grey and the | between them in grey.
+# text), so the colour codes never change what fits: each branch in light blue, with
+# its repo in brackets coloured like the bundle path, then the > in grey, then the
+# path's first folder in light grey, its other parent folders (or the "..." of a
+# truncated one) in grey and the bundle folder in light yellow; each port label in
+# light grey and its number in light pink; the URL in the status line blue, the
+# flags in light green, the hint in light grey with its keys lighter, the worktrees
+# coloured like the bundle path and the | between them in grey. The checkouts are split off before
+# the path's sed, and each branch before its repo's, since a branch can hold a "/"
+# that the sed would read as a path.
 _status_bar_color() {
-	local text="$2" segment first=1 out=""
+	local text="$2" segment first=1 out="" checkouts="" item branch
 
 	case "$1" in
 		path)
-			out="$(printf '%s' "$text" | sed -E \
-				"s#^( )(/[^/]+)?(.*/)([^/ ]+)#\\1${STATUS_BAR_LGREY}\\2${STATUS_BAR_GREY}\\3${STATUS_BAR_YELLOW}\\4#")"
+			if [ "${text#* > }" != "$text" ]; then
+				checkouts="${text%% > *}"
+				checkouts="${checkouts# }"
+				text="${text#* > }"
+				out=" "
+			fi
+			while [ -n "$checkouts" ]; do
+				item="${checkouts%%, *}"
+				branch="${item%% *}"
+				out+="${STATUS_BAR_BRANCH}${branch}$(printf '%s' "${item#"$branch"}" | sed -E \
+					"s#^ \\((/[^/]+)?(.*/)?([^/ )]+)# ${STATUS_BAR_GREY}(${STATUS_BAR_LGREY}\\1${STATUS_BAR_GREY}\\2${STATUS_BAR_YELLOW}\\3${STATUS_BAR_GREY}#")"
+				if [ "$item" = "$checkouts" ]; then
+					out+="${STATUS_BAR_GREY} > "
+					break
+				fi
+				out+="${STATUS_BAR_GREY}, "
+				checkouts="${checkouts#*, }"
+			done
+			out+="$(printf '%s' "$text" | sed -E \
+				"s#^( ?)(/[^/]+)?(.*/)([^/ ]+)#\\1${STATUS_BAR_LGREY}\\2${STATUS_BAR_GREY}\\3${STATUS_BAR_YELLOW}\\4#")"
 			;;
 		ports)
 			out="$(printf '%s' "$text" | sed -E \
@@ -1117,17 +1155,26 @@ _status_bar_color() {
 			;;
 		url)
 			while [ -n "$text" ]; do
-				segment="${text%%   |   *}"
-				[ "$first" = 1 ] || out+="${STATUS_BAR_GREY}   |   "
+				segment="${text%% | *}"
+				[ "$first" = 1 ] || out+="${STATUS_BAR_GREY} | "
 				case "$first:$segment" in
 					1:*) out+="${STATUS_BAR_BLUE}$segment" ;;
-					*:Ctrl+C*) out+="${STATUS_BAR_LGREY}$segment" ;;
+					*:Ctrl+C*)
+						out+="${STATUS_BAR_KEY}$(printf '%s' "$segment" | sed -E \
+							-e "s#^Ctrl\\+C#&${STATUS_BAR_LGREY}#" \
+							-e "s# then f # then ${STATUS_BAR_KEY}f${STATUS_BAR_LGREY} #" \
+							-e "s#, ([pw]) - #, ${STATUS_BAR_KEY}\\1${STATUS_BAR_LGREY} - #g")"
+						;;
 					*) out+="${STATUS_BAR_GREEN}$segment" ;;
 				esac
 				first=0
 				[ "$segment" = "$text" ] && break
-				text="${text#*   |   }"
+				text="${text#* | }"
 			done
+			;;
+		worktrees)
+			out="$(printf '%s' "$text" | sed -E \
+				"s#(/[^/ ,]+)(/[^ ,]*/)([^/ ,]+)#${STATUS_BAR_LGREY}\\1${STATUS_BAR_GREY}\\2${STATUS_BAR_YELLOW}\\3${STATUS_BAR_GREY}#g")"
 			;;
 	esac
 
@@ -1135,6 +1182,9 @@ _status_bar_color() {
 }
 
 _STATUS_BAR_ON=0
+_STATUS_BAR_ROWS=0
+_STATUS_BAR_PORTS=0
+_STATUS_BAR_WORKTREES=0
 
 # Echo the row the cursor is on, asked of the terminal itself: DSR (\033[6n) is
 # answered with ESC[<row>;<col>R on the terminal's input, so it is read back from
@@ -1154,11 +1204,11 @@ _cursor_row() {
 	printf '%s' "$row"
 }
 
-# Reserve the bottom three rows (a DECSTBM scroll region over the rest of the
-# screen) and draw the three-row status panel there, coloured by _status_bar_color,
-# so Tomcat's logs scroll above it while the bundle, the ports and the URL stay
-# pinned. No-op on short terminals, where three reserved rows would leave too little
-# to read.
+# Reserve the bottom rows (a DECSTBM scroll region over the rest of the screen) and
+# draw the status panel there, coloured by _status_bar_color, so Tomcat's logs scroll
+# above it while the bundle and the URL stay pinned. The panel is two rows, plus the
+# ports row while "p" has it open and the worktrees row while "w" has it open. No-op
+# on short terminals, where the reserved rows would leave too little to read.
 #
 # Setting the region homes the cursor (DECSTBM does that by definition), so the
 # row the output had reached has to be put back afterwards, or the log would
@@ -1166,33 +1216,53 @@ _cursor_row() {
 # the region's last row, open a screenful of blank lines and start at the bottom.
 # The row is clamped into the region, since a cursor left on one of the panel rows
 # would write over the panel and never scroll (it sits outside the region).
+#
+# When the panel grows, the log is scrolled up first by the rows it gains, so the
+# new rows cover blank lines and not the last lines of the log. When it shrinks, the
+# rows it gives back are cleared, since they join the region still showing the
+# panel rows they held.
 _setup_status_bar() {
-	local rows cols ports path url row
+	local rows cols row text line i previous="$_STATUS_BAR_ROWS"
+	local lines=(path url)
+	[ "$_STATUS_BAR_PORTS" = 1 ] && lines+=(ports)
+	[ "$_STATUS_BAR_WORKTREES" = 1 ] && [ -n "$BUNDLE_WORKTREES" ] && lines+=(worktrees)
 	rows=$(tput lines 2>/dev/null || echo 24)
 	cols=$(tput cols 2>/dev/null || echo 80)
-	[ "$rows" -ge 9 ] 2>/dev/null || return 0
+	[ "$rows" -ge 10 ] 2>/dev/null || return 0
 	row="$(_cursor_row)"
-	if [ -z "$row" ] || [ "$row" -gt "$((rows - 3))" ]; then
-		row=$((rows - 3))
+	if [ "$previous" -gt 0 ] && [ "${#lines[@]}" -gt "$previous" ]; then
+		printf '\033[%d;1H' "$((rows - previous))"
+		for ((i = previous; i < ${#lines[@]}; i++)); do
+			printf '\n'
+		done
+		[ -n "$row" ] && row=$((row - ${#lines[@]} + previous))
+		[ -n "$row" ] && [ "$row" -lt 1 ] && row=1
 	fi
-	ports="$(_status_bar_ports_line "$cols")"; ports="${ports:0:$cols}"; printf -v ports '%-*s' "$cols" "$ports"
-	path="$(_status_bar_path_line "$cols")"; path="${path:0:$cols}"; printf -v path '%-*s' "$cols" "$path"
-	url="$(_status_bar_url_line "$cols")"; url="${url:0:$cols}"; printf -v url '%-*s' "$cols" "$url"
-	printf '\033[1;%dr' "$((rows - 3))"                          # scroll region = all but bottom 3 rows
-	printf '\033[%d;1H%s' "$((rows - 2))" "$(_status_bar_color path "$path")"  # upper row: bundle path
-	printf '\033[%d;1H%s' "$((rows - 1))" "$(_status_bar_color ports "$ports")" # middle row: the ports
-	printf '\033[%d;1H%s' "$rows" "$(_status_bar_color url "$url")"             # lower row: URL, flags + stop hint
+	if [ -z "$row" ] || [ "$row" -gt "$((rows - ${#lines[@]}))" ]; then
+		row=$((rows - ${#lines[@]}))
+	fi
+	printf '\033[1;%dr' "$((rows - ${#lines[@]}))"               # scroll region = all but the panel rows
+	for ((i = rows - previous + 1; i <= rows - ${#lines[@]}; i++)); do
+		printf '\033[%d;1H\033[2K' "$i"                          # rows the panel gave back
+	done
+	i=$((rows - ${#lines[@]} + 1))
+	for line in "${lines[@]}"; do
+		text="$("_status_bar_${line}_line" "$cols")"; text="${text:0:$cols}"; printf -v text '%-*s' "$cols" "$text"
+		printf '\033[%d;1H%s' "$i" "$(_status_bar_color "$line" "$text")"
+		i=$((i + 1))
+	done
 	printf '\033[%d;1H' "$row"                                   # cursor back where the output was
 	_STATUS_BAR_ON=1
+	_STATUS_BAR_ROWS="${#lines[@]}"
 }
 
 # Undo _setup_status_bar: restore the full-screen scroll region and clear the
-# three panel rows so the returning shell prompt sees a clean terminal.
+# panel rows so the returning shell prompt sees a clean terminal.
 _teardown_status_bar() {
 	[ "$_STATUS_BAR_ON" = 1 ] || return 0
 	local rows
 	rows=$(tput lines 2>/dev/null || echo 24)
-	printf '\033[r\033[%d;1H\033[J\n' "$((rows - 2))"
+	printf '\033[r\033[%d;1H\033[J\n' "$((rows - _STATUS_BAR_ROWS + 1))"
 }
 
 # Read current ports out of server.xml so we know whether we need to write.
@@ -1309,6 +1379,29 @@ export PATH="$JDK_PATH/bin:$PATH"
 LAN_IP="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i <= NF; i++) if ($i == "src") {print $(i + 1); exit}}')"
 [ -z "$LAN_IP" ] && LAN_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
 
+# The checkouts that deploy into this bundle, for the status bar, read once at launch
+# through the helpers lfrBundles labels its list with. BUNDLE_BRANCHES is the branch
+# alone, or, when more than one checkout deploys into the bundle, each branch with its
+# repo name, as in that list. BUNDLE_WORKTREES is the full path of each checkout,
+# with "(shared)" on the ones lfrShare repointed at this bundle. Both list the
+# bundle's own checkouts first, since the shared column sorts empty first, and keep
+# the repo order within each group, since the sort is stable. A subshell, so the
+# helpers and their settings stay out of this script.
+BUNDLE_CHECKOUTS="$(
+	set +eu
+	. "$SCRIPT_DIR/../LfrCommon/lfr-repo-list.sh"
+	. "$SCRIPT_DIR/../LfrCommon/lfr-bundle-list.sh"
+	. "$SCRIPT_DIR/lfr-bundle.sh"
+	map="$(_lfrBundleRepoBranches | sort -s -t$'\t' -k4,4)"
+	branches="$(_lfrBundleRepoLabel "$BUNDLE" "$map" branch)"
+	case "$branches" in
+		*", "*) branches="$(_lfrBundleRepoLabel "$BUNDLE" "$map" branch-repo)" ;;
+	esac
+	printf '%s\n%s' "$(_lfrBundleRepoLabel "$BUNDLE" "$map" repo)" "$branches"
+)" || BUNDLE_CHECKOUTS=""
+BUNDLE_WORKTREES="${BUNDLE_CHECKOUTS%%$'\n'*}"
+BUNDLE_BRANCHES="${BUNDLE_CHECKOUTS#*$'\n'}"
+
 echo
 echo "Starting Liferay (Ctrl+C to stop; then press f to force-kill if it hangs)."
 echo "  Editor / portal: http://${LAN_IP:-localhost}:$HTTP_PORT/ (reachable from this machine and other devices on the network)"
@@ -1362,13 +1455,26 @@ _kill_tree() {
 # the "f" key (handled in the wait loop below), a deliberate separate action.
 _stopping=0
 _on_sigint() {
+	_trap_log "INT start"
 	if [ "$_stopping" = 1 ]; then
 		echo "Still stopping (SIGTERM already sent). Press f to force-kill if it hangs." >&2
+		_trap_log "INT end, already stopping"
 		return
 	fi
 	_stopping=1
 	echo "Stopping Tomcat (SIGTERM). If it hangs, press f to force-kill." >&2
 	kill -TERM "$_catalina_pid" 2>/dev/null || true
+	_trap_log "INT end, SIGTERM sent to $_catalina_pid"
+}
+
+# TEMPORARY trace: a launcher stopped running its traps (Ctrl+C and the redraw did
+# nothing) and it does not reproduce yet. Each trap, each key and a heartbeat go to a
+# file in the bundle, with no fork, so the log shows when the traps stop. Remove it
+# when the cause is found.
+_TRAP_LOG="$BUNDLE/start-liferay-traps.log"
+_trap_log() {
+	printf '%(%F %T)T.%s pid=%s stopping=%s %s\n' -1 "${EPOCHREALTIME#*[.,]}" "$$" \
+		"$_stopping" "$*" >> "$_TRAP_LOG" 2>/dev/null || true
 }
 
 # Announce when the Arquillian connector's socket is actually up. It binds late
@@ -1393,7 +1499,7 @@ _watch_connector_ready() {
 catalina_args=(run)
 [ "$DEBUG" = "1" ] && catalina_args=(jpda run)
 
-# On a TTY, pin the three-row status panel to the bottom while Tomcat's logs scroll
+# On a TTY, pin the status panel to the bottom while Tomcat's logs scroll
 # above it. Tomcat runs in the background (not exec) so this shell stays alive
 # to (a) redraw the bar on window resize via SIGWINCH and (b) restore the
 # terminal through the EXIT trap, leaving the prompt clean even after Ctrl+C.
@@ -1413,25 +1519,66 @@ if [ -t 1 ]; then
 		_watch_connector_ready "$ARQUILLIAN_PORT" &
 	fi
 
-	# Redraw the bar on resize. Handle Ctrl+C ourselves: bash makes a background
-	# command started without job control ignore SIGINT, so the terminal's Ctrl+C
-	# never reaches Tomcat; our INT trap (which does fire in this foreground
-	# shell) stops it gracefully with SIGTERM. Forwarding rather than exiting keeps
-	# the EXIT trap running so the terminal is restored.
-	trap '_setup_status_bar' WINCH
+	# Redraw the bar on resize. The WINCH trap only flags the redraw and the wait
+	# loop below does it, since a redraw run inside the trap forks and asks the
+	# terminal for the cursor row: a suspend in the middle of it (the screen going
+	# off is itself a resize) let the read's timeout cut the trap short, and from
+	# then on bash ran no trap at all, Ctrl+C included. Handle Ctrl+C ourselves:
+	# bash makes a background command started without job control ignore SIGINT,
+	# so the terminal's Ctrl+C never reaches Tomcat; our INT trap (which does fire
+	# in this foreground shell) stops it gracefully with SIGTERM. Forwarding rather
+	# than exiting keeps the EXIT trap running so the terminal is restored.
+	_redraw=0
+	trap '_trap_log WINCH; _redraw=1' WINCH
 	trap _on_sigint INT
-	trap 'kill -TERM "$_catalina_pid" 2>/dev/null || true' TERM
+	trap '_trap_log TERM; kill -TERM "$_catalina_pid" 2>/dev/null || true' TERM
+	trap '_trap_log EXIT; _teardown_status_bar' EXIT
+	_trap_log "start bash=$BASH_VERSION catalina=$_catalina_pid tty=$(tty 2>/dev/null)"
+	_next_heartbeat=0
 
 	# Wait for Tomcat to exit. While it runs normally, block in wait (a SIGWINCH or
 	# SIGINT trap makes wait return >128, so loop until Tomcat actually exits).
 	# Once Ctrl+C has asked it to stop, poll stdin instead so pressing "f"
-	# force-kills a hung JVM (a deliberate key, never a double Ctrl+C).
+	# force-kills a hung JVM (a deliberate key, never a double Ctrl+C). Before that,
+	# poll stdin too, so "p" opens or closes the ports row and "w" the worktrees row.
+	# The poll is short, since a resize is redrawn only when it returns.
 	while kill -0 "$_catalina_pid" 2>/dev/null; do
+		if [ "$SECONDS" -ge "$_next_heartbeat" ]; then
+			_trap_log "heartbeat"
+			_next_heartbeat=$((SECONDS + 60))
+		fi
+		if [ "$_redraw" = 1 ]; then
+			_redraw=0
+			_trap_log "redraw start"
+			_setup_status_bar
+			_trap_log "redraw end"
+		fi
 		if [ "$_stopping" = 1 ] && [ -t 0 ]; then
-			if read -rsn1 -t 1 _key 2>/dev/null && [ "$_key" = "f" ]; then
-				echo "Force-stopping (SIGKILL) the Tomcat process tree..." >&2
-				_kill_tree "$_catalina_pid" KILL
-				break
+			if read -rsn1 -t 0.2 _key; then
+				printf -v _key_quoted '%q' "$_key"
+				_trap_log "key $_key_quoted"
+				if [ "$_key" = "f" ]; then
+					echo "Force-stopping (SIGKILL) the Tomcat process tree..." >&2
+					_kill_tree "$_catalina_pid" KILL
+					break
+				fi
+			else
+				_read_status=$?
+				[ "$_read_status" = 142 ] || _trap_log "read status $_read_status"
+			fi
+		elif [ -t 0 ]; then
+			if read -rsn1 -t 0.2 _key; then
+				printf -v _key_quoted '%q' "$_key"
+				_trap_log "key $_key_quoted"
+				case "$_key" in
+					p) _STATUS_BAR_PORTS=$((1 - _STATUS_BAR_PORTS)) ;;
+					w) _STATUS_BAR_WORKTREES=$((1 - _STATUS_BAR_WORKTREES)) ;;
+					*) continue ;;
+				esac
+				_setup_status_bar
+			else
+				_read_status=$?
+				[ "$_read_status" = 142 ] || _trap_log "read status $_read_status"
 			fi
 		else
 			wait "$_catalina_pid" && break
