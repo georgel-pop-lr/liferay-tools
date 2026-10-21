@@ -89,6 +89,8 @@ lfrTools() {
 		                question about them; also one ticket's pulls (lfrPulls
 		                LPD-12345), the team list (lfrPulls teams), and
 		                per-month stats
+		  lfrPullsBump  resend an open pull of yours on the Brian mirror as
+		                a new pull, back at the top of the queue (asks first)
 
 		These tools
 		  lfrReload     re-source lfrTools.sh, so edits to any tool take effect
@@ -96,7 +98,7 @@ lfrTools() {
 
 		Every command has a short alias: lfrr, lfrw, lfrwn, lfrwr, lfrs, lfrb, lfrrb,
 		lfraa, lfrc, lfrcv, lfrp, lfrgc, lfrgcd, lfrgs, lfrgse, lfrgr, lfrgro,
-		lfrgum, lfrgub, lfrgct, lfrrl. Six expand to an lfrPulls subcommand:
+		lfrgum, lfrgub, lfrgct, lfrpb, lfrrl. Six expand to an lfrPulls subcommand:
 		lfrpw (week), lfrps (stats), lfrpt (ticket), lfrpf (a team or user's
 		fork), lfrpe (EE backports), lfrpteams (the team list).
 	EOF

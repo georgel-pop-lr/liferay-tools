@@ -6,6 +6,8 @@
 #                        a pull of yours can sit outside those queues
 #     lfrPulls stats     per-month counts of PRs sent, merged, and rejected
 #     lfrPulls rejected  the pulls sent back that never landed, and why
+#     lfrPullsBump       resend an open pull of yours on the mirror as a new
+#                        pull, back at the top of the queue
 #
 # A change is reviewed on its team's own liferay-portal fork, then ci:forward
 # sends it to the Brian CI mirror to be merged, so bare `lfrPulls` shows all
@@ -97,6 +99,18 @@ _lfrPullsHelp() {
 		                                   oldest first, then what the ticket has
 		                                   landed on the master ref. A bare ticket
 		                                   works too: lfrPulls LPD-12345
+		  lfrPullsBump <pull> [-y]  (lfrpb)
+		                                   resend an open pull of yours on the
+		                                   mirror as a new pull, so it goes back
+		                                   to the top of the queue (Brian works
+		                                   it newest first). Pushes the same head
+		                                   to your fork, opens the new pull with
+		                                   a Previous pull line, posts the
+		                                   pr-check marker of that head on it,
+		                                   and comments ci:close on the old one.
+		                                   Prints the plan and asks first; -y
+		                                   skips the ask, and with no terminal
+		                                   and no -y it is a dry run
 		  lfrPulls rejected [days|all] [<login>]  (rej, r, lfrpr)
 		                                   your pulls closed on the mirror without
 		                                   being merged, whose ticket has still not
@@ -955,6 +969,197 @@ _lfrPullsTicket() {
 	[ "${count}" -gt 5 ] && printf '  ... %s more\n' "$((count - 5))"
 
 	return 0
+}
+
+# Resend an open pull of yours on the mirror as a new pull, so it goes back to the
+# top of the queue. Brian works the open list from the top, newest first: on
+# 2026-10-20 he closed #184132 down to #184128 in that order, then #184169 down to
+# #184164. A reopened pull keeps its number and its place, so only a new pull
+# moves up.
+#
+# The new pull comes from your own fork, on a branch pushed at the old head, so the
+# old pull stays open until the new one exists. The pr-check marker is per pull,
+# so the one recorded for that head is posted again on the new pull: a forwarded
+# pull keeps it on the fork pull it came from, a direct one on itself. Then
+# ci:close closes the old pull with a link to the new one.
+#
+# Every step after the plan posts outside your machine, so the plan is printed
+# first and nothing happens without a yes, or -y when no terminal can answer.
+_lfrPullsBump() {
+	local number="" yes="false" a
+	for a in "$@"; do
+		case "${a}" in
+		-h | --help) _lfrPullsHelp; return 0 ;;
+		-y | --yes) yes="true" ;;
+		*/pull/[0-9]*) number="${a##*/pull/}"; number="${number%%[!0-9]*}" ;;
+		'#'[0-9]* | [0-9]*) number="${a#'#'}" ;;
+		*) echo "lfrPullsBump: unknown argument '${a}' (want a pull number or URL)." >&2; return 1 ;;
+		esac
+	done
+
+	if [ -z "${number}" ]; then
+		echo "lfrPullsBump: pass a pull, e.g. lfrPullsBump 184150." >&2
+		return 1
+	fi
+
+	local me senderMe dir json
+	me="$(_lfrPullsMineUser bump)" || return 1
+	senderMe="$(_lfrPullsSenderOwner "${me}" "${me}")"
+	dir="$(_lfrPullsMasterDir bump)" || return 1
+
+	json="$(gh pr view "${number}" --repo "${LFR_PULLS_REPO}" \
+		--json number,state,title,body,author,baseRefName,headRefName,headRefOid,url,comments)" || return 1
+
+	local state title author baseRefName headRefName headSha url
+	IFS=$'\t' read -r state author baseRefName headRefName headSha url title < <(printf '%s' "${json}" |
+		jq -r '[.state, .author.login, .baseRefName, .headRefName, .headRefOid, .url, .title] | @tsv')
+
+	if [ "${state}" != "OPEN" ]; then
+		echo "lfrPullsBump: #${number} is ${state}. Only an open pull is resent here; a closed one goes through pr-send-direct." >&2
+		return 1
+	fi
+
+	local forwarded="false"
+	if [[ "${headRefName}" =~ -sender-${senderMe}$ ]]; then
+		forwarded="true"
+	elif [ "${author}" != "${me}" ]; then
+		echo "lfrPullsBump: #${number} is not yours (author ${author}, head ${headRefName})." >&2
+		return 1
+	fi
+
+	local newer
+	newer="$(_lfrPullsOpenJson "${LFR_PULLS_REPO}" |
+		jq --argjson n "${number}" '[.[] | select(.number > $n)] | length')" || return 1
+
+	if [ "${newer}" -eq 0 ]; then
+		echo "#${number} is already the newest open pull on ${LFR_PULLS_REPO}, so a resend gains nothing."
+		return 0
+	fi
+
+	# The marker is read off the pull carrying it, description and comments alike,
+	# and only a success bound to this exact head counts.
+	local markerJq='[.body, (.comments[].body)] | map(select(. != null)) | .[] |
+		. as $text | [scan("<!-- pr-check (\\{[^}]*\\}) -->")[0] | fromjson] |
+		select(any(.result == "success" and .sha == $sha)) | $text'
+	local forwardedFrom="" markerSource="${url}" markerText
+	markerText="$(printf '%s' "${json}" | jq -r --arg sha "${headSha}" "${markerJq}")"
+
+	if [ -z "${markerText}" ] && [ "${forwarded}" = "true" ]; then
+		forwardedFrom="$(printf '%s' "${json}" |
+			jq -r '.body | capture("^Forwarded from: (?<u>https://github.com/[^ ]+/pull/[0-9]+)").u // empty')"
+		if [ -n "${forwardedFrom}" ]; then
+			markerSource="${forwardedFrom}"
+			markerText="$(gh pr view "${forwardedFrom}" --json body,comments |
+				jq -r --arg sha "${headSha}" "${markerJq}")"
+		fi
+	fi
+
+	if [ -z "${markerText}" ]; then
+		echo "lfrPullsBump: no successful pr-check result for head ${headSha:0:10} on ${markerSource}. Run pr-check on that head first." >&2
+		return 1
+	fi
+
+	local marker
+	marker="$(printf '%s' "${markerText}" | grep -o "<!-- pr-check {[^}]*\"sha\": \"${headSha}\"[^}]*} -->" | tail -1)"
+
+	# A forwarded pull's head branch is ci-forward-<branch>-pr-<n>-sender-<owner>,
+	# and a resend appends -resend-<old number>, which a second resend replaces.
+	local branch="${headRefName}"
+	if [ "${forwarded}" = "true" ]; then
+		branch="${branch#ci-forward-}"
+		branch="$(printf '%s' "${branch}" | sed -E 's/-pr-[0-9]+-sender-[^-]+.*$//')"
+	fi
+	branch="$(printf '%s' "${branch}" | sed -E 's/-resend-[0-9]+$//')-resend-${number}"
+
+	# The forwarder wraps the original description, so keep only what follows its
+	# "Original pull request comment:" line, which it leaves out when the original
+	# was empty. The Previous pull line goes under the leading Jira links, where
+	# the earlier resends put it, replacing any older one.
+	local bodyFile commentFile
+	bodyFile="$(mktemp)"
+	commentFile="$(mktemp)"
+	printf '%s' "${json}" | jq -r --arg forwarded "${forwarded}" \
+		'.body | if $forwarded != "true" then .
+			elif test("\nOriginal pull request comment:\r?\n") then sub("(?s)^.*?\nOriginal pull request comment:\r?\n"; "")
+			else "" end' |
+		awk -v url="${url}" '
+			/^Previous pull: / { skipBlank = 1; next }
+			skipBlank && /^$/ { skipBlank = 0; next }
+			{ skipBlank = 0 }
+			!done && /^https:\/\/liferay\.atlassian\.net\/browse\// { print; jira = 1; next }
+			!done { done = 1; if (jira) print ""; print "Previous pull: " url; print ""; if ($0 == "") next }
+			{ print }
+			END { if (!done) { if (jira) print ""; print "Previous pull: " url } }' >"${bodyFile}"
+
+	# One marker per pull: a description copied with its marker already carries it.
+	local markerStep="post the pr-check marker from ${markerSource} on it"
+	if grep -qF "${marker}" "${bodyFile}"; then
+		markerStep="carry the pr-check marker over in the copied description"
+	else
+		printf 'pr-check result carried over from %s, on the same head %s.\n\n%s\n' \
+			"${markerSource}" "${headSha}" "${marker}" >"${commentFile}"
+	fi
+
+	printf 'Resend #%s (%s newer open pull(s) sit above it):\n' "${number}" "${newer}"
+	printf '  %s\n' "${title}"
+	printf '  1. push %s to %s:%s\n' "${headSha:0:10}" "${me}" "${branch}"
+	printf '  2. open a pull on %s from it, base %s, same title, with "Previous pull: %s"\n' \
+		"${LFR_PULLS_REPO}" "${baseRefName}" "${url}"
+	printf '  3. %s\n' "${markerStep}"
+	printf '  4. comment ci:close on #%s with a link to the new pull\n' "${number}"
+
+	if [ "${yes}" != "true" ]; then
+		if [ ! -t 0 ]; then
+			echo "Dry run: pass -y to resend."
+			rm -f "${bodyFile}" "${commentFile}"
+			return 0
+		fi
+		local answer
+		read -r -p "Resend? [y/N] " answer
+		if [[ ! "${answer}" =~ ^[Yy] ]]; then
+			rm -f "${bodyFile}" "${commentFile}"
+			return 0
+		fi
+	fi
+
+	# Fetch and push over HTTPS with gh's own token, so a 1Password agent that
+	# is down for SSH does not stop the resend.
+	local https=(-c credential.helper= -c "credential.helper=!gh auth git-credential")
+	if ! git -C "${dir}" "${https[@]}" fetch --quiet --no-tags \
+			"https://github.com/${LFR_PULLS_REPO}.git" "refs/pull/${number}/head" ||
+		! git -C "${dir}" "${https[@]}" push --quiet \
+			"https://github.com/${me}/${LFR_PULLS_FORK_REPO}.git" "${headSha}:refs/heads/${branch}"; then
+		echo "lfrPullsBump: could not push ${headSha:0:10} to ${me}:${branch}; nothing was opened or closed." >&2
+		rm -f "${bodyFile}" "${commentFile}"
+		return 1
+	fi
+
+	local newUrl
+	if ! newUrl="$(gh pr create --repo "${LFR_PULLS_REPO}" --base "${baseRefName}" \
+			--head "${me}:${branch}" --title "${title}" --body-file "${bodyFile}")"; then
+		echo "lfrPullsBump: the new pull was not opened; #${number} is still open as it was." >&2
+		rm -f "${bodyFile}" "${commentFile}"
+		return 1
+	fi
+	newUrl="$(printf '%s\n' "${newUrl}" | grep -o 'https://github.com/[^ ]*/pull/[0-9]*' | tail -1)"
+	echo "Opened ${newUrl}"
+
+	if [ ! -s "${commentFile}" ]; then
+		echo "The copied description carries the pr-check marker for ${headSha:0:10}."
+	elif gh pr comment "${newUrl}" --body-file "${commentFile}" >/dev/null; then
+		echo "Posted the pr-check marker for ${headSha:0:10} on it."
+	else
+		echo "lfrPullsBump: the marker did not post on ${newUrl}; publish it with pr-check-publish." >&2
+	fi
+
+	if gh pr comment "${url}" --body "$(printf 'ci:close\n\nResent as %s, same head %s.' "${newUrl}" "${headSha:0:10}")" >/dev/null; then
+		echo "Commented ci:close on #${number}."
+	else
+		echo "lfrPullsBump: ci:close did not post on ${url}; close it by hand." >&2
+	fi
+
+	rm -f "${bodyFile}" "${commentFile}"
+	echo "The Jira Git Pull Request field still names #${number}."
 }
 
 _lfrPullsAgo() {
@@ -1835,12 +2040,15 @@ lfrPulls() {
 	_lfrPullsMirrorSection "${mode}"
 }
 
+lfrPullsBump() { _lfrPullsBump "$@"; }
+
 # Short aliases.
 lfrp() { lfrPulls "$@"; }
 lfrpw() { lfrPulls week "$@"; }
 lfrpr() { lfrPulls rejected "$@"; }
 lfrps() { lfrPulls stats "$@"; }
 lfrpt() { lfrPulls ticket "$@"; }
+lfrpb() { lfrPullsBump "$@"; }
 lfrpf() { lfrPulls team "$@"; }
 lfrpteams() { lfrPulls teams "$@"; }
 lfrpe() { lfrPulls ee "$@"; }

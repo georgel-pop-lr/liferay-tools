@@ -9,7 +9,8 @@ the EE repo. After those come your pulls and the reviews asked of you on your
 team members' forks, the AI tooling forks, and every other team's fork, one line
 per group when they hold nothing. Beyond that, list any team's or any user's fork, look up
 every pull ever opened for one ticket, count what you have sent, merged, and
-had rejected per month, and list the rejections you still owe a resend.
+had rejected per month, list the rejections you still owe a resend, and resend an
+open pull as a new one, so it goes back to the top of the queue.
 
 ## Commands
 
@@ -59,6 +60,9 @@ and their mirror pulls come from `lfrPulls stats <login>`.
 - `lfrPulls ticket <TICKET>` (`t`, alias `lfrpt`) - every pull ever opened for one
   ticket, oldest first, then what that ticket has landed on `liferay/liferay-portal`. A bare
   ticket is the same thing: `lfrPulls LPD-12345`.
+- `lfrPullsBump <pull> [-y]` (alias `lfrpb`) - resend an open
+  pull of yours on the mirror as a new pull, so it goes back to the top of the
+  queue. See [Resend a pull](#resend-a-pull).
 - `lfrPulls week [days] [<login>]` (`w` or `recent`, alias `lfrpw`) - your pulls
   closed in the last `days` (default 7, reading at most 200 closed PRs), as
   PR / SENDER / STATUS / TITLE, where STATUS is `MERGED` or `REJECTED`.
@@ -88,6 +92,7 @@ lfrPulls ee mariuo     # one person's
 lfrPulls teams         # the teams, with each one's open count
 lfrPulls LPD-75909     # every pull for that ticket, and what landed
 lfrpt LPD-75909        # same, via the alias
+lfrPullsBump 184150    # resend that pull as a new one, after a yes
 lfrPulls week          # your pulls closed in the last 7 days, with status
 lfrPulls week 14       # ...in the last 14 days
 lfrPulls week 30 nikki-pru # ...somebody else's
@@ -277,6 +282,33 @@ The search is GitHub's title search, which tokenizes, so `LCD-52771` also finds 
 pull titled `LCD 52771 2`. That is wanted (those are the same ticket's pulls,
 titled sloppily), and the footer's `git log --grep` accepts the same variants, so
 both halves of the output agree.
+
+## Resend a pull
+
+Brian works the open list from the top, newest first. On 2026-10-20 he closed
+#184132 down to #184128 in that order, then #184169 down to #184164. A reopened
+pull keeps its number, so it keeps its place. Only a new pull goes to the top.
+
+`lfrPullsBump <pull>` does these steps. It is a command of its own, not an
+`lfrPulls` subcommand, because it is the only one that posts to GitHub:
+
+1. It pushes the head of the old pull to your fork, as `<branch>-resend-<old number>`.
+   A second resend replaces that suffix.
+2. It opens a new pull from that branch, with the same title and base. The
+   description is the old one, with a `Previous pull:` line under the Jira links. For a
+   forwarded pull, it keeps only the original description, without the forwarder's
+   header.
+3. It puts the pr-check marker of that head on the new pull, because the marker is per
+   pull. A forwarded pull keeps its marker on the fork pull, so the marker comes from
+   there. If the copied description already carries the marker, no comment is posted.
+4. It comments `ci:close` on the old pull, with a link to the new one.
+
+The command refuses a pull that is not yours or not open, and a head with no successful
+pr-check result. If the pull is already the newest open one, it does nothing. It
+prints the plan and asks first. `-y` skips the question. With no terminal and no
+`-y`, it is a dry run. The fetch and the push use HTTPS with the gh token, so an SSH
+agent that is down does not stop them. The Jira Git Pull Request field is not
+changed.
 
 ## Statistics
 
