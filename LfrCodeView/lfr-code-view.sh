@@ -142,18 +142,19 @@ _lfrCodeViewAgain() {
 # Write one entry's diff to stdout, colored, for the pager to page. "local" is
 # everything uncommitted: the tracked changes, then each untracked file as a diff
 # against nothing (git diff HEAD cannot see those). $1 is the picker value, $2 the
-# base ref.
+# base ref. --stat=1000 keeps each path whole: at the terminal width git shortens a
+# long one behind a leading "...", and the pager wraps it instead.
 _lfrCodeViewDiff() {
 	local value="${1}" base="${2}" file
 
 	case "${value}" in
-	commit:*) git show --color=always --patch --stat "${value#commit:}" ;;
-	range) git diff --color=always --patch --stat "${base}...HEAD" ;;
+	commit:*) git show --color=always --patch --stat=1000 "${value#commit:}" ;;
+	range) git diff --color=always --patch --stat=1000 "${base}...HEAD" ;;
 	local)
-		git diff --color=always --patch --stat HEAD
+		git diff --color=always --patch --stat=1000 HEAD
 
 		while IFS= read -r file; do
-			git diff --color=always --no-index --patch --stat /dev/null "${file}"
+			git diff --color=always --no-index --patch --stat=1000 /dev/null "${file}"
 		done < <(git ls-files --others --exclude-standard)
 		;;
 	*) return 1 ;;
@@ -247,15 +248,16 @@ lfrCodeView() {
 	fi
 
 	# fzf runs the preview in a plain shell, where none of the functions above
-	# exist, so it gets its own dispatch over the highlighted value in {1}.
+	# exist, so it gets its own dispatch over the highlighted value in {1}. Its
+	# --stat=1000 keeps each path whole, as in the pager, and the preview wraps it.
 	local preview
 	preview="$(
 		cat <<-EOF
 			value={1}
 			case "\${value}" in
-			commit:*) git show --color=always --stat "\${value#commit:}" ;;
+			commit:*) git show --color=always --stat=1000 "\${value#commit:}" ;;
 			local) git status --short ;;
-			range) git diff --color=always --stat "${base:-HEAD}...HEAD" ;;
+			range) git diff --color=always --stat=1000 "${base:-HEAD}...HEAD" ;;
 			esac
 		EOF
 	)"
