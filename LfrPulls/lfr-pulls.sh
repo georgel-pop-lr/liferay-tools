@@ -145,12 +145,19 @@ _lfrPullsHelp() {
 		              somebody takes it off
 		  CHECK-FAIL  carries pr-check - failure
 		  ON-HOLD     on hold, blocked, or waiting for something (waiting_for_dev)
-		  NO-CHECK    no pr-check label at all, so no pr-check result was ever
-		              published on it and it cannot be forwarded. Ranked under
+		  NO-CHECK    approved, but no pr-check label at all, so no pr-check
+		              result was ever published on it and it cannot be
+		              forwarded. Not on an unapproved pull, since pr-check is
+		              a full build that waits for the approval. Ranked under
 		              the four above because each of those is fixed by pushing
 		              new commits, which invalidates a pr-check against the old
 		              head; the pull falls through to here once that is done.
 		              Never on the EE repo, where backports run no pr-check
+		  NEEDS-APPROVAL
+		              no pr-check label and not approved yet, so the review
+		              comes first and the pr-check after it. Same rank as
+		              NO-CHECK, and the same exceptions, plus the mirror,
+		              where nobody approves a pull
 		  READY       approved, ready to merge, ready to forward, QA passed
 		  IN-REVIEW   review in progress, or somebody is assigned to it
 		  REVIEW      review needed and nobody has taken it
@@ -1288,7 +1295,8 @@ _LFR_PULLS_JQ='
 		allLabels | map(select(test("^ci:test|^ci:forward|^pr-check|^:arrow") | not)) |
 		map(gsub("[^ -~]"; "") | sub("^ +"; "") | sub(" +$"; "")) | map(select(. != ""));
 	# Whether the pull is waiting for a reviewer nobody has become yet. Its own
-	# predicate, not read off the status word, because NO-CHECK outranks REVIEW
+	# predicate, not read off the status word, because NO-CHECK and
+	# NEEDS-APPROVAL outrank REVIEW
 	# and collapses it: onYou still has to see the review to offer it to you.
 	# Never on the mirror: a pull gets there only once its team reviewed it,
 	# and the "review needed" labels it carries were copied over by the
@@ -1301,6 +1309,13 @@ _LFR_PULLS_JQ='
 	# status word and swallows it, and an on-hold pull is not free for anybody
 	# to pick up however takeable the rest of it looks.
 	def onHold: allLabels | any(test("on hold|blocked|waiting[ _-]for"; "i"));
+	# Whether the review is done. Its own predicate because NO-CHECK and
+	# NEEDS-APPROVAL read it too: a pr-check is a full build, so it runs only
+	# once the pull is approved, and an approved pull with no result is the
+	# one to check.
+	def approved:
+		(.reviewDecision == "APPROVED") or
+		(allLabels | any(test("ready to merge|ready to forward|dev approved|passed review|qa passed"; "i")));
 	# Whether a changes-requested review has been answered by a push. GitHub
 	# keeps reviewDecision at CHANGES_REQUESTED until that same reviewer
 	# reviews again: new commits never clear it, and neither does a COMMENTED
@@ -1333,11 +1348,14 @@ _LFR_PULLS_JQ='
 		# against the old head: asking for one first would be wasted work. Once
 		# the rebase lands the pull falls through to here. Not on the EE repo,
 		# where pr-check is no part of the backport flow (44 of its 46 open
-		# pulls carry no such label), so $prChecked turns this off there.
-		elif ($prChecked == "true") and (($l | any(test("^pr-check"))) | not)
-			then "NO-CHECK"
-		elif (.reviewDecision == "APPROVED") or
-			($l | any(test("ready to merge|ready to forward|dev approved|passed review|qa passed"; "i"))) then "READY"
+		# pulls carry no such label), so $prChecked turns this off there. A
+		# pr-check is a full build, so it waits for the approval: NO-CHECK on
+		# an approved pull, NEEDS-APPROVAL before it. Not on the mirror, where
+		# nobody approves a pull.
+		elif ($prChecked == "true") and (($l | any(test("^pr-check"))) | not) and
+			(approved or ($repoOwner != $mirrorOwner))
+			then (if approved then "NO-CHECK" else "NEEDS-APPROVAL" end)
+		elif approved then "READY"
 		elif ($l | any(test("review in progress"; "i"))) or ((.assignees | length) > 0) then "IN-REVIEW"
 		elif reviewNeeded then "REVIEW"
 		elif $l | any(. == "ci:forward") then "FORWARDED"
@@ -1397,7 +1415,7 @@ _LFR_PULLS_JQ='
 		elif ($repoOwner == $me) and $unclaimed then "on-review"
 		elif ($yours == "true") and $unclaimed and (onHold | not) and
 			(($status == "REVIEW") or
-				(([ "CONFLICT", "NO-CHECK" ] | any(. == $status)) and reviewNeeded))
+				(([ "CONFLICT", "NO-CHECK", "NEEDS-APPROVAL" ] | any(. == $status)) and reviewNeeded))
 			then "need-review"
 		else "-" end;
 	# The marker _lfrPullsPaint colours a row by.
@@ -1407,7 +1425,7 @@ _LFR_PULLS_JQ='
 	# first and keeps the same shape between runs, where sorting by count would
 	# reshuffle it every time a pull moves.
 	def statusOrder: [ "CONFLICT", "DRAFT", "CHANGES", "CHECK-FAIL", "ON-HOLD",
-		"NO-CHECK", "READY", "IN-REVIEW", "REVIEW", "FORWARDED", "TEST-FAIL",
+		"NO-CHECK", "NEEDS-APPROVAL", "READY", "IN-REVIEW", "REVIEW", "FORWARDED", "TEST-FAIL",
 		"OPEN" ];
 	def onYouOrder: [ "you", "ask", "need-review", "on-review" ];
 	# The labels themselves, which STATUS cannot report: it keeps the worst

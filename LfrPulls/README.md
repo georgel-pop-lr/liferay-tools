@@ -133,7 +133,8 @@ name. Worst news wins:
 | `CHANGES` | changes requested and still owed, by review or by label |
 | `CHECK-FAIL` | carries `pr-check - failure` |
 | `ON-HOLD` | on hold, blocked, or waiting for something |
-| `NO-CHECK` | carries no `pr-check` label at all, so no result was ever published and it cannot be forwarded. Never on the EE repo |
+| `NO-CHECK` | approved, but carries no `pr-check` label at all, so no result was ever published and it cannot be forwarded. Never on an unapproved pull, and never on the EE repo |
+| `NEEDS-APPROVAL` | carries no `pr-check` label and is not approved yet, so the review comes first and the pr-check after it. Never on the EE repo or the brian mirror |
 | `READY` | approved, ready to merge, ready to forward, QA passed |
 | `IN-REVIEW` | review in progress, or somebody is assigned to it |
 | `REVIEW` | review needed or requested, and nobody has taken it |
@@ -148,8 +149,8 @@ the field goes on saying "changes requested" hours after the author has done
 them and pushed. Each changes-requested review carries the commit it was made
 against, so the head having moved past every one of them is the proof that the
 author answered, and the pull falls through to whatever it is now (usually
-`NO-CHECK`, since the push invalidated its pr-check, or `IN-REVIEW` while the
-reviewer comes back to it). The label half is left alone: a person put it there
+`NEEDS-APPROVAL` while the reviewer comes back to it, or `NO-CHECK` once it is
+approved, since the push invalidated its pr-check). The label half is left alone: a person put it there
 by hand and it stands until somebody takes it off. A pull with more reviews than
 the API returns in one page keeps the old reading, unanswered, rather than being
 cleared on missing evidence.
@@ -158,9 +159,17 @@ cleared on missing evidence.
 because each of those three is fixed by pushing new commits, and that push
 invalidates any pr-check taken against the old head. Asking for a pr-check first
 would be asking for work that is about to be thrown away, so the conflict is the
-only thing the column says; the pull falls through to `NO-CHECK` on the next run
+only thing the column says; the pull falls through to `NO-CHECK` or `NEEDS-APPROVAL` on the next run
 once the rebase lands. `CHECK-FAIL` outranks it for the plainer reason that a
 failure is a published result and this is the absence of one.
+
+`NO-CHECK` also needs the pull to be approved, by `reviewDecision` or by one of
+the labels that make it `READY`. pr-check is a full build of around ten
+minutes, so it runs only after the approval. An unapproved pull with no result
+is not missing anything of yours yet: it shows `NEEDS-APPROVAL`, in the same
+rank, and turns `NO-CHECK` when the approval comes. Who has the review is in
+ASSIGNEE, and `need-review` in ON YOU still offers an unclaimed one to you. The
+brian mirror never shows `NEEDS-APPROVAL`, since nobody approves a pull there.
 
 The EE repo is exempt through the `$prChecked` argument, since pr-check is no
 part of the backport flow there: 44 of its 46 open pulls carry no such label, so
