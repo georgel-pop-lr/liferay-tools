@@ -116,18 +116,20 @@ _lfrPickAlign() {
 # optional query that prefilters and auto-selects on a single match, $3 an
 # optional preview command (fzf only; it runs in a plain shell, so it can use
 # {1} for the highlighted line's value but not our shell functions), $4 an
-# optional toolbar of key hints drawn on the bottom border, $5 an optional value
+# optional toolbar of key hints drawn in a footer under the list, wrapped to the
+# width so no key is cut off, $5 an optional value
 # to start the cursor on instead of the first line, so a caller that reopens the
 # picker in a loop keeps the entry you were on. The last three are fzf's; the
 # numbered-menu fallback below ignores them, since it is answered with a number.
 # Set LFR_PICK_TOOLTIP=1 on the call to show the highlighted line's whole label,
 # wrapped, in a strip under the list, since a long label is cut off at the right
-# edge of a narrow terminal, in the same colours as the line. It only applies when
+# edge of a narrow terminal, in the same colours as the line. The strip is as tall
+# as the longest label needs, so it never cuts one off itself. It only applies when
 # there is no preview of its own.
 # Used by the repo picker below and by other tools (e.g. lfrShare's bundle picker).
 _lfrPick() {
 	local prompt="${1:-> }" query="${2:-}" preview="${3:-}" toolbar="${4:-}" start="${5:-}"
-	local input selection line tooltip=""
+	local input selection line tooltip="" tooltipRows tooltipRowsProgram
 	local -a fzfArgs=(
 		# Right/Left alias Enter/Esc, so the whole picker can be driven with the
 		# arrow keys: up and down to move, right to take the entry, left to leave.
@@ -154,15 +156,36 @@ _lfrPick() {
 		# With --ansi fzf hands the preview {2..} with its colours stripped, which is
 		# right for measuring the width, so the coloured label is read back from a copy
 		# of the input by {n}, the line's index in it (unchanged by the query).
+		# The strip's rows come from the longest label: fzf wraps the first row at the
+		# strip's width and each row after it 2 columns short, for the wrap sign. They
+		# are counted at launch against the terminal less 4 columns, since the strip's
+		# own width is not known before fzf draws it, and counted again on a resize
+		# against the real width. --height=40% alone leaves the strip only what the list
+		# does not take, so --min-height adds 8 rows to the strip's: the prompt, the
+		# info line, the strip's border, and 5 rows of list.
 		tooltip="$(mktemp)"
 		printf '%s\n' "${input}" > "${tooltip}"
+		tooltipRowsProgram='{ sub(/^[^\t]*\t/, ""); gsub(/\033\[[0-9;]*m/, ""); n = length($0)
+			r = n <= width ? 1 : 2 + int((n - width - 1) / (width - 2)); if (r > rows) rows = r }
+			END { print rows }'
+		tooltipRows="$(awk -v rows=3 -v width="$(($(tput cols </dev/tty 2>/dev/null || echo 80) - 4))" "${tooltipRowsProgram}" "${tooltip}")"
 		fzfArgs+=(
+			--bind="resize:transform:echo \"change-preview-window(down,\$(awk -v rows=3 -v width=\"\${FZF_PREVIEW_COLUMNS}\" $(printf '%q' "${tooltipRowsProgram}") $(printf '%q' "${tooltip}")),wrap,border-top)\""
+			--min-height="$((tooltipRows + 8))"
 			--preview="label={2..}; [ \${#label} -gt \$((FZF_PREVIEW_COLUMNS - 2)) ] && sed -n \"\$(({n} + 1))p\" $(printf '%q' "${tooltip}") | cut -f2-"
-			--preview-window='down,3,wrap,border-top'
+			--preview-window="down,${tooltipRows},wrap,border-top"
 		)
 	fi
+	# The footer sits under the list, so beside a preview it is only as wide as the
+	# list: what fzf has less the preview and 7 columns of borders and gaps, against 2
+	# with no preview beside it.
+	local footerWidth='$((FZF_COLUMNS - 2))'
+	[ -n "${preview}" ] && footerWidth='$((FZF_COLUMNS - FZF_PREVIEW_COLUMNS - 7))'
 	[ -n "${toolbar}" ] &&
-		fzfArgs+=(--border=sharp --border-label=" ${toolbar} " --border-label-pos=bottom)
+		fzfArgs+=(
+			--bind="start,resize:transform-footer:printf '%s' $(printf '%q' "${toolbar}") | fold -s -w ${footerWidth}"
+			--border=sharp
+		)
 
 	# pos() needs the whole list in, which is what --sync waits for; fzf reads its
 	# input asynchronously otherwise and would move the cursor on a partial list.

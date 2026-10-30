@@ -269,8 +269,17 @@ if [ "$PICK" = "1" ]; then
 	# strip is the tooltip _lfrPick gives with LFR_PICK_TOOLTIP=1: the whole label,
 	# only when it is too wide for the list. The path is coloured the way the lfrTools
 	# pickers colour one: the first folder (the disk) in light grey, the other parent
-	# folders in grey, the bundle's own folder in light yellow.
+	# folders in grey, the bundle's own folder in light yellow. The strip is as tall as
+	# the longest path needs, counted the way _lfrPick counts it.
 	if command -v fzf >/dev/null 2>&1; then
+		tooltipWidth=$(($(tput cols </dev/tty 2>/dev/null || echo 80) - 4))
+		tooltipRows=3
+		for entry in "${bundles[@]}"; do
+			if [ "${#entry}" -gt "$tooltipWidth" ] &&
+				[ "$((2 + (${#entry} - tooltipWidth - 1) / (tooltipWidth - 2)))" -gt "$tooltipRows" ]; then
+				tooltipRows=$((2 + (${#entry} - tooltipWidth - 1) / (tooltipWidth - 2)))
+			fi
+		done
 		choice="$(
 			for entry in "${bundles[@]}"; do
 				rest="${entry#/*/}"
@@ -280,8 +289,9 @@ if [ "$PICK" = "1" ]; then
 				--ansi \
 				--delimiter=$'\t' \
 				--height=40% \
+				--min-height="$((tooltipRows + 8))" \
 				--preview="label={2..}; [ \${#label} -gt \$((FZF_PREVIEW_COLUMNS - 2)) ] && rest=\"\${label#/*/}\" && printf '\\033[38;5;250m%s\\033[38;5;245m/%s/\\033[38;5;229m%s\\033[0m\n' \"\${label%/\"\$rest\"}\" \"\${rest%/*}\" \"\${label##*/}\"" \
-				--preview-window='down,3,wrap,border-top' \
+				--preview-window="down,$tooltipRows,wrap,border-top" \
 				--prompt='bundle> ' \
 				--reverse \
 				--select-1 \
@@ -1024,77 +1034,34 @@ set_terminal_title() {
 	printf '\033]0;%s\007' "$*"
 }
 
-# The status-bar rows, all ASCII so the field width stays byte-accurate.
-# First row: the branch of each checkout that deploys into the bundle, then the
-# bundle path. A bundle path is long, so anything put beside it comes straight out of
-# the only field that says which server this window belongs to: with the flags on
-# this row a 60-column terminal loses twelve more characters of it. So the path wins:
-# the branches are shown only when the whole of them fits, and the path is truncated
-# left, behind a leading "...", so the identifying tail (the bundle folder) survives
-# rather than the generic leading directories.
+# The status-bar lines, all ASCII so the field width stays byte-accurate. Each one is
+# the whole of its text, never cut to the terminal: _status_bar_wrap breaks a line that
+# does not fit into more rows, so the panel grows instead of losing text.
+# First line: the branch of each checkout that deploys into the bundle, then the
+# bundle path.
 _status_bar_path_line() {
-	local cols="$1"
-	local path="$BUNDLE"
-	local checkouts="${BUNDLE_BRANCHES:+$BUNDLE_BRANCHES > }"
-
-	if [ "$cols" -ge 5 ] && [ "${#path}" -gt "$((cols - 1))" ]; then
-		path="...${path: -$((cols - 4))}"
-	fi
-
-	if [ "$((1 + ${#path} + ${#checkouts}))" -gt "$cols" ]; then
-		checkouts=""
-	fi
-
-	printf ' %s%s' "$checkouts" "$path"
+	printf ' %s%s' "${BUNDLE_BRANCHES:+$BUNDLE_BRANCHES > }" "$BUNDLE"
 }
 
-# Row the "p" key opens: the ports. A field is appended only when the whole of it fits, so a
-# narrow terminal drops trailing fields rather than cutting one mid-number. The dropped
-# ones are all in the table above anyway.
+# Line the "p" key opens: the ports.
 _status_bar_ports_line() {
-	local cols="${1:-9999}"
-	local text=" HTTP $HTTP_PORT  HTTPS $HTTPS_PORT  OSGI $OSGI_CONSOLE_PORT"
-	local field
-
-	for field in \
+	printf ' HTTP %s  HTTPS %s  OSGI %s%s%s%s%s' "$HTTP_PORT" "$HTTPS_PORT" "$OSGI_CONSOLE_PORT" \
 		"${ES_TRANSPORT_PORT:+  ES $ES_TRANSPORT_PORT}" \
 		"${GLOWROOT_PORT:+  GR $GLOWROOT_PORT}" \
 		"${ARQUILLIAN_PORT:+  ARQ $ARQUILLIAN_PORT}" \
-		"${JPDA_PORT:+  DBG $JPDA_PORT}"; do
-		[ -n "$field" ] || continue
-		[ "$((${#text} + ${#field}))" -le "$cols" ] || continue
-		text="$text$field"
-	done
-
-	printf '%s' "$text"
+		"${JPDA_PORT:+  DBG $JPDA_PORT}"
 }
 
-# Second row: the editor URL, the flags this launch was given, then the key hint. The
-# flags ride here rather than beside the path because all three fields on this row are
-# short and fixed, so they cost the path nothing. The URL uses the LAN IP (so it works
-# both on this machine and from another device on the same network) and falls back to
-# localhost when the IP cannot be resolved. As space runs out the hint goes first and
-# the flags second, leaving the URL, which is the one always worth keeping.
+# Second line: the editor URL, the flags this launch was given, then the key hint. The
+# URL uses the LAN IP (so it works both on this machine and from another device on the
+# same network) and falls back to localhost when the IP cannot be resolved.
 _status_bar_url_line() {
-	local cols="$1"
-	local url=" http://${LAN_IP:-localhost}:$HTTP_PORT/"
-	local flags="${LAUNCH_FLAGS:+ | $LAUNCH_FLAGS}"
-	local suffix=" | Ctrl+C stop then f to force, p - ports${BUNDLE_WORKTREES:+, w - worktree} "
-
-	if [ "$((${#url} + ${#flags} + ${#suffix}))" -gt "$cols" ]; then
-		suffix=""
-	fi
-
-	if [ "$((${#url} + ${#flags}))" -gt "$cols" ]; then
-		flags=""
-	fi
-
-	printf '%s%s%s' "$url" "$flags" "$suffix"
+	printf ' http://%s:%s/%s | Ctrl+C stop then f to force, p - ports%s' "${LAN_IP:-localhost}" "$HTTP_PORT" \
+		"${LAUNCH_FLAGS:+ | $LAUNCH_FLAGS}" "${BUNDLE_WORKTREES:+, w - worktree}"
 }
 
-# Row the "w" key opens: the worktree of every checkout that deploys into the bundle,
-# its own first and the ones lfrShare repointed at it after. Cut at the right edge
-# rather than dropped, since it is only on screen because it was asked for.
+# Line the "w" key opens: the worktree of every checkout that deploys into the bundle,
+# its own first and the ones lfrShare repointed at it after.
 _status_bar_worktrees_line() {
 	printf ' %s' "$BUNDLE_WORKTREES"
 }
@@ -1113,11 +1080,11 @@ STATUS_BAR_GREEN=$'\033[38;5;157m'  # the launch flags
 STATUS_BAR_GREY=$'\033[38;5;245m'   # the parent folders, the | separators
 STATUS_BAR_OFF=$'\033[0m'
 
-# Colour one row, already truncated and padded as plain text ($1 names it, $2 is the
-# text), so the colour codes never change what fits: each branch in light blue, with
+# Colour one line, whole and before it is wrapped ($1 names it, $2 is the text), so
+# the colours follow its fields wherever the rows break: each branch in light blue, with
 # its repo in brackets coloured like the bundle path, then the > in grey, then the
-# path's first folder in light grey, its other parent folders (or the "..." of a
-# truncated one) in grey and the bundle folder in light yellow; each port label in
+# path's first folder in light grey, its other parent folders in grey and the bundle
+# folder in light yellow; each port label in
 # light grey and its number in light pink; the URL in the status line blue, the
 # flags in light green, the hint in light grey with its keys lighter, the worktrees
 # coloured like the bundle path and the | between them in grey. The checkouts are split off before
@@ -1181,6 +1148,84 @@ _status_bar_color() {
 	printf '%s%s%s' "$STATUS_BAR_BG" "$out" "$STATUS_BAR_OFF"
 }
 
+# Break a coloured line (on stdin) into rows of at most $1 columns, one per output line.
+# A row breaks at its last place a break is allowed: before a word, or after a "/" inside
+# a path, so a path wraps between folders and a field is not cut in two. Not inside the
+# URL's http://, not after the "/" that opens a path, not between a port label and its
+# number (ES 9303), and not on either side of a " - " or before a flag (p - ports, -t),
+# so a key stays with what it does. Only a word wider than the whole row is broken
+# mid-word, and a space that falls on a break is dropped. Each row opens with the band's
+# background and the colour in effect where it starts, and is padded to the full width
+# before its reset, so the band spans the row.
+_status_bar_wrap() {
+	awk -v cols="$1" -v bg="$STATUS_BAR_BG" -v off="$STATUS_BAR_OFF" '
+		function emit(text, width) {
+			printf "%s%" (cols - width) "s%s\n", text, "", off
+		}
+		{
+			line = $0
+			row = bg
+			width = 0
+			color = ""
+			cut = 0
+			last = ""
+			beforeLast = ""
+			while (line != "") {
+				if (match(line, /^\033\[[0-9;]*m/)) {
+					code = substr(line, 1, RLENGTH)
+					line = substr(line, RLENGTH + 1)
+					if (code != bg && code != off) {
+						row = row code
+						color = code
+					}
+					continue
+				}
+				char = substr(line, 1, 1)
+				line = substr(line, 2)
+				if (width > 1 && ((last == " " && char != " " && char != "-" && beforeLast != "-" && !(char ~ /[0-9]/ && beforeLast ~ /[A-Z]/)) || (last == "/" && beforeLast !~ /[ (:\/]/ && char != ")"))) {
+					cut = length(row)
+					cutWidth = width
+					cutColor = color
+				}
+				if (width == cols) {
+					if (char == " ") {
+						emit(row, width)
+						row = bg color
+						width = 0
+						cut = 0
+						last = ""
+						beforeLast = ""
+						continue
+					}
+					if (cut) {
+						emit(substr(row, 1, cut), cutWidth)
+						line = substr(row, cut + 1) char line
+						row = bg cutColor
+						color = cutColor
+						width = 0
+						cut = 0
+						last = ""
+						beforeLast = ""
+						continue
+					}
+					emit(row, width)
+					row = bg color
+					width = 0
+				}
+				row = row char
+				width++
+				beforeLast = last
+				last = char
+			}
+			emit(row, width)
+		}'
+}
+
+# The rows of one panel line ($1 names it) at $2 columns, coloured and wrapped.
+_status_bar_rows() {
+	_status_bar_color "$1" "$("_status_bar_${1}_line")" | _status_bar_wrap "$2"
+}
+
 _STATUS_BAR_ON=0
 _STATUS_BAR_ROWS=0
 _STATUS_BAR_PORTS=0
@@ -1206,9 +1251,11 @@ _cursor_row() {
 
 # Reserve the bottom rows (a DECSTBM scroll region over the rest of the screen) and
 # draw the status panel there, coloured by _status_bar_color, so Tomcat's logs scroll
-# above it while the bundle and the URL stay pinned. The panel is two rows, plus the
-# ports row while "p" has it open and the worktrees row while "w" has it open. No-op
-# on short terminals, where the reserved rows would leave too little to read.
+# above it while the bundle and the URL stay pinned. The panel is the path and the URL
+# lines, plus the ports line while "p" has it open and the worktrees line while "w" has
+# it open, each wrapped by _status_bar_wrap into as many rows as its text needs. It
+# keeps at least three rows of log above it, and gives up its last rows only past that.
+# No-op on short terminals, where the reserved rows would leave too little to read.
 #
 # Setting the region homes the cursor (DECSTBM does that by definition), so the
 # row the output had reached has to be put back afterwards, or the log would
@@ -1223,37 +1270,40 @@ _cursor_row() {
 # panel rows they held.
 _setup_status_bar() {
 	local rows cols row text line i previous="$_STATUS_BAR_ROWS"
-	local lines=(path url)
+	local lines=(path url) panel=()
 	[ "$_STATUS_BAR_PORTS" = 1 ] && lines+=(ports)
 	[ "$_STATUS_BAR_WORKTREES" = 1 ] && [ -n "$BUNDLE_WORKTREES" ] && lines+=(worktrees)
 	rows=$(tput lines 2>/dev/null || echo 24)
 	cols=$(tput cols 2>/dev/null || echo 80)
 	[ "$rows" -ge 10 ] 2>/dev/null || return 0
+	for line in "${lines[@]}"; do
+		mapfile -t -O "${#panel[@]}" panel < <(_status_bar_rows "$line" "$cols")
+	done
+	[ "${#panel[@]}" -le "$((rows - 3))" ] || panel=("${panel[@]:0:rows - 3}")
 	row="$(_cursor_row)"
-	if [ "$previous" -gt 0 ] && [ "${#lines[@]}" -gt "$previous" ]; then
+	if [ "$previous" -gt 0 ] && [ "${#panel[@]}" -gt "$previous" ]; then
 		printf '\033[%d;1H' "$((rows - previous))"
-		for ((i = previous; i < ${#lines[@]}; i++)); do
+		for ((i = previous; i < ${#panel[@]}; i++)); do
 			printf '\n'
 		done
-		[ -n "$row" ] && row=$((row - ${#lines[@]} + previous))
+		[ -n "$row" ] && row=$((row - ${#panel[@]} + previous))
 		[ -n "$row" ] && [ "$row" -lt 1 ] && row=1
 	fi
-	if [ -z "$row" ] || [ "$row" -gt "$((rows - ${#lines[@]}))" ]; then
-		row=$((rows - ${#lines[@]}))
+	if [ -z "$row" ] || [ "$row" -gt "$((rows - ${#panel[@]}))" ]; then
+		row=$((rows - ${#panel[@]}))
 	fi
-	printf '\033[1;%dr' "$((rows - ${#lines[@]}))"               # scroll region = all but the panel rows
-	for ((i = rows - previous + 1; i <= rows - ${#lines[@]}; i++)); do
+	printf '\033[1;%dr' "$((rows - ${#panel[@]}))"               # scroll region = all but the panel rows
+	for ((i = rows - previous + 1; i <= rows - ${#panel[@]}; i++)); do
 		printf '\033[%d;1H\033[2K' "$i"                          # rows the panel gave back
 	done
-	i=$((rows - ${#lines[@]} + 1))
-	for line in "${lines[@]}"; do
-		text="$("_status_bar_${line}_line" "$cols")"; text="${text:0:$cols}"; printf -v text '%-*s' "$cols" "$text"
-		printf '\033[%d;1H%s' "$i" "$(_status_bar_color "$line" "$text")"
+	i=$((rows - ${#panel[@]} + 1))
+	for text in "${panel[@]}"; do
+		printf '\033[%d;1H%s' "$i" "$text"
 		i=$((i + 1))
 	done
 	printf '\033[%d;1H' "$row"                                   # cursor back where the output was
 	_STATUS_BAR_ON=1
-	_STATUS_BAR_ROWS="${#lines[@]}"
+	_STATUS_BAR_ROWS="${#panel[@]}"
 }
 
 # Undo _setup_status_bar: restore the full-screen scroll region and clear the
