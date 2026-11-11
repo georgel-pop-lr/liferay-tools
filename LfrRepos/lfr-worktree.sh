@@ -2654,7 +2654,7 @@ _lfrWorktreeIdeaInitHelp() {
 		Copies the project model (modules.xml, libraries, code style, inspections,
 		copyright) and every .iml, so the worktree opens as a configured project
 		instead of a bare directory, and writes the source's run configurations into
-		.idea/runConfigurations, which is what puts the Debugg profiles in the picker.
+		.idea/runConfigurations, which is what puts the Debug profiles in the picker.
 		All of it is path-independent: modules.xml is written in $PROJECT_DIR$ terms,
 		the .iml files in $MODULE_DIR$ ones, and a Remote debug configuration holds
 		nothing but a host and a port.
@@ -2664,8 +2664,8 @@ _lfrWorktreeIdeaInitHelp() {
 		the source clone's own shelved changes; and any run configuration bound to a
 		registered application server (the Tomcat ones), since that registration names
 		the source clone's bundle and would start the wrong one. Attach to your own
-		bundle with Debugg portal 8000 instead, the port start-liferay.sh --debug
-		takes first.
+		bundle with Debug portal and integration tests (8000) instead, the port
+		start-liferay.sh --debug takes first.
 
 		The source defaults to LFR_IDEA_TEMPLATE, else liferay-portal in the worktree
 		root. Set LFR_IDEA_TEMPLATE when the clone sitting in that root is not the one

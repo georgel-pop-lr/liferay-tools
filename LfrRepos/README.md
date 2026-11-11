@@ -510,8 +510,8 @@ again while the IDE is still up; an `n` stops with nothing done.
 The run configurations are written to `.idea/runConfigurations`, one file each,
 which is IntelliJ's shared form: it reads them from there and shows them in the
 picker, so nothing has to be written into the `workspace.xml` the IDE owns and
-rewrites from memory. The `Debugg portal 8000` profile is the one to attach with,
-8000 being the JPDA port `start-liferay.sh --debug` takes first.
+rewrites from memory. The `Debug portal and integration tests (8000)` profile is the one to attach
+with, 8000 being the JPDA port `start-liferay.sh --debug` takes first.
 
 Left out on purpose: the data sources and their cached schema, which point at the
 source bundle's database and are most of the size (38 MB against the 6.6 MB the
