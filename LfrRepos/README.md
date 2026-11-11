@@ -18,7 +18,7 @@ script runs in a subshell and its `cd` would not reach your interactive shell.
 | File | Purpose |
 |---|---|
 | `lfr-repo.sh` | Defines the `lfrRepos` switcher and its tab-completion. |
-| `lfr-worktree.sh` | Defines the `lfrWorktree` creator, the `lfrWorktreeRename` renamer, the `lfrWorktreeRemove` remover, `lfrWorktreeIdeaClean` for IntelliJ leftovers, and `lfrWorktreeIdeaInit` for giving a worktree an IntelliJ project. |
+| `lfr-worktree.sh` | Defines the `lfrWorktree` creator, the `lfrWorktreeRename` renamer, the `lfrWorktreeRemove` remover, `lfrWorktreeCopyBundle` for giving an existing worktree a built bundle, `lfrWorktreeIdeaClean` for IntelliJ leftovers, and `lfrWorktreeIdeaInit` for giving a worktree an IntelliJ project. |
 
 The repo list, picker, and per-user config live in the shared module
 `../LfrCommon/lfr-repo-list.sh` (config in `../LfrCommon/repos.local.conf`),
@@ -154,6 +154,50 @@ and its data, so reset it with `lfrBundles -c` or drop it with `dropdb`. Only
 at it is reused, which is what every run before the prompt did, and the lines
 above are printed as the warning that was missing.
 
+#### A copy of a built bundle, in place of `ant all`
+
+A new worktree gets a built bundle by copy, so it does not need `ant all`. The
+copy comes from the source clones in `LFR_WORKTREE_SOURCES`. Each source clone
+stays clean on its line (master, brian master, EE master), and `lfrAntAll`
+writes a stamp in its bundle (`.lfr-build-head`) with the commit that it built.
+
+1. `lfrWorktree` fetches the base, then looks at the stamp of each source.
+2. A stamp is valid when the build passed on a tree with no local change, and
+   no jar or war was written into the bundle or into the clone's `.m2` after it.
+3. It takes the newest valid build whose commit is in the base. Any source
+   counts. Thus, while the three lines are on the same commit, one build serves
+   all of them.
+4. It cuts the new branch from that commit, not from the tip of the base. The
+   worktree and its bundle then hold the same code. If the build is behind the
+   base, it says by how many commits.
+5. It copies the bundle with `rsync`. It does not copy `data/` (except
+   `data/license/`), `logs/`, `deploy/`, `osgi/state/`, `reports/`, the Tomcat
+   `logs`, `temp`, and `work`, the zips, the old sidecars, and
+   `portal-ext.properties`. The new bundle keeps its own `portal-ext.properties`
+   and its new database.
+6. It copies only the Elasticsearch sidecar that the commit runs
+   (`sidecar.version`), not each old one (about 1 GB each).
+7. It copies the build state of the clone: each file that git ignores outside
+   `modules/` (`.m2`, `lib/development`, `lib/portal`, `tools/sdk`, the Gradle
+   distribution, `tmp/lib-pre`, the compiled core). A tracked file is never
+   replaced.
+8. It writes `.gradle/gradle.properties` with each path of the source bundle
+   changed to the new bundle, and each path of the source clone changed to the
+   worktree.
+
+With no valid build in the base, it says why for each source, and it makes the
+worktree as before: an empty bundle that needs `lfrAntAll`. An existing branch
+is checked out, and its bundle is copied only when the branch contains a valid
+build.
+
+| Option | Behavior |
+|---|---|
+| `--copy-bundle=<clone>` | Copy only from this clone. Fail if its build is not valid or not in the base. |
+| `--no-copy-bundle` | Never copy. |
+
+A copy takes about 20 seconds with the checkout. A module deploy then takes
+under a minute, because the Gradle build cache (`lfrCache`) is shared.
+
 Last, once you are standing in the worktree, it offers `lfrWorktreeIdeaInit`:
 
 ```
@@ -165,6 +209,35 @@ should not pay those seconds, so the question is asked rather than answered
 either way. Set `LFR_WORKTREE_IDEA=1` to always run it and `0` to never ask,
 which is also what a scripted run needs, since with no terminal the prompt is
 skipped and the command is named instead.
+
+### `lfrWorktreeCopyBundle`: give an existing worktree a built bundle
+
+Run it inside a worktree that has a bundle already, to replace that build with
+the build of a source clone (short alias `lfrwcb`). The worktree then needs no
+`ant all`.
+
+| Invocation | Behavior |
+|---|---|
+| `lfrWorktreeCopyBundle` | Copy the newest valid build of a source clone that the branch contains. Ask before the copy. |
+| `lfrWorktreeCopyBundle --from=<clone>` | Copy only from this clone. |
+| `lfrWorktreeCopyBundle -y` | Do not ask. |
+
+- It refuses while the bundle runs.
+- The branch must contain the commit of the build. If no build fits, it names
+  each build. Rebase onto one, then run it again: `lfrGitRebaseOnto <commit>`.
+- It replaces the Tomcat, the OSGi modules, the sidecar, and the build state.
+  It keeps the database, `data/`, `logs/`, and `portal-ext.properties`. It
+  clears `osgi/state` and the Tomcat `work` and `temp`, and it removes a Tomcat
+  of another version.
+- At the end, it lists the modules that the branch changes from the build. The
+  bundle runs the build until you deploy them. A portal core directory
+  (`portal-kernel`, `portal-impl`, `util-*`) needs
+  `ant deploy install-portal-snapshot` and a restart.
+
+It also runs in a source clone, with one rule: the clone has no local change,
+and its head is the same commit as the build of another source. Then that
+clone gets the build by copy, with a valid stamp, and needs no `lfrAntAll`. If
+the head is different, it refuses and says to run `lfrAntAll` there.
 
 ### `lfrWorktreeRename`: rename a worktree
 
@@ -484,7 +557,8 @@ All six commands accept `-h`/`--help`.
 
 All settings live in `../LfrCommon/repos.local.conf` (gitignored; copy the
 `.example`). The shared module sources it, and the `LFR_WORKTREE_*` values also
-honor an environment override when the config does not set them.
+honor an environment override when the config does not set them, except
+`LFR_WORKTREE_SOURCES`, which is an array.
 
 | Variable | Default | Override via env? | Purpose |
 |---|---|---|---|
@@ -492,4 +566,5 @@ honor an environment override when the config does not set them.
 | `LFR_REPO_PRIORITY` | `liferay-portal` | no | Name prefixes floated to the top of the picker, in order. |
 | `LFR_WORKTREE_ROOT` | `$HOME/liferay/repos` | yes | Where new worktrees are created. |
 | `LFR_WORKTREE_BASE` | `upstream/master` | yes | Default base ref for new branches. |
+| `LFR_WORKTREE_SOURCES` | empty (no copy) | no (an array) | The clean source clones whose stamped build `lfrWorktree` and `lfrWorktreeCopyBundle` copy. |
 | `LFR_IDEA_TEMPLATE` | `liferay-portal` in `LFR_WORKTREE_ROOT` | yes | The clone `lfrWorktreeIdeaInit` copies the IntelliJ project from. |

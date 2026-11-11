@@ -16,6 +16,14 @@ LFR_REPO_PRIORITY=("liferay-portal")
 LFR_WORKTREE_ROOT="${HOME}/liferay/repos"
 LFR_WORKTREE_BASE="upstream/master"
 
+# The clean clones whose built bundle lfrWorktree copies into a new worktree, so the
+# worktree needs no `ant all`. Each one stays on its line (master, brian master, EE
+# master) with no local change, and lfrAntAll stamps its bundle with the commit. The
+# new branch is cut from that commit. Leave it empty to never copy.
+LFR_WORKTREE_SOURCES=(
+	"${HOME}/liferay/repos/liferay-portal"
+)
+
 # The clone lfrWorktreeIdeaInit copies the IntelliJ project from. Defaults to
 # liferay-portal in LFR_WORKTREE_ROOT, which is wrong whenever the clone sitting
 # there is not the one carrying your run configurations.

@@ -23,6 +23,11 @@
 # which is what an lfrWorktreeRemove --keep-bundle leaves behind, is reported and you
 # are asked whether to reuse it rather than adopted in silence.
 #
+# When a clean source clone in LFR_WORKTREE_SOURCES has a stamped build in the base
+# (lfrAntAll), the branch is cut from that commit and the built bundle and the build state
+# of the clone are copied in, so the worktree needs no `ant all`. lfrWorktreeCopyBundle
+# does the same for an existing worktree.
+#
 # Last, it offers to run lfrWorktreeIdeaInit, since a fresh worktree has no IntelliJ
 # project of its own. Set LFR_WORKTREE_IDEA to answer that in advance (1 runs it, 0
 # skips it).
@@ -235,6 +240,217 @@ _lfrWorktreeBundleConfig() {
 	_lfrWorktreeCreateDatabase "${dst_bundle}/portal-ext.properties" "${db_name}"
 }
 
+# The value of key $2 in the build stamp $1 that lfrAntAll writes (_lfrAntStampBuild).
+_lfrWorktreeStampValue() {
+	sed -n "s/^${2}=//p" "${1}" 2>/dev/null | head -1
+}
+
+# Echo the commit that the bundle of the source clone $1 holds, when a worktree can copy
+# it: lfrAntAll stamped it from a clean tree, and nothing was deployed into the bundle or
+# installed into the clone's .m2 after that. Otherwise say why on stderr and return 1.
+_lfrWorktreeSourceCommit() {
+	local src="${1}"
+	local bundle commit newer stamp
+
+	bundle="$(cd "${src}" 2>/dev/null && _lfrRepoBundleDir)" || {
+		echo "lfrWorktree: ${src}: cannot resolve its bundle" >&2
+		return 1
+	}
+
+	stamp="${bundle}/${_LFR_BUILD_STAMP}"
+
+	if [ ! -f "${stamp}" ]; then
+		echo "lfrWorktree: ${src}: its bundle has no build stamp; run lfrAntAll there" >&2
+		return 1
+	fi
+
+	commit="$(_lfrWorktreeStampValue "${stamp}" commit)"
+
+	if [ "$(_lfrWorktreeStampValue "${stamp}" clean)" != 1 ]; then
+		echo "lfrWorktree: ${src}: the build of ${commit:0:13} ran on a tree with local changes" >&2
+		return 1
+	fi
+
+	newer="$(find "${bundle}/osgi" "${bundle}"/tomcat-*/webapps "${src}/.m2" \
+		-path "${bundle}/osgi/state" -prune -o \
+		-type f \( -name '*.jar' -o -name '*.war' \) -newer "${stamp}" -print -quit 2>/dev/null)"
+
+	if [ -n "${newer}" ]; then
+		echo "lfrWorktree: ${src}: changed after the build of ${commit:0:13}: ${newer}" >&2
+		return 1
+	fi
+
+	printf '%s\n' "${commit}"
+}
+
+# Echo "<clone><TAB><commit>" for the build that a branch at the ref $1 can use: a source
+# clone with a valid stamp (_lfrWorktreeSourceCommit) whose commit is $1 or an ancestor of
+# it, in the repo of the current directory. Any source counts, not only the clone of the
+# same line, so while master, brian master, and EE master are on one commit, one build
+# serves them all. The newest build wins. With $2, only that clone is tried. When no build
+# fits, print why for each source and return 1.
+_lfrWorktreeSourcePick() {
+	local target="${1}" only="${2-}"
+	local best="" best_commit="" best_count="" commit count out src
+	local -a reasons=() sources=("${LFR_WORKTREE_SOURCES[@]}")
+
+	if [ -n "${only}" ]; then
+		sources=("${only}")
+	fi
+
+	for src in "${sources[@]}"; do
+		[ -d "${src}" ] || continue
+
+		if ! out="$(_lfrWorktreeSourceCommit "${src}" 2>&1)"; then
+			reasons+=("${out}")
+			continue
+		fi
+
+		commit="${out}"
+
+		# The commit must be in this repo too, which another clone may not share.
+		if ! git cat-file -e "${commit}^{commit}" 2>/dev/null; then
+			git fetch --quiet --no-tags "${src}" "$(git -C "${src}" branch --show-current)" 2>/dev/null ||
+				true
+		fi
+
+		if ! git merge-base --is-ancestor "${commit}" "${target}" 2>/dev/null; then
+			reasons+=("lfrWorktree: ${src}: its build ${commit:0:13} is not in ${target}")
+			continue
+		fi
+
+		count="$(git rev-list --count "${commit}..${target}")"
+
+		if [ -z "${best}" ] || [ "${count}" -lt "${best_count}" ]; then
+			best="${src}" best_commit="${commit}" best_count="${count}"
+		fi
+	done
+
+	if [ -z "${best}" ]; then
+		[ "${#reasons[@]}" -gt 0 ] && printf '%s\n' "${reasons[@]}" >&2
+
+		return 1
+	fi
+
+	if [ "${best_count}" -gt 0 ]; then
+		echo "lfrWorktree: the build ${best_commit:0:13} of ${best} is ${best_count} commits behind ${target}; refresh that clone and run lfrAntAll there when you need the newer code" >&2
+	fi
+
+	printf '%s\t%s\n' "${best}" "${best_commit}"
+}
+
+# Copy the built bundle of the source clone $1 into the bundle of the worktree $2, and
+# the build state of the clone that a module deploy needs. The new bundle keeps its own
+# portal-ext.properties and database (_lfrWorktreeBundleConfig) and gets no data, logs,
+# OSGi state, or Tomcat work of the source, since those belong to the source database.
+# With $3 = replace, a bundle that already holds a Tomcat gets the build of the source in
+# place of its own, and keeps its data, logs, and database (lfrWorktreeCopyBundle).
+_lfrWorktreeCopyBundle() {
+	local src="${1}" dir="${2}" mode="${3-}"
+	local commit dst_bundle sidecar src_bundle src_real t
+
+	src_bundle="$(cd "${src}" && _lfrRepoBundleDir)" || return 1
+	dst_bundle="$(cd "${dir}" && _lfrRepoBundleDir)" || return 1
+	src_real="$(cd "${src}" && pwd -P)" || return 1
+
+	local -a delete=()
+
+	if ls -d "${dst_bundle}"/tomcat-* >/dev/null 2>&1; then
+		if [ "${mode}" != replace ]; then
+			echo "lfrWorktree: ${dst_bundle} already holds a Tomcat; not copied" >&2
+			return 0
+		fi
+
+		# The old build goes: a Tomcat of another version, the OSGi state and the JSP
+		# cache of the old modules, and each file of the old build that the source has
+		# not (--delete). What rsync excludes stays, so the data and the logs stay.
+		for t in "${dst_bundle}"/tomcat-*/; do
+			t="$(basename "${t}")"
+
+			if [ -d "${src_bundle}/${t}" ]; then
+				rm -rf "${dst_bundle:?}/${t}/temp" "${dst_bundle:?}/${t}/work"
+			else
+				rm -rf "${dst_bundle:?}/${t}"
+			fi
+		done
+
+		rm -rf "${dst_bundle:?}/osgi/state"
+		delete=(--delete)
+	fi
+
+	echo "lfrWorktree: copying the bundle ${src_bundle} -> ${dst_bundle}..." >&2
+
+	rsync -a "${delete[@]}" \
+		--include=/data/ --include='/data/license/***' --exclude='/data/*' \
+		--exclude=/deploy/ --exclude=/elasticsearch-sidecar/ --exclude=/glowroot/data/ \
+		--exclude=/logs/ --exclude=/osgi/state/ --exclude=/reports/ \
+		--exclude='/tomcat-*/logs/' --exclude='/tomcat-*/temp/' --exclude='/tomcat-*/work/' \
+		--exclude='/*.bak*' --exclude='/*.log' --exclude='/*.zip' \
+		--exclude='/portal-ext.properties*' --exclude=/portal-setup-wizard.properties \
+		"${src_bundle}/" "${dst_bundle}/" || return 1
+
+	mkdir -p "${dst_bundle}/data" "${dst_bundle}/deploy" "${dst_bundle}/logs"
+
+	# Only the Elasticsearch sidecar that this commit runs, not each old one (about 1 GB each).
+	commit="$(_lfrWorktreeStampValue "${src_bundle}/${_LFR_BUILD_STAMP}" commit)"
+	sidecar="$(git -C "${src}" show "${commit}:modules/apps/portal-search-elasticsearch8/portal-search-elasticsearch8-impl/src/main/resources/META-INF/sidecar/sidecar.version" 2>/dev/null | head -1)"
+
+	if [ -n "${sidecar}" ] && [ -d "${src_bundle}/elasticsearch-sidecar/${sidecar}" ]; then
+		mkdir -p "${dst_bundle}/elasticsearch-sidecar"
+		rsync -a "${delete[@]}" --exclude=/logs/ "${src_bundle}/elasticsearch-sidecar/${sidecar}" \
+			"${dst_bundle}/elasticsearch-sidecar/" || return 1
+	fi
+
+	# The build state of the clone: each file that git ignores outside modules/, such as
+	# the portal snapshots (.m2), lib/development, lib/portal, tools/sdk, the Gradle
+	# distribution, tmp/lib-pre, and the compiled core. Only ignored files, so a tracked
+	# file of the branch is never replaced. No -t, so the copies get a new mtime, newer
+	# than the files of the checkout, and a check that compares the two does not see
+	# them as stale. The IDE, the per-user properties, and .gradle stay out: lfrWorktree
+	# writes those itself.
+	local -a tops=()
+
+	mapfile -t tops < <(cd "${src}" && ls -A | command grep -vxE 'modules|\.git|\.gradle|\.idea|workspaces')
+
+	(
+		cd "${src}" &&
+		git ls-files --others --ignored --exclude-standard --directory -- "${tops[@]}" |
+		command grep -vE "^[^/]*\\.${USER}\\.properties/?$"
+	) | rsync -rlpD --files-from=- "${src}/" "${dir}/" || return 1
+
+	# Gradle reads the bundle paths from .gradle/gradle.properties, which ant writes with
+	# absolute paths. Point the paths of the source bundle at the new bundle, and the
+	# other paths of the source clone at the worktree.
+	if [ -f "${src}/.gradle/gradle.properties" ]; then
+		local abs key line val
+
+		mkdir -p "${dir}/.gradle"
+
+		while IFS= read -r line || [ -n "${line}" ]; do
+			key="${line%%=*}"
+			val="${line#*=}"
+
+			if [ "${key}" != "${line}" ] && [ "${val:0:1}" = / ]; then
+				abs="$(realpath -m "${val}")"
+
+				case "${abs}" in
+				"${src_bundle}" | "${src_bundle}"/*) line="${key}=${dst_bundle}${abs#"${src_bundle}"}" ;;
+				"${src_real}" | "${src_real}"/*) line="${key}=${dir}${abs#"${src_real}"}" ;;
+				esac
+			fi
+
+			# A path inside a value (-javaagent\:<path>, destfile\=<path>).
+			line="${line//"${src_real}/"/"${dir}/"}"
+
+			printf '%s\n' "${line}"
+		done <"${src}/.gradle/gradle.properties" >"${dir}/.gradle/gradle.properties"
+	fi
+
+	printf 'copied_from=%s\n' "${src_bundle}" >>"${dst_bundle}/${_LFR_BUILD_STAMP}"
+
+	echo "lfrWorktree: copied the bundle ($(du -sh "${dst_bundle}" 2>/dev/null | cut -f1)) and the build state of ${src}" >&2
+}
+
 # A fresh worktree has nothing for IntelliJ to open, so offer lfrWorktreeIdeaInit once
 # the worktree is wired and you are standing in it. It stays a command of its own because
 # the copy takes about 17 seconds, which a worktree you only build from should not pay,
@@ -303,13 +519,37 @@ lfrWorktree() {
 			Then whether to run lfrWorktreeIdeaInit, which gives the worktree the
 			IntelliJ project and the debug profiles in about 17 seconds. Set
 			LFR_WORKTREE_IDEA=1 to always run it, 0 to never ask.
+
+			Copy of a built bundle, so the worktree needs no `ant all`:
+			  The clones in LFR_WORKTREE_SOURCES stay clean on their line (master,
+			  brian master, EE master), and lfrAntAll stamps their bundle with the
+			  commit it built. The newest valid build whose commit is in the base is
+			  taken, from any source, so one build serves all lines while they are on
+			  one commit. The new branch is cut from that commit, and the bundle and
+			  the build state of the clone are copied in, on the new database. With
+			  no valid build (not built, a dirty tree, a deploy after the build, not
+			  in the base), each reason is printed, and the worktree is made as
+			  before, off the tip of the base.
+			  --copy-bundle=<clone>  copy only from this clone
+			  --no-copy-bundle       never copy
 		EOF
 		return 0
 		;;
 	esac
 
-	local branch="$1"
-	local base="${2:-${LFR_WORKTREE_BASE:-upstream/master}}"
+	local copy=auto a
+	local -a args=()
+
+	for a in "$@"; do
+		case "${a}" in
+		--copy-bundle=*) copy="${a#--copy-bundle=}" ;;
+		--no-copy-bundle) copy=none ;;
+		*) args+=("${a}") ;;
+		esac
+	done
+
+	local branch="${args[0]-}"
+	local base="${args[1]:-${LFR_WORKTREE_BASE:-upstream/master}}"
 
 	if [ -z "${branch}" ]; then
 		echo "usage: lfrWorktree <branch> [base-ref]" >&2
@@ -341,24 +581,58 @@ lfrWorktree() {
 		return 1
 	}
 
+	# The base must be fresh before the build to copy is picked from it. Only treat a
+	# "<a>/<b>" base as a remote ref (and fetch to refresh it) when <a> is a real remote;
+	# otherwise it is a local ref (e.g. a branch literally named feature/x).
+	local exists=0 remote="${base%%/*}" ref="${base#*/}"
+
 	if git show-ref --verify --quiet "refs/heads/${branch}"; then
+		exists=1
+	elif [ "${remote}" != "${base}" ] && git remote get-url "${remote}" >/dev/null 2>&1; then
+		echo "lfrWorktree: fetching ${remote} ${ref}..." >&2
+		git fetch "${remote}" "${ref}" || return 1
+	elif ! git rev-parse --verify --quiet "${base}^{commit}" >/dev/null; then
+		echo "lfrWorktree: base ref '${base}' not found (not a local ref or <remote>/<ref>)" >&2
+		return 1
+	fi
+
+	# The clone whose built bundle this worktree copies, and the commit it holds.
+	local source="" source_commit="" pick target="${base}" only=""
+
+	[ "${exists}" = 1 ] && target="${branch}"
+
+	case "${copy}" in
+	none | auto) ;;
+	*)
+		only="$(cd "${copy}" 2>/dev/null && git rev-parse --show-toplevel)" || {
+			echo "lfrWorktree: --copy-bundle: ${copy} is not a git repo" >&2
+			return 1
+		}
+		;;
+	esac
+
+	if [ "${copy}" != none ] && { [ -n "${only}" ] || [ "${#LFR_WORKTREE_SOURCES[@]}" -gt 0 ]; }; then
+		if pick="$(_lfrWorktreeSourcePick "${target}" "${only}")"; then
+			source="${pick%%$'\t'*}"
+			source_commit="${pick#*$'\t'}"
+		else
+			[ -z "${only}" ] || return 1
+			echo "lfrWorktree: no build of a source clone is in ${target}; the bundle is not copied, and the worktree needs lfrAntAll" >&2
+		fi
+	fi
+
+	if [ "${exists}" = 1 ]; then
 		# The branch already exists: check it out in the new worktree (git refuses
 		# if it is already checked out elsewhere; relay that error). base is ignored.
 		echo "lfrWorktree: branch ${branch} exists; checking it out in ${dir}..." >&2
 		git worktree add "${dir}" "${branch}" || return 1
+	elif [ -n "${source}" ]; then
+		# Cut the branch from the commit of the copied bundle, not from the tip of the
+		# base, so the worktree and its bundle hold the same code.
+		echo "lfrWorktree: cutting ${branch} from ${source_commit:0:13}, the build of ${source}" >&2
+		git worktree add -b "${branch}" "${dir}" "${source_commit}" || return 1
 	else
-		# New branch off the base ref. Only treat a "<a>/<b>" base as a remote ref
-		# (and fetch to refresh it) when <a> is a real remote; otherwise it is a
-		# local ref (e.g. a branch literally named feature/x), which must resolve.
-		local remote="${base%%/*}"
-		local ref="${base#*/}"
-		if [ "${remote}" != "${base}" ] && git remote get-url "${remote}" >/dev/null 2>&1; then
-			echo "lfrWorktree: fetching ${remote} ${ref}..." >&2
-			git fetch "${remote}" "${ref}" || return 1
-		elif ! git rev-parse --verify --quiet "${base}^{commit}" >/dev/null; then
-			echo "lfrWorktree: base ref '${base}' not found (not a local ref or <remote>/<ref>)" >&2
-			return 1
-		fi
+		# New branch off the base ref, fetched above.
 		git worktree add -b "${branch}" "${dir}" "${base}" || return 1
 	fi
 
@@ -382,9 +656,195 @@ lfrWorktree() {
 
 	_lfrWorktreeBundleConfig "${src_root}" "${dir}" "${bundle_suffix}"
 
+	if [ -n "${source}" ]; then
+		_lfrWorktreeCopyBundle "${source}" "${dir}" ||
+			echo "lfrWorktree: the copy of the bundle failed; the worktree needs lfrAntAll" >&2
+	fi
+
 	cd "${dir}" || return 1
 
 	_lfrWorktreeIdeaInitPrompt
+}
+
+# Echo the modules of the worktree $1 that differ from commit $2 (committed, staged,
+# unstaged, or untracked), as the paths to deploy: a module, or a portal core directory.
+_lfrWorktreeChangedModules() {
+	local root="${1}" commit="${2}"
+	local file dir rel
+	declare -A seen=()
+
+	while IFS= read -r file; do
+		case "${file}" in
+		portal-impl/* | portal-kernel/* | portal-test/* | portal-web/* | util-*/*)
+			rel="${file%%/*}"
+			;;
+		modules/*)
+			dir="${root}/$(dirname "${file}")"
+
+			while [ "${dir}" != "${root}/modules" ] && [ "${dir}" != / ]; do
+				[ -f "${dir}/bnd.bnd" ] && [ -f "${dir}/build.gradle" ] && break
+				dir="$(dirname "${dir}")"
+			done
+
+			[ -f "${dir}/.lfrbuild-portal" ] || continue
+			rel="${dir#"${root}/"}"
+			;;
+		*)
+			continue
+			;;
+		esac
+
+		[ -n "${seen[${rel}]-}" ] && continue
+		seen[${rel}]=1
+		printf '%s\n' "${rel}"
+	done < <(cd "${root}" && { git diff --name-only "${commit}"; git ls-files --others --exclude-standard; } | sort -u)
+}
+
+# Give an existing worktree the built bundle of a source clone, in place of its own, so
+# it needs no `ant all`. Keeps the database, data, logs, and portal-ext.properties.
+lfrWorktreeCopyBundle() {
+	case "${1-}" in
+	-h | --help)
+		cat <<-'EOF'
+			lfrWorktreeCopyBundle - give this worktree the built bundle of a source clone.
+
+			Usage:
+			  lfrWorktreeCopyBundle                 copy the newest build of a clone in
+			                                        LFR_WORKTREE_SOURCES that this branch
+			                                        contains
+			  lfrWorktreeCopyBundle --from=<clone>  copy from this clone
+			  lfrWorktreeCopyBundle -y              do not ask before the copy
+
+			Run it inside the worktree, with its bundle stopped. It also runs in a
+			source clone whose head is the same commit as the build of another one,
+			with no local change: then that clone needs no lfrAntAll of its own. The Tomcat, the OSGi
+			modules, the Elasticsearch sidecar, and the build state of the clone (.m2,
+			lib, tmp/lib-pre, .gradle/gradle.properties) are replaced with the build of
+			the source. The database, data, logs, and portal-ext.properties stay. The
+			OSGi state and the JSP cache are cleared.
+
+			The branch must contain the commit of the source build. If no build fits,
+			it names each build, and you rebase onto one: lfrGitRebaseOnto <commit>. After the copy, it lists the
+			modules that the branch changes: deploy them, or the bundle runs master.
+		EOF
+		return 0
+		;;
+	esac
+
+	local from="" yes=0 a
+
+	for a in "$@"; do
+		case "${a}" in
+		--from=*) from="${a#--from=}" ;;
+		-y | --yes) yes=1 ;;
+		*)
+			echo "lfrWorktreeCopyBundle: unknown argument ${a}; see -h" >&2
+			return 1
+			;;
+		esac
+	done
+
+	local root bundle source commit pick pid
+	root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
+		echo "lfrWorktreeCopyBundle: not inside a git repo" >&2
+		return 1
+	}
+
+	bundle="$(cd "${root}" && _lfrRepoBundleDir)" || {
+		echo "lfrWorktreeCopyBundle: cannot resolve the bundle of ${root}" >&2
+		return 1
+	}
+
+	local s is_source=0
+	local -a others=()
+
+	for s in "${LFR_WORKTREE_SOURCES[@]}"; do
+		if [ "$(cd "${s}" 2>/dev/null && pwd -P)" = "$(cd "${root}" && pwd -P)" ]; then
+			is_source=1
+		else
+			others+=("${s}")
+		fi
+	done
+
+	if declare -F _lfrBundlePidForDir >/dev/null 2>&1 && pid="$(_lfrBundlePidForDir "${bundle}")"; then
+		echo "lfrWorktreeCopyBundle: the bundle runs (PID ${pid}); stop it first: ${bundle}" >&2
+		return 1
+	fi
+
+	if [ -n "${from}" ]; then
+		from="$(cd "${from}" 2>/dev/null && git rev-parse --show-toplevel)" || {
+			echo "lfrWorktreeCopyBundle: --from is not a git repo" >&2
+			return 1
+		}
+	fi
+
+	# A source clone takes only another source, and only at its own head, so its stamp
+	# stays true: the bundle holds exactly the commit of the clone.
+	if [ "${is_source}" = 1 ]; then
+		if [ -n "$(git -C "${root}" status --porcelain --untracked-files=no)" ]; then
+			echo "lfrWorktreeCopyBundle: ${root} is a source clone with local changes" >&2
+			return 1
+		fi
+
+		if [ -z "${from}" ]; then
+			pick="$(cd "${root}" && LFR_WORKTREE_SOURCES=("${others[@]}") && _lfrWorktreeSourcePick HEAD)"
+		else
+			pick="$(cd "${root}" && _lfrWorktreeSourcePick HEAD "${from}")"
+		fi
+
+		if [ -z "${pick}" ] || [ "${pick#*$'\t'}" != "$(git -C "${root}" rev-parse HEAD)" ]; then
+			echo "lfrWorktreeCopyBundle: ${root} is a source clone, and no other source has a build of its head; run lfrAntAll there" >&2
+			return 1
+		fi
+	fi
+
+	[ -n "${pick-}" ] || pick="$(cd "${root}" && _lfrWorktreeSourcePick HEAD "${from}")" || {
+		echo "lfrWorktreeCopyBundle: this branch contains no build of a source clone." >&2
+		echo "  Rebase it onto a build above, so the branch and the bundle hold the same code: lfrGitRebaseOnto <commit>" >&2
+		return 1
+	}
+
+	source="${pick%%$'\t'*}"
+	commit="${pick#*$'\t'}"
+
+	echo "Source : ${source} (build of ${commit:0:13})"
+	echo "Bundle : ${bundle} (its Tomcat and OSGi modules are replaced; database, data, and logs stay)"
+
+	if [ "${yes}" != 1 ] && ! _lfrConfirm "lfrWorktreeCopyBundle: copy?"; then
+		echo "lfrWorktreeCopyBundle: nothing copied" >&2
+		return 1
+	fi
+
+	(cd "${root}" && _lfrWorktreeCopyBundle "${source}" "${root}" replace) || return 1
+
+	local -a modules=()
+	mapfile -t modules < <(_lfrWorktreeChangedModules "${root}" "${commit}")
+
+	if [ "${#modules[@]}" = 0 ]; then
+		echo "lfrWorktreeCopyBundle: the branch changes no deployed module; the bundle is ready" >&2
+		return 0
+	fi
+
+	local -a core=() gradle=() m
+
+	for m in "${modules[@]}"; do
+		case "${m}" in
+		modules/*) gradle+=("${m}") ;;
+		*) core+=("${m}") ;;
+		esac
+	done
+
+	echo "lfrWorktreeCopyBundle: deploy what the branch changes, or the bundle runs ${commit:0:13} without it." >&2
+
+	if [ "${#gradle[@]}" -gt 0 ]; then
+		echo "  Modules (gradlew deploy in each):" >&2
+		printf '    %s\n' "${gradle[@]}" >&2
+	fi
+
+	if [ "${#core[@]}" -gt 0 ]; then
+		echo "  Portal core (ant deploy install-portal-snapshot in each, then a restart; lfrAntAll when a changed API breaks other modules):" >&2
+		printf '    %s\n' "${core[@]}" >&2
+	fi
 }
 
 # IntelliJ keeps a project's state outside the project directory, so removing a worktree
@@ -1718,6 +2178,7 @@ lfrWorktreeRename() {
 lfrw() { lfrWorktree "$@"; }
 lfrwn() { lfrWorktreeRename "$@"; }
 lfrwr() { lfrWorktreeRemove "$@"; }
+lfrwcb() { lfrWorktreeCopyBundle "$@"; }
 
 # Write the source project's run configurations into $2/.idea/runConfigurations, one
 # file each. That is IntelliJ's shared form, the one meant to travel with a project, so

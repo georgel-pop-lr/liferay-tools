@@ -42,7 +42,10 @@ lfrTools() {
 		  lfrRepos              jump to a Liferay repo (picker, or by name)
 		  lfrWorktree           create a git worktree + branch for a ticket,
 		                        wired to its own bundle, offering the IntelliJ
-		                        project at the end
+		                        project at the end; copies the built bundle of
+		                        a clean source clone (LFR_WORKTREE_SOURCES)
+		  lfrWorktreeCopyBundle give an existing worktree the built bundle of a
+		                        source clone, keeping its database
 		  lfrWorktreeRename     rename a worktree, its branch, its bundle, its
 		                        database and IntelliJ's project, all in place
 		  lfrWorktreeRemove     remove a worktree, its branch, its bundle, and
@@ -96,7 +99,7 @@ lfrTools() {
 		  lfrReload     re-source lfrTools.sh, so edits to any tool take effect
 		                in this shell (no new terminal needed)
 
-		Every command has a short alias: lfrr, lfrw, lfrwn, lfrwr, lfrs, lfrb, lfrrb,
+		Every command has a short alias: lfrr, lfrw, lfrwn, lfrwr, lfrwcb, lfrs, lfrb, lfrrb,
 		lfraa, lfrc, lfrcv, lfrp, lfrgc, lfrgcd, lfrgs, lfrgse, lfrgr, lfrgro,
 		lfrgum, lfrgub, lfrgct, lfrpb, lfrrl. Six expand to an lfrPulls subcommand:
 		lfrpw (week), lfrps (stats), lfrpt (ticket), lfrpf (a team or user's

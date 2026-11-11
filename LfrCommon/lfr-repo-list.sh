@@ -15,6 +15,8 @@ _lfrCommonDir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Defaults if the local config did not set them.
 [ -z "${LFR_REPO_ROOTS+x}" ] && LFR_REPO_ROOTS=("${HOME}/liferay/repos")
 [ -z "${LFR_REPO_PRIORITY+x}" ] && LFR_REPO_PRIORITY=("liferay-portal")
+# The clones whose built bundle lfrWorktree copies into a new worktree (empty: no copy).
+[ -z "${LFR_WORKTREE_SOURCES+x}" ] && LFR_WORKTREE_SOURCES=()
 LFR_WORKTREE_ROOT="${LFR_WORKTREE_ROOT:-${HOME}/liferay/repos}"
 LFR_WORKTREE_BASE="${LFR_WORKTREE_BASE:-upstream/master}"
 

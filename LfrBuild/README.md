@@ -34,6 +34,19 @@ Build helpers for Liferay repos. Loaded as shell functions via the root
 forwarded) bypasses guards 1 and 2 only. All other arguments are forwarded to
 `ant all`. `-h`/`--help` prints usage.
 
+## The build stamp
+
+After a build that passes, `lfrAntAll` writes `.lfr-build-head` in the bundle:
+the commit, the branch, the repo, the date, and `clean`. `clean=1` means that
+the tree had no tracked change before and after the build, and that `HEAD` did
+not move. Thus the bundle holds exactly that commit. The old stamp is removed
+before the build, so a failed build leaves no stamp.
+
+`lfrWorktree` and `lfrWorktreeCopyBundle` read the stamp before they copy a
+bundle into a worktree (see `LfrRepos/README.md`). A deploy into the bundle
+after the stamp, or an install into the `.m2` of the clone, makes the stamp not
+valid, because the bundle no longer holds only that commit.
+
 ## A clean terminal for each build
 
 Once every guard has passed and the lock is held, so the build is certainly going

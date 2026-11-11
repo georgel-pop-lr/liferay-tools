@@ -11,6 +11,8 @@
 #      sharing, which is to run a prebuilt bundle without rebuilding).
 #   3. Refuse to run two `ant all` at once (machine-wide, per user). Concurrent
 #      full builds thrash and can corrupt the shared Gradle build cache.
+# After a good build it stamps the bundle with the commit (.lfr-build-head), which
+# lfrWorktree reads to copy that bundle into a new worktree.
 # Pass --force / -f to bypass guards 1 and 2. Guard 3 (one at a time) is always
 # enforced; a stale lock from a dead build is reclaimed automatically. Any extra
 # args are forwarded to `ant all`.
@@ -71,6 +73,10 @@ lfrAntAll() {
 			  lfrAntAll -nc         keep the terminal as it is (--no-clear); by
 			                        default it is wiped once the guards pass, so only
 			                        this build's output is there
+
+			After a good build, it writes .lfr-build-head in the bundle with the commit
+			(clean=1 when the tree had no local change). lfrWorktree reads it to copy
+			the bundle into a new worktree.
 		EOF
 		return 0
 		;;
@@ -152,8 +158,59 @@ lfrAntAll() {
 		trap 'rm -rf "${lockdir}"' EXIT INT TERM
 		echo "${BASHPID}" >"${lockdir}/pid"
 		printf 'pid %s, repo %s, since %s\n' "${BASHPID}" "${mine:-${PWD}}" "$(date '+%F %T')" >"${lockdir}/info"
-		ant all "${antargs[@]}"
+		_lfrAntStampBuild "${mine}" ant all "${antargs[@]}"
 	)
+}
+
+# The stamp that lfrWorktree reads before it copies a bundle. It says which commit the
+# bundle holds, so a worktree cut from that commit runs on the same code as its bundle.
+_LFR_BUILD_STAMP=".lfr-build-head"
+
+# Run the build command in $2.. and stamp the bundle $1 when it passes. The old stamp is
+# removed first, since the build changes the bundle whether it passes or not. The stamp
+# says clean=1 only when the tree had no tracked change before and after the build, and
+# HEAD did not move: then the bundle holds exactly that commit.
+_lfrAntStampBuild() {
+	local bundle="${1}"
+	shift
+
+	if [ -z "${bundle}" ] || [ ! -d "${bundle}" ]; then
+		"$@"
+
+		return
+	fi
+
+	local stamp="${bundle}/${_LFR_BUILD_STAMP}"
+	local head branch clean=1 rc
+
+	rm -f "${stamp}"
+
+	head="$(git rev-parse HEAD 2>/dev/null)"
+	branch="$(git branch --show-current 2>/dev/null)"
+
+	if [ -n "$(git status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+		clean=0
+	fi
+
+	"$@"
+	rc=$?
+
+	if [ "${rc}" != 0 ] || [ -z "${head}" ]; then
+		return "${rc}"
+	fi
+
+	if [ "$(git rev-parse HEAD 2>/dev/null)" != "${head}" ] ||
+			[ -n "$(git status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+		clean=0
+	fi
+
+	printf 'commit=%s\nbranch=%s\nrepo=%s\nclean=%s\nbuilt=%s\n' \
+		"${head}" "${branch:-detached}" "$(git rev-parse --show-toplevel)" "${clean}" \
+		"$(date '+%F %T')" >"${stamp}"
+
+	echo "lfrAntAll: stamped ${stamp} (commit ${head:0:13}, clean=${clean})" >&2
+
+	return "${rc}"
 }
 
 # Short alias.
