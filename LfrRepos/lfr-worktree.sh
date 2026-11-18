@@ -817,6 +817,24 @@ lfrWorktreeCopyBundle() {
 
 	(cd "${root}" && _lfrWorktreeCopyBundle "${source}" "${root}" replace) || return 1
 
+	# The copy gives the compiled core a new mtime, newer than each source of the
+	# checkout. Ant compares mtimes, so an ant deploy of the core skips each change of
+	# the branch after the build commit. Touch these sources, so that ant compiles them.
+	local -a sources=()
+	local f
+
+	mapfile -t sources < <(
+		cd "${root}" &&
+		{
+			git diff --name-only "${commit}" -- portal-impl portal-kernel portal-test portal-web 'util-*'
+			git ls-files --others --exclude-standard -- portal-impl portal-kernel portal-test portal-web 'util-*'
+		} | sort -u
+	)
+
+	for f in "${sources[@]}"; do
+		[ -f "${root}/${f}" ] && touch "${root}/${f}"
+	done
+
 	local -a modules=()
 	mapfile -t modules < <(_lfrWorktreeChangedModules "${root}" "${commit}")
 
