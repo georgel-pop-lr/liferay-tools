@@ -53,12 +53,15 @@ _lfrGitHelp() {
 		                       history it was rebased onto in between: use it when
 		                       a branch ended up on masterBrian and belongs on
 		                       master. Updates no mirror and syncs no fork.
-		  lfrGitRebaseStack [-n]
+		  lfrGitRebaseStack [-n] [-f]
 		                       rebase each pull of a stack (git config
 		                       lfrStack) onto the new head of the pull below
 		                       it, with git rebase --onto and the base recorded
 		                       in lfrScopeBase, then record the new base. -n
-		                       only lists the commits. Pushes nothing
+		                       only lists the commits. Pushes nothing. It stops
+		                       if the base holds commits that the pull below
+		                       does not have, since the rebase would drop them.
+		                       -f rebases all the same
 		  lfrGitUpdateMaster [-r] [-a] [-f] [-o] [-p] [target]
 		                       refresh your master mirror branches from their
 		                       remotes and sync your fork, from any worktree: a
@@ -526,14 +529,20 @@ lfrGitRebaseOnto() {
 # at the first branch that is not checked out in a worktree, has uncommitted
 # changes, has a git operation under way, or stops on a conflict. It pushes
 # nothing.
-# Args: [-n|--dry-run]
+# The rebase replays only the commits above the recorded base. If the base is
+# not an old head of the pull below, the commits between the two are in neither
+# range, and the rebase drops them. So when the base is not in the reflog of the
+# branch below, it lists the commits under the base that the branch below does
+# not have (git cherry), and stops if there are any. -f skips this check.
+# Args: [-n|--dry-run] [-f|--force]
 lfrGitRebaseStack() {
-	local a dry=0 cur stack lower branch old new wt busy count i
+	local a dry=0 force=0 cur stack lower branch old new wt busy count i ref stray
 	local -a branches
 	for a in "$@"; do
 		case "${a}" in
 		-h | --help) _lfrGitHelp; return 0 ;;
 		-n | --dry-run) dry=1 ;;
+		-f | --force) force=1 ;;
 		*) echo "lfrGitRebaseStack: unknown argument ${a}" >&2; return 1 ;;
 		esac
 	done
@@ -568,6 +577,21 @@ lfrGitRebaseStack() {
 		if [ "${old}" = "${new}" ]; then
 			echo "${branch}: already on ${lower} ($(git rev-parse --short "${new}"))"
 			continue
+		fi
+		stray=""
+		if [ "${force}" = 0 ]; then
+			for ref in "refs/heads/${lower}" $(git for-each-ref --format='%(refname)' "refs/remotes/*/${lower}"); do
+				git reflog show --format=%H "${ref}" -- 2>/dev/null | command grep -qx "${old}" && stray=none && break
+			done
+			if [ -z "${stray}" ]; then
+				stray="$(git cherry "${new}" "${old}" | awk '$1 == "+" { print $2 }')"
+			fi
+			if [ -n "${stray}" ] && [ "${stray}" != none ]; then
+				echo "lfrGitRebaseStack: the base of ${branch} ($(git rev-parse --short "${old}")) is not an old head of ${lower}, and it holds commits that ${lower} does not have. The rebase would drop them:" >&2
+				git log --no-walk=unsorted --format='  %h %s' ${stray} >&2
+				echo "If they belong to ${branch}, record the old head of ${lower} with worktree-scope.py --set-base <commit>, or run git rebase --onto ${lower} <old head of ${lower}> in its worktree. If ${lower} dropped or changed them on purpose, run lfrGitRebaseStack -f." >&2
+				return 1
+			fi
 		fi
 		count="$(git rev-list --count "${old}..refs/heads/${branch}")"
 		echo "${branch}: replay its ${count} own commit(s) from $(git rev-parse --short "${old}") onto ${lower} ($(git rev-parse --short "${new}"))"
