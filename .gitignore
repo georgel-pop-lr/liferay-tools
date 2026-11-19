@@ -11,3 +11,6 @@ LfrCache/enabled-repos.txt
 LfrGit/lfr-git.local.conf
 LfrBundles/start-liferay.conf
 LfrPulls/lfr-pulls.local.conf
+
+# lfrAntAll logs, one folder per worktree.
+LfrBuild/logs/

@@ -47,6 +47,16 @@ Build helpers for Liferay repos. Loaded as shell functions via the root
 forwarded) bypasses guards 1 and 2 only. All other arguments are forwarded to
 `ant all`. `-h`/`--help` prints usage.
 
+## The build log
+
+Each `lfrAntAll` run writes its full output to
+`LfrBuild/logs/<worktree>/<worktree>_<YYYYmmdd-HHMMSS>.log`, with the start time,
+the repo, HEAD, the bundle, and the command at the top, and the end time, the exit
+code, and the time it took at the bottom. When the build fails, it prints the error
+lines of the log (yarn, javac, the Gradle "What went wrong" block, and `BUILD
+FAILED`) and the log path, since ant prints only the Gradle summary of a failed
+task. Logs older than 30 days are deleted. Git ignores `LfrBuild/logs/`.
+
 ## The build stamp
 
 After a build that passes, `lfrAntAll` writes `.lfr-build-head` in the bundle:

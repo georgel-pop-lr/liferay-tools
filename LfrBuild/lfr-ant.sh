@@ -296,16 +296,65 @@ lfrAntAll() {
 	echo "Repo   : ${PWD}"
 	echo "Bundle : ${mine:-unresolved}"
 	echo "Command: ant all${antargs[*]:+ ${antargs[*]}}"
+
+	local log
+	log="$(_lfrAntLogFile)"
+	echo "Log    : ${log}"
 	echo
 
 	# Run under the lock in a subshell so its cleanup trap is local and fires on
-	# normal exit or interrupt, releasing the lock either way.
+	# normal exit or interrupt, releasing the lock either way. The output also goes
+	# to the log, because ant prints only the Gradle summary of a failed task, and
+	# the real error is thousands of lines above it.
 	(
 		trap 'rm -rf "${lockdir}"' EXIT INT TERM
 		echo "${BASHPID}" >"${lockdir}/pid"
 		printf 'pid %s, repo %s, since %s\n' "${BASHPID}" "${mine:-${PWD}}" "$(date '+%F %T')" >"${lockdir}/info"
-		_lfrAntStampBuild "${mine}" ant all "${antargs[@]}"
+		{
+			printf 'Start  : %s\nRepo   : %s\nHEAD   : %s\nBundle : %s\nCommand: ant all%s\n\n' \
+				"$(date '+%F %T')" "${PWD}" "$(git log -1 --format='%h %s' 2>/dev/null)" \
+				"${mine:-unresolved}" "${antargs[*]:+ ${antargs[*]}}"
+			start=${SECONDS}
+			_lfrAntStampBuild "${mine}" ant all "${antargs[@]}" 2>&1
+			rc=$?
+			took=$((SECONDS - start))
+			printf '\nEnd    : %s (exit %s)\nTook   : %dm %02ds\n' "$(date '+%F %T')" "${rc}" \
+				$((took / 60)) $((took % 60))
+			exit "${rc}"
+		} | tee "${log}"
+		rc=${PIPESTATUS[0]}
+		[ "${rc}" != 0 ] && _lfrAntFailureSummary "${log}"
+		exit "${rc}"
 	)
+}
+
+# The folder of the lfrAntAll logs, next to this script, with one subfolder for
+# each worktree. The .gitignore of lfrTools ignores it.
+_LFR_ANT_LOG_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/logs"
+
+# Echo the path of a new log file in the folder of the worktree where lfrAntAll
+# runs, named after the start time, and delete the logs older than 30 days.
+_lfrAntLogFile() {
+	local root dir
+	root="$(git rev-parse --show-toplevel 2>/dev/null)" || root="${PWD}"
+	dir="${_LFR_ANT_LOG_DIR}/$(basename "${root}")"
+	mkdir -p "${dir}"
+	find "${_LFR_ANT_LOG_DIR}" -name '*.log' -mtime +30 -delete 2>/dev/null
+	printf '%s/%s_%s.log\n' "${dir}" "$(basename "${root}")" "$(date '+%Y%m%d-%H%M%S')"
+}
+
+# Print the error lines of a failed ant all log: the yarn and javac errors, the
+# Gradle "What went wrong" block, and the ant BUILD FAILED reason.
+_lfrAntFailureSummary() {
+	local log="$1"
+	{
+		echo
+		echo "lfrAntAll: FAILED. The error lines of the log:"
+		sed -E 's/^[[:space:]]*\[[a-z-]+\][[:space:]]?//' "${log}" |
+			command grep -E -A3 '^(error|ERR!) |: error: |^> Task .* FAILED$|^\* What went wrong:|^BUILD FAILED' |
+			command grep -vE '^\* Try:|^--$|^[[:space:]]*$' | head -40
+		echo "  Full log: ${log}"
+	} >&2
 }
 
 # The stamp that lfrWorktree reads before it copies a bundle. It says which commit the
