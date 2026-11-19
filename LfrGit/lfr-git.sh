@@ -61,7 +61,9 @@ _lfrGitHelp() {
 		                       only lists the commits. Pushes nothing. It stops
 		                       if the base holds commits that the pull below
 		                       does not have, since the rebase would drop them.
-		                       -f rebases all the same
+		                       -f rebases all the same. It saves each old head
+		                       in backup/<branch>-pre-stack-<time> and logs the
+		                       run in LfrGit/logs/<worktree>/
 		  lfrGitUpdateMaster [-r] [-a] [-f] [-o] [-p] [target]
 		                       refresh your master mirror branches from their
 		                       remotes and sync your fork, from any worktree: a
@@ -534,9 +536,15 @@ lfrGitRebaseOnto() {
 # range, and the rebase drops them. So when the base is not in the reflog of the
 # branch below, it lists the commits under the base that the branch below does
 # not have (git cherry), and stops if there are any. -f skips this check.
+# Before it rebases a branch, it saves the old head in the branch
+# backup/<branch>-pre-stack-<time>, and it prints the commands that restore it.
+# Each run writes a log in LfrGit/logs/<worktree>/ (deleted after 30 days).
 # Args: [-n|--dry-run] [-f|--force]
+_LFR_GIT_LOG_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/logs"
+
 lfrGitRebaseStack() {
 	local a dry=0 force=0 cur stack lower branch old new wt busy count i ref stray
+	local log root stamp backup rc moved=""
 	local -a branches
 	for a in "$@"; do
 		case "${a}" in
@@ -557,7 +565,23 @@ lfrGitRebaseStack() {
 		return 1
 	fi
 	read -ra branches <<<"${stack}"
+	root="$(git rev-parse --show-toplevel)"
+	stamp="$(date '+%Y%m%d-%H%M%S')"
+	mkdir -p "${_LFR_GIT_LOG_DIR}/$(basename "${root}")"
+	find "${_LFR_GIT_LOG_DIR}" -name '*.log' -mtime +30 -delete 2>/dev/null
+	log="${_LFR_GIT_LOG_DIR}/$(basename "${root}")/$(basename "${root}")_rebase-stack_${stamp}.log"
+	{
+		echo "lfrGitRebaseStack $* (dry=${dry} force=${force})"
+		echo "date: $(date '+%Y-%m-%d %H:%M:%S')"
+		echo "worktree: ${root}"
+		echo "branch: ${cur}"
+		echo "stack: ${branches[*]}"
+		for branch in "${branches[@]}"; do
+			echo "before: ${branch} head=$(git rev-parse --verify -q "refs/heads/${branch}") lfrScopeBase=$(git config --get "branch.${branch}.lfrScopeBase")"
+		done
+	} >>"${log}"
 	echo "Stack, lowest pull first: ${branches[*]}"
+	echo "Log: ${log}"
 	for ((i = 1; i < ${#branches[@]}; i++)); do
 		lower="${branches[i - 1]}"
 		branch="${branches[i]}"
@@ -583,19 +607,28 @@ lfrGitRebaseStack() {
 			for ref in "refs/heads/${lower}" $(git for-each-ref --format='%(refname)' "refs/remotes/*/${lower}"); do
 				git reflog show --format=%H "${ref}" -- 2>/dev/null | command grep -qx "${old}" && stray=none && break
 			done
-			if [ -z "${stray}" ]; then
+			if [ -n "${stray}" ]; then
+				echo "${branch}: base ${old} found in the reflog of ${ref}" >>"${log}"
+			else
 				stray="$(git cherry "${new}" "${old}" | awk '$1 == "+" { print $2 }')"
+				echo "${branch}: base ${old} not in a reflog of ${lower}; git cherry ${new} ${old}: ${stray:-no missing commits}" | tr '\n' ' ' >>"${log}"
+				echo >>"${log}"
 			fi
 			if [ -n "${stray}" ] && [ "${stray}" != none ]; then
+				echo "${branch}: STOP, the rebase would drop: ${stray//$'\n'/ }" >>"${log}"
 				echo "lfrGitRebaseStack: the base of ${branch} ($(git rev-parse --short "${old}")) is not an old head of ${lower}, and it holds commits that ${lower} does not have. The rebase would drop them:" >&2
 				git log --no-walk=unsorted --format='  %h %s' ${stray} >&2
 				echo "If they belong to ${branch}, record the old head of ${lower} with worktree-scope.py --set-base <commit>, or run git rebase --onto ${lower} <old head of ${lower}> in its worktree. If ${lower} dropped or changed them on purpose, run lfrGitRebaseStack -f." >&2
+				echo "Log: ${log}" >&2
 				return 1
 			fi
+		else
+			echo "${branch}: -f, the base check is skipped" >>"${log}"
 		fi
 		count="$(git rev-list --count "${old}..refs/heads/${branch}")"
 		echo "${branch}: replay its ${count} own commit(s) from $(git rev-parse --short "${old}") onto ${lower} ($(git rev-parse --short "${new}"))"
-		git log --format='  %h %s' "${old}..refs/heads/${branch}"
+		git log --format='  %h %s' "${old}..refs/heads/${branch}" | tee -a "${log}"
+		echo "${branch}: replay ${count} commit(s) from ${old} onto ${lower} ${new}" >>"${log}"
 		[ "${dry}" = 1 ] && continue
 		wt="$(_lfrGitWorktrees | awk -F '\t' -v b="${branch}" '$2 == b { print $1 }')"
 		if [ -z "${wt}" ]; then
@@ -612,14 +645,41 @@ lfrGitRebaseStack() {
 			echo "lfrGitRebaseStack: not rebasing ${branch}: uncommitted changes in ${wt}" >&2
 			return 1
 		fi
-		if ! git -C "${wt}" rebase --onto "${new}" "${old}"; then
+		backup="backup/${branch}-pre-stack-${stamp}"
+		if ! git branch "${backup}" "refs/heads/${branch}"; then
+			echo "lfrGitRebaseStack: cannot create ${backup}, so ${branch} is not rebased" >&2
+			echo "${branch}: STOP, cannot create ${backup}" >>"${log}"
+			return 1
+		fi
+		echo "${branch}: backup ${backup} = $(git rev-parse "${backup}")" | tee -a "${log}"
+		git -C "${wt}" rebase --onto "${new}" "${old}" 2>&1 | tee -a "${log}"
+		rc="${PIPESTATUS[0]}"
+		if [ "${rc}" != 0 ]; then
+			echo "${branch}: STOP, rebase exit ${rc}" >>"${log}"
 			echo "lfrGitRebaseStack: ${branch} stopped on a conflict in ${wt}. Resolve it and run git rebase --continue there, then record the base with: git config branch.${branch}.lfrScopeBase ${new}, and run lfrGitRebaseStack again." >&2
+			echo "To undo instead: git -C ${wt} rebase --abort" >&2
+			echo "Log: ${log}" >&2
 			return 1
 		fi
 		git config "branch.${branch}.lfrScopeBase" "${new}"
+		echo "${branch}: done, head=$(git rev-parse "refs/heads/${branch}") lfrScopeBase=${new}" >>"${log}"
+		moved+="${branch} ${wt} ${backup} ${old}"$'\n'
 	done
-	[ "${dry}" = 1 ] && echo "Dry run: nothing was rebased." && return 0
+	if [ "${dry}" = 1 ]; then
+		echo "dry run: nothing was rebased" >>"${log}"
+		echo "Dry run: nothing was rebased."
+		return 0
+	fi
+	echo "done" >>"${log}"
 	echo "Done. Nothing was pushed: force-push each moved branch with --force-with-lease."
+	if [ -n "${moved}" ]; then
+		echo "To restore a branch, run its two commands:"
+		while read -r branch wt backup old; do
+			[ -n "${branch}" ] || continue
+			echo "  git -C ${wt} reset --hard ${backup} && git config branch.${branch}.lfrScopeBase ${old}"
+		done <<<"${moved}"
+		echo "When the branches are good, delete the backups: git branch -D \$(git branch --list 'backup/*-pre-stack-${stamp}' --format='%(refname:short)')"
+	fi
 }
 
 # Keep your master mirrors current in one run. The mirrors to maintain are a list
