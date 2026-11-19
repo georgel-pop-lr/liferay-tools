@@ -55,7 +55,9 @@ the repo, HEAD, the bundle, and the command at the top, and the end time, the ex
 code, and the time it took at the bottom. When the build fails, it prints the error
 lines of the log (yarn, javac, the Gradle "What went wrong" block, and `BUILD
 FAILED`) and the log path, since ant prints only the Gradle summary of a failed
-task. Logs older than 30 days are deleted. Git ignores `LfrBuild/logs/`.
+task. The precheck writes its Gradle output to
+`LfrBuild/logs/<worktree>/<worktree>_precheck_<YYYYmmdd-HHMMSS>.log` in the same
+folder. Logs older than 30 days are deleted. Git ignores `LfrBuild/logs/`.
 
 ## The build stamp
 

@@ -144,8 +144,20 @@ _lfrAntPrecheck() {
 	printf '  %s\n' "${tasks[@]}"
 	[ "${dryrun}" = 1 ] && return 0
 
-	local log="${TMPDIR:-/tmp}/lfr-ant-precheck.${USER}.log"
-	if (cd "${root}/modules" && "${root}/gradlew" --console=plain "${tasks[@]}" </dev/null >"${log}" 2>&1); then
+	local log
+	log="$(_lfrAntLogFile precheck)"
+	echo "  Log: ${log}"
+
+	local start=${SECONDS} rc took
+	printf 'Start  : %s\nRepo   : %s\nHEAD   : %s\nTasks  : %s\n\n' "$(date '+%F %T')" "${root}" \
+		"$(git -C "${root}" log -1 --format='%h %s' 2>/dev/null)" "${tasks[*]}" >"${log}"
+	(cd "${root}/modules" && "${root}/gradlew" --console=plain "${tasks[@]}" </dev/null >>"${log}" 2>&1)
+	rc=$?
+	took=$((SECONDS - start))
+	printf '\nEnd    : %s (exit %s)\nTook   : %dm %02ds\n' "$(date '+%F %T')" "${rc}" \
+		$((took / 60)) $((took % 60)) >>"${log}"
+
+	if [ "${rc}" = 0 ]; then
 		echo "lfrAntAll precheck: passed."
 		return 0
 	fi
@@ -333,14 +345,16 @@ lfrAntAll() {
 _LFR_ANT_LOG_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/logs"
 
 # Echo the path of a new log file in the folder of the worktree where lfrAntAll
-# runs, named after the start time, and delete the logs older than 30 days.
+# runs, named after the start time, and delete the logs older than 30 days. With
+# a kind in $1 (for example precheck), the kind goes between the worktree and the
+# time in the name.
 _lfrAntLogFile() {
-	local root dir
+	local root dir kind="${1:+_${1}}"
 	root="$(git rev-parse --show-toplevel 2>/dev/null)" || root="${PWD}"
 	dir="${_LFR_ANT_LOG_DIR}/$(basename "${root}")"
 	mkdir -p "${dir}"
 	find "${_LFR_ANT_LOG_DIR}" -name '*.log' -mtime +30 -delete 2>/dev/null
-	printf '%s/%s_%s.log\n' "${dir}" "$(basename "${root}")" "$(date '+%Y%m%d-%H%M%S')"
+	printf '%s/%s%s_%s.log\n' "${dir}" "$(basename "${root}")" "${kind}" "$(date '+%Y%m%d-%H%M%S')"
 }
 
 # Print the error lines of a failed ant all log: the yarn and javac errors, the
