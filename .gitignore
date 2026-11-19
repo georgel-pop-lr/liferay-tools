@@ -14,5 +14,7 @@ LfrPulls/lfr-pulls.local.conf
 
 # lfrAntAll logs, one folder per worktree.
 LfrBuild/logs/
-# lfrGitRebaseStack logs, one folder per worktree.
+# lfrGitClean, lfrGitUpdateMaster, and lfrGitRebaseStack logs, one folder per worktree.
 LfrGit/logs/
+# lfrWorktreeRemove logs, one folder per worktree.
+LfrRepos/logs/

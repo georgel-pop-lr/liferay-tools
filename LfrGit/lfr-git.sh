@@ -16,6 +16,10 @@
 # file. It is gitignored. Copy lfr-git.local.conf.example to lfr-git.local.conf.
 
 _lfrGitDir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# The run logs of lfrGitClean, lfrGitUpdateMaster, and lfrGitRebaseStack, one
+# folder for each worktree (LfrCommon/lfr-log.sh).
+_LFR_GIT_LOG_DIR="${_lfrGitDir}/logs"
 [ -r "${_lfrGitDir}/lfr-git.local.conf" ] && . "${_lfrGitDir}/lfr-git.local.conf"
 
 : "${LFR_GIT_UPSTREAM_ORG:=liferay}"
@@ -97,6 +101,12 @@ _lfrGitHelp() {
 		of them; a branch of only your own commits always passes. Local
 		changes are stashed before it and put back on top of the rebased
 		branch.
+
+		Logs: lfrGitClean, lfrGitUpdateMaster, and lfrGitRebaseStack write
+		each run to LfrGit/logs/<worktree>/<worktree>_<kind>_<time>.log, with
+		the output, the exit code, and each branch they moved or deleted (old
+		and new commit). lfrGitClean lists each file it removed. The logs are
+		deleted after 30 days.
 	EOF
 }
 
@@ -106,9 +116,14 @@ lfrGitCleanDry() {
 	git clean -xdn "${_lfrGitCleanExcludes[@]}" "$@"
 }
 
-# Actually remove untracked and ignored files (keeps the excludes above).
+# Actually remove untracked and ignored files (keeps the excludes above). Each
+# run writes a log with the list of the removed files (_lfrLogRun).
 lfrGitClean() {
 	case "${1-}" in -h | --help) _lfrGitHelp; return 0 ;; esac
+	if [ -z "${_LFR_LOG_RUN-}" ]; then
+		_LFR_LOG_RUN=1 _lfrLogRun "${_LFR_GIT_LOG_DIR}" clean lfrGitClean "$@"
+		return
+	fi
 	git clean -xdf "${_lfrGitCleanExcludes[@]}" "$@"
 }
 
@@ -540,8 +555,6 @@ lfrGitRebaseOnto() {
 # backup/<branch>-pre-stack-<time>, and it prints the commands that restore it.
 # Each run writes a log in LfrGit/logs/<worktree>/ (deleted after 30 days).
 # Args: [-n|--dry-run] [-f|--force]
-_LFR_GIT_LOG_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/logs"
-
 lfrGitRebaseStack() {
 	local a dry=0 force=0 cur stack lower branch old new wt busy count i ref stray
 	local log root stamp backup rc moved=""
@@ -566,10 +579,9 @@ lfrGitRebaseStack() {
 	fi
 	read -ra branches <<<"${stack}"
 	root="$(git rev-parse --show-toplevel)"
-	stamp="$(date '+%Y%m%d-%H%M%S')"
-	mkdir -p "${_LFR_GIT_LOG_DIR}/$(basename "${root}")"
-	find "${_LFR_GIT_LOG_DIR}" -name '*.log' -mtime +30 -delete 2>/dev/null
-	log="${_LFR_GIT_LOG_DIR}/$(basename "${root}")/$(basename "${root}")_rebase-stack_${stamp}.log"
+	log="$(_lfrLogFile "${_LFR_GIT_LOG_DIR}" rebase-stack)"
+	stamp="${log##*_}"
+	stamp="${stamp%.log}"
 	{
 		echo "lfrGitRebaseStack $* (dry=${dry} force=${force})"
 		echo "date: $(date '+%Y-%m-%d %H:%M:%S')"
@@ -722,6 +734,10 @@ lfrGitUpdateMaster() {
 		*) pos+=("${a}") ;;
 		esac
 	done
+	if [ -z "${_LFR_LOG_RUN-}" ]; then
+		_LFR_LOG_RUN=1 _lfrLogRun "${_LFR_GIT_LOG_DIR}" update-master lfrGitUpdateMaster "$@"
+		return
+	fi
 	if [ "${all}" = 1 ] && [ "${push_branch}" = 1 ]; then
 		echo "lfrGitUpdateMaster: -p force-pushes the current branch only; it does not combine with -a." >&2
 		return 1

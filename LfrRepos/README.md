@@ -382,6 +382,12 @@ lfrWorktreeRemove LPD-12345 --force        # discard changes and delete unmerged
 lfrWorktreeRemove LPD-12345 --keep-bundle  # keep the bundle dir
 ```
 
+Each run writes a log to
+`LfrRepos/logs/<worktree>/<worktree>_worktree-remove_<YYYYmmdd-HHMMSS>.log`, with
+the command, the output, the exit code, and the head of each deleted branch. To
+bring a deleted branch back, run `git branch <branch> <commit>` with the commit
+from the log. Logs older than 30 days are deleted. Git ignores `LfrRepos/logs/`.
+
 Every deletion here is destructive, so it is deliberately cautious. It finds
 the worktree by the branch it has checked out rather than by guessing the path,
 and refuses when a Tomcat is running out of that bundle, when the branch looks

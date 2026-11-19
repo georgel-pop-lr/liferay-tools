@@ -57,7 +57,9 @@ lines of the log (yarn, javac, the Gradle "What went wrong" block, and `BUILD
 FAILED`) and the log path, since ant prints only the Gradle summary of a failed
 task. The precheck writes its Gradle output to
 `LfrBuild/logs/<worktree>/<worktree>_precheck_<YYYYmmdd-HHMMSS>.log` in the same
-folder. Logs older than 30 days are deleted. Git ignores `LfrBuild/logs/`.
+folder. Logs older than 30 days are deleted. Git ignores `LfrBuild/logs/`. The
+path comes from `_lfrLogFile` in `LfrCommon/lfr-log.sh`, which the other logged
+commands use too.
 
 ## The build stamp
 

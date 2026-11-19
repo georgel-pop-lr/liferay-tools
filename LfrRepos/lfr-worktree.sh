@@ -1464,6 +1464,10 @@ _lfrWorktreeDropDatabase() {
 #                                               # the branch is unmerged
 #     lfrWorktreeRemove LPD-12345 --keep-bundle # leave the bundle dir in place
 #     lfrWorktreeRemove LPD-12345 --keep-database # leave the database in place
+# The run logs of lfrWorktreeRemove, one folder for each worktree
+# (LfrCommon/lfr-log.sh). The log keeps the head of the deleted branch.
+_LFR_REPOS_LOG_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/logs"
+
 lfrWorktreeRemove() {
 	case "${1-}" in
 	-h | --help)
@@ -1500,10 +1504,20 @@ lfrWorktreeRemove() {
 			LFR_BUNDLES_DIRS points at it (a kept bundle does), and never while
 			anything is connected to it. Otherwise it says why and leaves it. Run
 			from inside any liferay-portal clone.
+
+			Each run writes a log to
+			LfrRepos/logs/<worktree>/<worktree>_worktree-remove_<time>.log, with
+			the output, the exit code, and the head of each deleted branch, so
+			git branch <branch> <commit> can bring it back. The logs are deleted
+			after 30 days.
 		EOF
 		return 0
 		;;
 	esac
+	if [ -z "${_LFR_LOG_RUN-}" ]; then
+		_LFR_LOG_RUN=1 _lfrLogRun "${_LFR_REPOS_LOG_DIR}" worktree-remove lfrWorktreeRemove "$@"
+		return
+	fi
 
 	local branch="${1}"
 

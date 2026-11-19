@@ -349,12 +349,7 @@ _LFR_ANT_LOG_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/logs"
 # a kind in $1 (for example precheck), the kind goes between the worktree and the
 # time in the name.
 _lfrAntLogFile() {
-	local root dir kind="${1:+_${1}}"
-	root="$(git rev-parse --show-toplevel 2>/dev/null)" || root="${PWD}"
-	dir="${_LFR_ANT_LOG_DIR}/$(basename "${root}")"
-	mkdir -p "${dir}"
-	find "${_LFR_ANT_LOG_DIR}" -name '*.log' -mtime +30 -delete 2>/dev/null
-	printf '%s/%s%s_%s.log\n' "${dir}" "$(basename "${root}")" "${kind}" "$(date '+%Y%m%d-%H%M%S')"
+	_lfrLogFile "${_LFR_ANT_LOG_DIR}" "${1-}"
 }
 
 # Print the error lines of a failed ant all log: the yarn and javac errors, the
