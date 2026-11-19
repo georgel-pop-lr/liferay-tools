@@ -7,9 +7,10 @@ Build helpers for Liferay repos. Loaded as shell functions via the root
 
 | Command | Short | What it does |
 | --- | --- | --- |
-| `lfrAntAll [--force] [--no-clear] [ant args]` | `lfraa` | Run `ant all` in the current repo, with guards against a running server, a shared target bundle, and a concurrent build. |
+| `lfrAntAll [--force] [--no-clear] [--no-precheck] [ant args]` | `lfraa` | Run `ant all` in the current repo, with guards against a running server, a shared target bundle, a concurrent build, and a compile error in a changed module. |
+| `lfrAntAllPrecheck [-n]` | | Build only the modules the branch changes, the same check that `lfrAntAll` runs first. `-n` prints the Gradle tasks. |
 
-`lfrAntAll` guards a full build three ways:
+`lfrAntAll` guards a full build four ways:
 
 1. **Running server.** A running server holds `osgi/state`, `work`, and `temp`,
    so building on top of it risks partial deploys and a corrupt runtime. It
@@ -29,6 +30,18 @@ Build helpers for Liferay repos. Loaded as shell functions via the root
    `ant all` (exit code 3, naming the holder) while one is running. This lock is
    always enforced, even with `--force`; a stale lock from a build that died is
    reclaimed automatically.
+
+4. **Compile error in a changed module.** `ant all` builds the portal core first
+   and the modules about ten minutes later, so a module error shows late. Under
+   the lock, before the terminal wipe, it builds the `jar` of each module that
+   has `.lfrbuild-portal` and a file changed since the merge base with
+   `upstream/master` (committed, staged, unstaged, or untracked). If that build
+   fails, it prints the errors and the log path, releases the lock, and returns
+   4. It skips the check when the source of a portal core directory
+   (`portal-kernel`, `portal-impl`, `util-*`) is newer than its snapshot jar in
+   the repo's `.m2`, because the modules compile against that jar and only
+   `ant all` rebuilds it. `--no-precheck` / `-np`, or `LFR_ANT_PRECHECK=0`,
+   skips it. `--force` does not.
 
 `--force` / `-f` (accepted anywhere in the arguments, and consumed rather than
 forwarded) bypasses guards 1 and 2 only. All other arguments are forwarded to

@@ -64,7 +64,9 @@ lfrTools() {
 		  lfrRunBundle  same as lfrBundles (so is lfrBundle, its old name)
 
 		Build
-		  lfrAntAll     run `ant all`, guarded (running server, shared bundle, one at a time)
+		  lfrAntAll     run `ant all`, guarded (running server, shared bundle, one at a time,
+		                changed modules built first)
+		  lfrAntAllPrecheck  build only the modules the branch changes
 		  lfrCache      share one Gradle build cache across repos/worktrees
 
 		Git

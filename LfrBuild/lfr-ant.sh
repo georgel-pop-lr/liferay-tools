@@ -54,6 +54,140 @@ _lfrRepoBundleDir() {
 	(cd "${val}" 2>/dev/null && pwd) || printf '%s\n' "${val}"
 }
 
+# Echo the base commit for the changed-module check: the merge base of HEAD with
+# the first master ref that exists. Echoes nothing (rc 1) when none resolves.
+_lfrAntPrecheckBase() {
+	local ref
+	for ref in upstream/master origin/master master; do
+		git rev-parse --verify --quiet "${ref}" >/dev/null || continue
+		git merge-base HEAD "${ref}" 2>/dev/null && return 0
+	done
+	return 1
+}
+
+# Echo the portal core directories whose source is newer than their snapshot jar
+# in the repo's .m2, or whose snapshot jar is missing. Modules compile against
+# those jars, so a stale one gives errors that `ant all` would not give.
+_lfrAntPrecheckStaleCore() {
+	local root="$1" dir artifact jar
+	for dir in portal-impl portal-kernel portal-test util-bridges util-java util-slf4j util-taglib; do
+		[ -d "${root}/${dir}/src" ] || continue
+		case "${dir}" in
+		portal-*) artifact="com.liferay.portal.${dir#portal-}" ;;
+		util-*) artifact="com.liferay.util.${dir#util-}" ;;
+		esac
+		jar="$(ls -t "${root}/.m2/com/liferay/portal/${artifact}"/*-SNAPSHOT/"${artifact}"-*-SNAPSHOT.jar 2>/dev/null | command grep -v -- '-sources\.jar$' | head -1)"
+		if [ -z "${jar}" ] || [ -n "$(find "${root}/${dir}/src" -type f -newer "${jar}" -print -quit 2>/dev/null)" ]; then
+			echo "${dir}"
+		fi
+	done
+}
+
+# Build the jar of each module the branch changes, so a compile, bnd, or frontend
+# error shows in a minute or two, not after ten minutes of `ant all`. A module
+# counts when it carries .lfrbuild-portal (what `ant all` deploys) and has a
+# file changed since the merge base with master: committed, staged, unstaged, or
+# untracked. Returns 0 when the build passes or the check is skipped, 4 when it
+# fails. With -n, it only prints the Gradle tasks.
+_lfrAntPrecheck() {
+	local dryrun=0
+	[ "${1-}" = "-n" ] && dryrun=1
+
+	local root
+	root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
+		echo "lfrAntAll precheck: not in a git repo, skipped." >&2
+		return 0
+	}
+	[ -f "${root}/modules/settings.gradle" ] || {
+		echo "lfrAntAll precheck: no modules/settings.gradle, skipped." >&2
+		return 0
+	}
+
+	local base
+	base="$(cd "${root}" && _lfrAntPrecheckBase)" || {
+		echo "lfrAntAll precheck: no master ref to compare with, skipped." >&2
+		return 0
+	}
+
+	local stale
+	stale="$(_lfrAntPrecheckStaleCore "${root}" | tr '\n' ' ')"
+	if [ -n "${stale}" ]; then
+		echo "lfrAntAll precheck: skipped, the portal core snapshot is older than its source (${stale% }). Only 'ant all' rebuilds it." >&2
+		return 0
+	fi
+
+	local -a tasks=()
+	local file dir rel
+	declare -A seen=()
+	while IFS= read -r file; do
+		case "${file}" in modules/*) ;; *) continue ;; esac
+		dir="${root}/$(dirname "${file}")"
+		while [ "${dir}" != "${root}/modules" ] && [ "${dir}" != "/" ]; do
+			if [ -f "${dir}/bnd.bnd" ] && [ -f "${dir}/build.gradle" ]; then
+				break
+			fi
+			dir="$(dirname "${dir}")"
+		done
+		[ -f "${dir}/.lfrbuild-portal" ] || continue
+		rel="${dir#"${root}/modules/"}"
+		[ -n "${seen[${rel}]-}" ] && continue
+		seen[${rel}]=1
+		tasks+=(":${rel//\//:}:jar")
+	done < <(cd "${root}" && { git diff --name-only "${base}"; git ls-files --others --exclude-standard; } | sort -u)
+
+	if [ "${#tasks[@]}" = 0 ]; then
+		echo "lfrAntAll precheck: no changed module that 'ant all' deploys, skipped." >&2
+		return 0
+	fi
+
+	echo "lfrAntAll precheck: building ${#tasks[@]} changed module(s) before 'ant all':"
+	printf '  %s\n' "${tasks[@]}"
+	[ "${dryrun}" = 1 ] && return 0
+
+	local log="${TMPDIR:-/tmp}/lfr-ant-precheck.${USER}.log"
+	if (cd "${root}/modules" && "${root}/gradlew" --console=plain "${tasks[@]}" </dev/null >"${log}" 2>&1); then
+		echo "lfrAntAll precheck: passed."
+		return 0
+	fi
+
+	echo "lfrAntAll precheck: FAILED, so 'ant all' did not start. Fix the errors, or pass --no-precheck:" >&2
+	{
+		command grep -E '^> Task .* FAILED$|: error: ' "${log}" | head -30
+		sed -n '/^\* What went wrong:/,/^\* Try:/p' "${log}" | command grep -vE '^\* Try:|^$' | head -10
+	} | sed -e "s|${root}/||" -e 's/^/  /' >&2
+	echo "  Full log: ${log}" >&2
+	return 4
+}
+
+# Run the precheck alone, for example after an edit, without `ant all`.
+lfrAntAllPrecheck() {
+	case "${1-}" in
+	-h | --help)
+		cat <<-'EOF'
+			lfrAntAllPrecheck - build the jar of each module this branch changes.
+
+			It runs the same check that lfrAntAll runs before `ant all`, alone. A
+			module counts when it has .lfrbuild-portal and a file changed since the
+			merge base with master (committed, staged, unstaged, or untracked).
+
+			Usage:
+			  lfrAntAllPrecheck     build the changed modules
+			  lfrAntAllPrecheck -n  only print the Gradle tasks
+		EOF
+		return 0
+		;;
+	esac
+
+	local holder
+	holder="$(cat "${TMPDIR:-/tmp}/lfr-ant-all.${USER}.lock.d/pid" 2>/dev/null)"
+	if [ -n "${holder}" ] && kill -0 "${holder}" 2>/dev/null && [ "${1-}" != "-n" ]; then
+		echo "lfrAntAllPrecheck: an 'ant all' is running (PID ${holder}); wait for it to end." >&2
+		return 3
+	fi
+
+	_lfrAntPrecheck "$@"
+}
+
 lfrAntAll() {
 	case "${1-}" in
 	-h | --help)
@@ -73,6 +207,9 @@ lfrAntAll() {
 			  lfrAntAll -nc         keep the terminal as it is (--no-clear); by
 			                        default it is wiped once the guards pass, so only
 			                        this build's output is there
+			  lfrAntAll -np         skip the precheck (--no-precheck); by default the
+			                        modules the branch changes are built first, so a
+			                        compile error stops the run in a minute or two
 
 			After a good build, it writes .lfr-build-head in the bundle with the commit
 			(clean=1 when the tree had no local change). lfrWorktree reads it to copy
@@ -82,12 +219,13 @@ lfrAntAll() {
 		;;
 	esac
 
-	local force=0 clear=1 a
+	local force=0 clear=1 precheck="${LFR_ANT_PRECHECK:-1}" a
 	local -a antargs=()
 	for a in "$@"; do
 		case "${a}" in
 		-f | --force) force=1 ;;
 		-nc | --no-clear) clear=0 ;;
+		-np | --no-precheck) precheck=0 ;;
 		*) antargs+=("${a}") ;;
 		esac
 	done
@@ -139,6 +277,14 @@ lfrAntAll() {
 		notice="lfrAntAll: cleared a stale ant-all lock (holder ${holder:-?} was gone)."
 		rm -rf "${lockdir}"
 		mkdir "${lockdir}" 2>/dev/null || { echo "lfrAntAll: could not acquire lock ${lockdir}" >&2; return 1; }
+	fi
+
+	# Guard 4: build the modules the branch changes first, under the lock, so a
+	# compile error stops the run in a minute or two. Its refusal is printed before
+	# the wipe, so it stays readable.
+	if [ "${precheck}" = 1 ] && ! _lfrAntPrecheck; then
+		rm -rf "${lockdir}"
+		return 4
 	fi
 
 	# Past every guard and holding the lock, so this build is going to happen: wipe
