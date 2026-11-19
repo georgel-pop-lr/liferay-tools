@@ -77,6 +77,8 @@ lfrTools() {
 		  lfrGitRebase      interactive rebase over the last N commits
 		  lfrGitRebaseOnto  replay only this branch's own commits onto a target,
 		                    dropping the mirror history it was rebased onto
+		  lfrGitRebaseStack  rebase each pull of a stack onto the new head of
+		                     the pull below it
 		  lfrGitUpdateMaster  refresh master mirrors, optionally rebase your branch
 		                      (-r) or the branch of every worktree (-a)
 		  lfrGitUpdateBranch  update one branch (release-2026.q1) from upstream
@@ -102,7 +104,7 @@ lfrTools() {
 		                in this shell (no new terminal needed)
 
 		Every command has a short alias: lfrr, lfrw, lfrwn, lfrwr, lfrwcb, lfrs, lfrb, lfrrb,
-		lfraa, lfrc, lfrcv, lfrp, lfrgc, lfrgcd, lfrgs, lfrgse, lfrgr, lfrgro,
+		lfraa, lfrc, lfrcv, lfrp, lfrgc, lfrgcd, lfrgs, lfrgse, lfrgr, lfrgro, lfrgrs,
 		lfrgum, lfrgub, lfrgct, lfrpb, lfrrl. Six expand to an lfrPulls subcommand:
 		lfrpw (week), lfrps (stats), lfrpt (ticket), lfrpf (a team or user's
 		fork), lfrpe (EE backports), lfrpteams (the team list).

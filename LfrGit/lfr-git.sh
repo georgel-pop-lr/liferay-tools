@@ -7,6 +7,7 @@
 #     lfrGitSyncEE     sync a fork's liferay-portal-ee master from upstream ([org] optional)
 #     lfrGitRebase     interactive rebase over the last N commits (default 20)
 #     lfrGitRebaseOnto replay only this branch's own commits onto a target (default upstream/master), dropping the mirror history it was rebased onto ([target])
+#     lfrGitRebaseStack rebase each pull of a stack onto the new head of the pull below it, with the recorded base ([-n])
 #     lfrGitUpdateMaster  update each master* mirror from the <remote>/master it tracks + sync; -r rebase current branch onto a target (default upstream), -a rebase every worktree's branch, -f force, -o cut at the fork point, -p force-push ([-r] [-a] [-f] [-o] [-p] [rebase-target])
 #     lfrGitUpdateBranch  update one branch (e.g. release-2026.q1) from upstream and push it to your fork, creating it locally if you do not have it ([branch] [-n])
 #     lfrGitCheckoutTag   check out a tag (e.g. 2026.q1.8) on a local branch, fetching the tag from upstream and reusing the branch if it exists (<tag> [branch] [-n])
@@ -52,6 +53,12 @@ _lfrGitHelp() {
 		                       history it was rebased onto in between: use it when
 		                       a branch ended up on masterBrian and belongs on
 		                       master. Updates no mirror and syncs no fork.
+		  lfrGitRebaseStack [-n]
+		                       rebase each pull of a stack (git config
+		                       lfrStack) onto the new head of the pull below
+		                       it, with git rebase --onto and the base recorded
+		                       in lfrScopeBase, then record the new base. -n
+		                       only lists the commits. Pushes nothing
 		  lfrGitUpdateMaster [-r] [-a] [-f] [-o] [-p] [target]
 		                       refresh your master mirror branches from their
 		                       remotes and sync your fork, from any worktree: a
@@ -78,7 +85,7 @@ _lfrGitHelp() {
 		                       defaults to the tag's name and is reused when it
 		                       already exists. -n skips the push
 
-		Aliases: lfrgc lfrgcd lfrgs lfrgse lfrgr lfrgro lfrgum lfrgub lfrgct
+		Aliases: lfrgc lfrgcd lfrgs lfrgse lfrgr lfrgro lfrgrs lfrgum lfrgub lfrgct
 
 		A rebase only ever moves the branch's own commits, and refuses to replay
 		more than LFR_GIT_REBASE_MAX (default 100) when another author wrote one
@@ -507,6 +514,90 @@ lfrGitRebaseOnto() {
 	_lfrGitRebaseOnto "${cur}" "${target}" 0 1
 }
 
+# Rebase each pull of a stack onto the new head of the pull below it. The stack
+# is the list of branches in git config branch.<branch>.lfrStack, lowest pull
+# first, and the old head of the pull below is the base recorded in
+# branch.<branch>.lfrScopeBase (both set with worktree-scope.py). A plain rebase
+# does not know that base: when the pull below was rebased or reworded, it
+# replays the old copies of those commits too. So for each branch above the
+# lowest, this runs `git rebase --onto <head of the branch below> <recorded
+# base>` in the worktree of that branch, and then records the new base. The
+# lowest branch is not moved: rebase it first (lfrGitUpdateMaster -r). It stops
+# at the first branch that is not checked out in a worktree, has uncommitted
+# changes, has a git operation under way, or stops on a conflict. It pushes
+# nothing.
+# Args: [-n|--dry-run]
+lfrGitRebaseStack() {
+	local a dry=0 cur stack lower branch old new wt busy count i
+	local -a branches
+	for a in "$@"; do
+		case "${a}" in
+		-h | --help) _lfrGitHelp; return 0 ;;
+		-n | --dry-run) dry=1 ;;
+		*) echo "lfrGitRebaseStack: unknown argument ${a}" >&2; return 1 ;;
+		esac
+	done
+	if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+		echo "lfrGitRebaseStack: not inside a git repo" >&2
+		return 1
+	fi
+	cur="$(git rev-parse --abbrev-ref HEAD)"
+	stack="$(git config --get "branch.${cur}.lfrStack")"
+	if [ -z "${stack}" ]; then
+		echo "lfrGitRebaseStack: ${cur} has no stack. Record it with worktree-scope.py --set-stack B1,B2,... (lowest pull first)." >&2
+		return 1
+	fi
+	read -ra branches <<<"${stack}"
+	echo "Stack, lowest pull first: ${branches[*]}"
+	for ((i = 1; i < ${#branches[@]}; i++)); do
+		lower="${branches[i - 1]}"
+		branch="${branches[i]}"
+		new="$(git rev-parse --verify -q "refs/heads/${lower}^{commit}")" || {
+			echo "lfrGitRebaseStack: no local branch ${lower}" >&2
+			return 1
+		}
+		old="$(git config --get "branch.${branch}.lfrScopeBase")"
+		old="$(git rev-parse --verify -q "${old:-none}^{commit}" 2>/dev/null)" || {
+			echo "lfrGitRebaseStack: ${branch} has no recorded base commit. Record the old head of ${lower} with worktree-scope.py --set-base <commit>." >&2
+			return 1
+		}
+		if ! git merge-base --is-ancestor "${old}" "refs/heads/${branch}"; then
+			echo "lfrGitRebaseStack: the recorded base $(git rev-parse --short "${old}") is not under ${branch}" >&2
+			return 1
+		fi
+		if [ "${old}" = "${new}" ]; then
+			echo "${branch}: already on ${lower} ($(git rev-parse --short "${new}"))"
+			continue
+		fi
+		count="$(git rev-list --count "${old}..refs/heads/${branch}")"
+		echo "${branch}: replay its ${count} own commit(s) from $(git rev-parse --short "${old}") onto ${lower} ($(git rev-parse --short "${new}"))"
+		git log --format='  %h %s' "${old}..refs/heads/${branch}"
+		[ "${dry}" = 1 ] && continue
+		wt="$(_lfrGitWorktrees | awk -F '\t' -v b="${branch}" '$2 == b { print $1 }')"
+		if [ -z "${wt}" ]; then
+			echo "lfrGitRebaseStack: ${branch} is not checked out in a worktree" >&2
+			return 1
+		fi
+		busy="$(_lfrGitWorktreeBusy "${wt}")"
+		if [ -n "${busy}" ]; then
+			echo "lfrGitRebaseStack: not rebasing ${branch}: ${busy} (${wt})" >&2
+			return 1
+		fi
+		git -C "${wt}" update-index -q --refresh 2>/dev/null
+		if ! git -C "${wt}" diff-index --quiet HEAD --; then
+			echo "lfrGitRebaseStack: not rebasing ${branch}: uncommitted changes in ${wt}" >&2
+			return 1
+		fi
+		if ! git -C "${wt}" rebase --onto "${new}" "${old}"; then
+			echo "lfrGitRebaseStack: ${branch} stopped on a conflict in ${wt}. Resolve it and run git rebase --continue there, then record the base with: git config branch.${branch}.lfrScopeBase ${new}, and run lfrGitRebaseStack again." >&2
+			return 1
+		fi
+		git config "branch.${branch}.lfrScopeBase" "${new}"
+	done
+	[ "${dry}" = 1 ] && echo "Dry run: nothing was rebased." && return 0
+	echo "Done. Nothing was pushed: force-push each moved branch with --force-with-lease."
+}
+
 # Keep your master mirrors current in one run. The mirrors to maintain are a list
 # of "branch:remote" pairs in LFR_GIT_MASTER_MIRRORS (lfr-git.local.conf),
 # defaulting to "master:upstream". For each pair: fetch <remote>/master, push it
@@ -833,6 +924,7 @@ lfrgs() { lfrGitSync "$@"; }
 lfrgse() { lfrGitSyncEE "$@"; }
 lfrgr() { lfrGitRebase "$@"; }
 lfrgro() { lfrGitRebaseOnto "$@"; }
+lfrgrs() { lfrGitRebaseStack "$@"; }
 lfrgum() { lfrGitUpdateMaster "$@"; }
 lfrgub() { lfrGitUpdateBranch "$@"; }
 lfrgct() { lfrGitCheckoutTag "$@"; }
