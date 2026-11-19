@@ -28,6 +28,9 @@
 # of the clone are copied in, so the worktree needs no `ant all`. lfrWorktreeCopyBundle
 # does the same for an existing worktree.
 #
+# When the invoking clone shares the Gradle build cache (lfrCache on), the worktree
+# shares it too, so its first build reuses what the clones built.
+#
 # Last, it offers to run lfrWorktreeIdeaInit, since a fresh worktree has no IntelliJ
 # project of its own. Set LFR_WORKTREE_IDEA to answer that in advance (1 runs it, 0
 # skips it).
@@ -659,6 +662,12 @@ lfrWorktree() {
 	if [ -n "${source}" ]; then
 		_lfrWorktreeCopyBundle "${source}" "${dir}" ||
 			echo "lfrWorktree: the copy of the bundle failed; the worktree needs lfrAntAll" >&2
+	fi
+
+	# Share the Gradle build cache when the invoking clone shares it, so the first
+	# build of the worktree reuses the module outputs that the clones built.
+	if [ -f "${src_root}/.gradle/init.d/lfr-build-cache.gradle" ] && declare -F lfrCache >/dev/null 2>&1; then
+		lfrCache on "${dir}" >&2
 	fi
 
 	cd "${dir}" || return 1
