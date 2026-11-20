@@ -36,7 +36,7 @@ _lfrLogRun() {
 	shift 3
 	log="$(_lfrLogFile "${logs}" "${kind}")"
 	gitdir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
-	before="$(git --git-dir="${gitdir:-.git}" for-each-ref --format='%(refname:short) %(objectname)' refs/heads 2>/dev/null | sort)"
+	before="$(git --git-dir="${gitdir:-.git}" for-each-ref --format='%(refname:short) %(objectname)' refs/heads 2>/dev/null | LC_ALL=C sort -k1,1)"
 	{
 		echo "command: ${fn} $*"
 		echo "date: $(date '+%Y-%m-%d %H:%M:%S')"
@@ -47,12 +47,12 @@ _lfrLogRun() {
 	"${fn}" "$@" > >(tee -a "${log}") 2>&1
 	rc=$?
 	wait "$!"
-	after="$(git --git-dir="${gitdir:-.git}" for-each-ref --format='%(refname:short) %(objectname)' refs/heads 2>/dev/null | sort)"
+	after="$(git --git-dir="${gitdir:-.git}" for-each-ref --format='%(refname:short) %(objectname)' refs/heads 2>/dev/null | LC_ALL=C sort -k1,1)"
 	{
 		echo "---"
 		echo "exit: ${rc}"
 		echo "branches changed (old -> new):"
-		join -a 1 -a 2 -e '(none)' -o 0,1.2,2.2 <(printf '%s\n' "${before}") <(printf '%s\n' "${after}") |
+		LC_ALL=C join -a 1 -a 2 -e '(none)' -o 0,1.2,2.2 <(printf '%s\n' "${before}") <(printf '%s\n' "${after}") |
 			awk '$2 != $3 { print "  " $1 " " $2 " -> " $3; n++ } END { if (!n) print "  none" }'
 	} >>"${log}"
 	return "${rc}"
