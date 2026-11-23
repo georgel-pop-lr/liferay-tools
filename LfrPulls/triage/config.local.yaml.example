@@ -1,0 +1,21 @@
+# Reviewer pools of lfrPullsTriage. Copy to config.local.yaml (gitignored).
+#
+# triage.py reads this file on every run. Add a repo to triage it.
+
+repos:
+  my-team-org/liferay-portal:
+    upstream: liferay/liferay-portal
+    upstream_branch: master
+    # The clone that blame runs in. Plan mode only fetches remote refs here.
+    master_clone: ~/liferay/repos/liferay-portal
+    backend:
+      - backend-login-1
+      - backend-login-2
+    frontend:
+      - frontend-login-1
+    # GitHub login to Jira accountId. Apply mode assigns the In Review ticket
+    # to the reviewer.
+    jira:
+      backend-login-1: <jira-account-id>
+      backend-login-2: <jira-account-id>
+      frontend-login-1: <jira-account-id>

@@ -18,3 +18,4 @@ LfrBuild/logs/
 LfrGit/logs/
 # lfrWorktreeRemove logs, one folder per worktree.
 LfrRepos/logs/
+LfrPulls/triage/*.local.yaml

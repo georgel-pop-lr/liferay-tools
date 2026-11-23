@@ -98,6 +98,10 @@ lfrTools() {
 		                per-month stats
 		  lfrPullsBump  resend an open pull of yours on the Brian mirror as
 		                a new pull, back at the top of the queue (asks first)
+		  lfrPullsTriage  give a reviewer to each open pull of the team fork
+		                that has none; it shows each pull link with its
+		                proposed reviewer to accept or not,
+		                then it applies after a y
 
 		These tools
 		  lfrReload     re-source lfrTools.sh, so edits to any tool take effect
@@ -105,7 +109,7 @@ lfrTools() {
 
 		Every command has a short alias: lfrr, lfrw, lfrwn, lfrwr, lfrwcb, lfrs, lfrb, lfrrb,
 		lfraa, lfrc, lfrcv, lfrp, lfrgc, lfrgcd, lfrgs, lfrgse, lfrgr, lfrgro, lfrgrs,
-		lfrgum, lfrgub, lfrgct, lfrpb, lfrrl. Six expand to an lfrPulls subcommand:
+		lfrgum, lfrgub, lfrgct, lfrpb, lfrptr, lfrrl. Six expand to an lfrPulls subcommand:
 		lfrpw (week), lfrps (stats), lfrpt (ticket), lfrpf (a team or user's
 		fork), lfrpe (EE backports), lfrpteams (the team list).
 	EOF

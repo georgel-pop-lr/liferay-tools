@@ -1,0 +1,20 @@
+# Reviewer availability. lfrPullsTriage reads this on every run.
+# Copy to availability.local.yaml (gitignored).
+#
+# Each entry marks a reviewer as unavailable for a date range (inclusive).
+# A date range "YYYY-MM-DD..YYYY-MM-DD" overlapping today excludes that
+# reviewer from the assignment pool. A single date "YYYY-MM-DD" excludes
+# for that day only.
+#
+# Example:
+#
+# - user: some-login
+#   out: 2026-12-22..2027-01-05
+#   reason: vacation
+# - user: other-login
+#   out: 2026-11-10
+#   reason: offsite
+#
+# Keep entries sorted by start date for easy maintenance.
+
+# (empty — add entries as reviewers go on PTO)
