@@ -35,6 +35,12 @@ import urllib.request
 
 import yaml
 
+# table.py, the one table build of lfrPulls and lfrPullsTriage, is in LfrPulls.
+sys.path.insert(
+	0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import table
+
 TOOL_DIR = os.path.dirname(os.path.abspath(__file__))
 CACHE_DIR = os.path.join(
 	os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")),
@@ -1149,28 +1155,8 @@ def _plan(args, progress):
 
 
 def print_table(out, headers, rows):
-	cells = [[str(cell) for cell in row] for row in rows]
-	widths = [
-		max([len(header)] + [len(row[index]) for row in cells])
-		for index, header in enumerate(headers)]
-	numeric = [
-		bool(cells) and all(
-			row[index].replace(".", "", 1).lstrip("-").isdigit()
-			for row in cells)
-		for index in range(len(headers))]
-
-	def line(values):
-		return "| " + " | ".join(
-			value.rjust(width) if right else value.ljust(width)
-			for value, width, right in zip(values, widths, numeric)) + " |"
-
-	out(line(headers))
-	out("|" + "|".join(
-		"-" * (width + 1) + ":" if right else "-" * (width + 2)
-		for width, right in zip(widths, numeric)) + "|")
-
-	for row in cells:
-		out(line(row))
+	for line in table.render(headers, rows):
+		out(line)
 
 
 def print_report(

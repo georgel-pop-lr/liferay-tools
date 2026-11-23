@@ -1522,34 +1522,11 @@ _LFR_PULLS_JQ='
 # either way, and NO_COLOR honoured. The caller decides that and passes "true"
 # as $1, because this runs mid-pipe, where [ -t 1 ] sees the pipe and never
 # the terminal.
-# Lay a tab-separated table out the way triage.py's print_table does: " | "
-# between the columns, a border on each side, and a rule under the header, so
-# each cell reads as its own. The first line is the header.
-#
-# With `marked`, the first field of each line is the row marker of
-# _lfrPullsPaint. It stays in front of the line, outside the table, and the
-# rule gets the marker R, which paints as plain text.
+# Lay a tab-separated table out with table.py, the one table build of lfrPulls
+# and lfrPullsTriage. The first line is the header. With `marked`, the first
+# field of each line is the row marker of _lfrPullsPaint.
 _lfrPullsTable() {
-	local marked="${1:-}"
-
-	# The extra empty column makes column pad the last real one too, so the
-	# right border lines up.
-	sed 's/$/\t/' | column -t -s $'\t' -o ' | ' |
-		awk -v marked="${marked}" '{
-			sub(/ +$/, "")
-			marker = ""
-			if (marked != "") {
-				marker = substr($0, 1, 1) " "
-				$0 = substr($0, 5)
-			}
-			line = "| " $0
-			print marker line
-			if (NR == 1) {
-				rule = line
-				gsub(/[^|]/, "-", rule)
-				print (marked != "" ? "R " : "") rule
-			}
-		}'
+	python3 -I "${_lfrPullsDir}/table.py" ${1:+--marked}
 }
 
 _lfrPullsPaint() {

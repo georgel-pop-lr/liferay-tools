@@ -19,3 +19,6 @@ LfrGit/logs/
 # lfrWorktreeRemove logs, one folder per worktree.
 LfrRepos/logs/
 LfrPulls/triage/*.local.yaml
+
+# Python byte code, from triage.py importing table.py.
+__pycache__/
