@@ -111,12 +111,19 @@ wins.
 
 **Load.** The script calculates the load over the last 7 days:
 
-- Each pull that the reviewer reviewed in the window counts with its full weight.
-  A review is a GitHub review that the reviewer submitted in the window.
+- Each pull that the reviewer reviewed in the window counts with its weight.
+  A review is a GitHub review that the reviewer submitted in the window. A
+  closed pull counts too, because no pull of the team fork is merged there: it
+  closes after `ci:forward`, or when a new pull replaces it.
+- The weight of one pull in the load is `--weight-cap` (default 1000) or less.
+  Without the cap, one review of a very big pull made almost all the load of a
+  reviewer: #19267 had a weight of 4255.
 - Each open pull that is assigned to the reviewer counts with less weight each
   day. The factor is `e^(-days/3)`, and the days start at the last "assigned"
   event of the reviewer. Thus a pull that waits for many days adds almost no
   load, and a fast reviewer does not get more work than a slow reviewer.
+  If the reviewer also reviewed the pull in the window, the pull counts only as
+  completed, not two times.
 - The script divides the load by the median load of the role (`load_norm`). A
   value of 1.0 is the typical load. The median prevents a large change of the
   scale when one reviewer has a very high load.

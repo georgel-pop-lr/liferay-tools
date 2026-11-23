@@ -420,7 +420,8 @@ def classify(weighed):
 # Load
 
 
-def compute_loads(repo, config, window_days, open_pulls, weigher, roles):
+def compute_loads(
+		repo, config, window_days, open_pulls, weigher, roles, weight_cap):
 	start = NOW - datetime.timedelta(days=window_days)
 	reviewers = set(roles["back"]) | set(roles["front"])
 	updated = []
@@ -464,7 +465,11 @@ def compute_loads(repo, config, window_days, open_pulls, weigher, roles):
 		for assignee in pull["assignees"]:
 			login = assignee["login"]
 
-			if login in reviewers and login != author:
+			# A pull that the reviewer already reviewed in the window counts
+			# as completed only, not two times.
+			if login in reviewers and login != author and pull["number"] not in {
+					completed_pull["number"]
+					for completed_pull in completed[login]}:
 				open_assigned[login].append(pull)
 
 	def weigh_rest(pull):
@@ -486,11 +491,13 @@ def compute_loads(repo, config, window_days, open_pulls, weigher, roles):
 	open_numbers = {
 		pull["number"]: pull for pulls in open_assigned.values()
 		for pull in pulls}
+	# One very big pull must not make the full load of a reviewer, so each pull
+	# counts with a weight of weight_cap or less.
 	weights = dict(zip(
-		completed_pulls, (item["weight"] for item in parallel(
+		completed_pulls, (min(item["weight"], weight_cap) for item in parallel(
 			weigh_rest, list(completed_pulls.values())))))
 	weights.update(zip(
-		open_numbers, (item["weight"] for item in parallel(
+		open_numbers, (min(item["weight"], weight_cap) for item in parallel(
 			weigh_open, list(open_numbers.values())))))
 
 	def assigned_days(number):
@@ -970,7 +977,8 @@ def _plan(args, progress):
 	weigher = Weigher(config, upstream_sha)
 	progress.step("Compute the review load of each reviewer")
 	loads = compute_loads(
-		repo, config, args.window, open_pulls, weigher, roles)
+		repo, config, args.window, open_pulls, weigher, roles,
+		args.weight_cap)
 	totals = {
 		login: total_load(load, args.load_model)
 		for login, load in loads.items()}
@@ -1094,7 +1102,7 @@ def _plan(args, progress):
 
 			pick["comment"] = build_comment(
 				pick, config["upstream"], role_name)
-			totals[pick["reviewer"]] += weighed["weight"]
+			totals[pick["reviewer"]] += min(weighed["weight"], args.weight_cap)
 
 			candidates = [pick["reviewer"]] + [
 				row["login"] for row in table
@@ -1506,7 +1514,8 @@ def _fit_pulls(args, progress, login, repo, open_pulls, pulls):
 	weigher = Weigher(config, upstream_sha)
 	progress.step("Compute the review load of each reviewer")
 	loads = compute_loads(
-		repo, config, args.window, open_pulls, weigher, roles)
+		repo, config, args.window, open_pulls, weigher, roles,
+		args.weight_cap)
 	totals = {
 		reviewer: total_load(load, args.load_model)
 		for reviewer, load in loads.items()}
@@ -1611,6 +1620,8 @@ def main():
 	parser.add_argument("--skip", action="append", default=[], type=int,
 		metavar="PULL", help="with --apply, leave PULL out")
 	parser.add_argument("--story-weight", default=0.5, type=float)
+	parser.add_argument("--weight-cap", default=1000, type=int,
+		help="the maximum weight of one pull in the load (default 1000)")
 	parser.add_argument("--window", default=7, metavar="DAYS",
 		type=lambda value: int(value.rstrip("d")))
 	args = parser.parse_args()
