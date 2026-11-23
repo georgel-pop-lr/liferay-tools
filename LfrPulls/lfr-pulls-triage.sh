@@ -38,9 +38,8 @@ _lfrPullsTriageHelp() {
 		the ticket that is In Review.
 
 		For each pull that you assign to yourself, it then asks "Create a
-		worktree with its branch? [y/N]". A y fetches the head of the pull
-		into a local branch with the name of the pull branch, in the first
-		clone of LFR_WORKTREE_SOURCES, and runs lfrWorktree on that branch.
+		worktree with its branch? [y/N]". A y runs lfrWorktreePull on the
+		pull (see lfrWorktreePull -h).
 
 		If the shell is not interactive, it stops after the plan.
 
@@ -51,54 +50,6 @@ _lfrPullsTriageHelp() {
 		  LfrPulls/triage/config.local.yaml        reviewers and Jira accounts
 		  LfrPulls/triage/availability.local.yaml  reviewers who are out
 	EOF
-}
-
-# Get the head of pull $2 of the repo $1 into a worktree of its own, so you can
-# review it. The branch takes the name of the head branch of the pull. If a local
-# branch of that name holds other commits, the branch is <head>-pull-<number>.
-# The fetch runs in the first clone of LFR_WORKTREE_SOURCES, and lfrWorktree
-# then makes the worktree, its bundle, and its database from that clone.
-_lfrPullsTriageReviewWorktree() {
-	local repo="${1}" number="${2}" clone="${LFR_WORKTREE_SOURCES[0]:-}" head sha branch dir
-
-	if [ -z "${clone}" ] || ! declare -F lfrWorktree >/dev/null; then
-		echo "lfrPullsTriage: lfrWorktree or LFR_WORKTREE_SOURCES is not available." >&2
-		return 1
-	fi
-
-	IFS=$'\t' read -r head sha < <(gh pr view "${number}" --repo "${repo}" \
-		--json headRefName,headRefOid --jq '[.headRefName, .headRefOid] | @tsv')
-
-	if [ -z "${sha}" ]; then
-		echo "lfrPullsTriage: cannot read the head of #${number}." >&2
-		return 1
-	fi
-
-	branch="${head}"
-
-	if git -C "${clone}" show-ref --verify --quiet "refs/heads/${branch}" &&
-		[ "$(git -C "${clone}" rev-parse "${branch}")" != "${sha}" ]; then
-		branch="${head}-pull-${number}"
-	fi
-
-	dir="${LFR_WORKTREE_ROOT:-${HOME}/liferay/repos}/liferay-portal-${branch}"
-
-	if [ -e "${dir}" ]; then
-		echo "  #${number} already has a worktree: ${dir}"
-		return 0
-	fi
-
-	echo "  fetching #${number} into the branch ${branch}..."
-	git -C "${clone}" fetch --no-tags "git@github.com:${repo}.git" \
-		"+pull/${number}/head:refs/heads/${branch}" || return 1
-
-	if [ "$(git -C "${clone}" rev-parse "${branch}")" != "${sha}" ]; then
-		echo "lfrPullsTriage: the fetched head of #${number} is not ${sha}." >&2
-		return 1
-	fi
-
-	(cd "${clone}" && lfrWorktree "${branch}") || return 1
-	echo "  worktree of #${number}: ${dir}"
 }
 
 _lfrPullsTriage() {
@@ -210,7 +161,7 @@ _lfrPullsTriage() {
 		read -r -p "You review #${number}. Create a worktree with its branch? [y/N] " answer < /dev/tty
 
 		case "${answer}" in
-		y | Y) _lfrPullsTriageReviewWorktree "${repo}" "${number}" ;;
+		y | Y) (lfrWorktreePull "https://github.com/${repo}/pull/${number}") ;;
 		esac
 	done
 }

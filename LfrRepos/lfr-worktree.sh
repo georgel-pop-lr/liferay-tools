@@ -2215,11 +2215,127 @@ lfrWorktreeRename() {
 	fi
 }
 
+# Make a worktree that holds the head of a pull, so you can review it or work on
+# it. It fetches the head straight from the fork of the pull, so no remote is
+# needed, checks the SHA, and then runs lfrWorktree from the source clone of that
+# repo. lfrPullsTriage and the worktree-create skill use it.
+lfrWorktreePull() {
+	case "${1-}" in
+	"" | -h | --help)
+		cat <<-'EOF'
+			lfrWorktreePull - make a worktree with the branch of a pull.
+
+			Usage:
+			  lfrWorktreePull <pull> [lfrWorktree options]
+
+			<pull> is one of these:
+			  https://github.com/<owner>/<repo>/pull/<number>   a pull link
+			  <owner>/<repo>#<number>
+			  <number>   a pull of your team fork (LFR_PULLS_TEAM)
+
+			Steps:
+			  1. Read the head branch and the head SHA of the pull.
+			  2. Fetch pull/<number>/head into a local branch with the name of the
+			     head branch. If a local branch of that name holds other commits,
+			     the branch is <head>-pull-<number>.
+			  3. Stop if the fetched commit is not the head SHA.
+			  4. Run lfrWorktree <branch> from the source clone of the repo (the
+			     clone in LFR_WORKTREE_SOURCES with the same name as the repo, else
+			     the first one). You are moved into the new worktree.
+
+			If the worktree is there already, it only moves you into it.
+			The options (--copy-bundle=<clone>, --no-copy-bundle) go to lfrWorktree.
+		EOF
+		[ -n "${1-}" ]
+		return
+		;;
+	esac
+
+	local pull="${1}" repo number
+	shift
+
+	case "${pull}" in
+	https://github.com/*/pull/*)
+		repo="${pull#https://github.com/}"
+		number="${repo#*/pull/}"
+		number="${number%%[/#?]*}"
+		repo="${repo%%/pull/*}"
+		;;
+	*/*\#*)
+		repo="${pull%%#*}"
+		number="${pull#*#}"
+		;;
+	*)
+		repo="${LFR_PULLS_TEAM:-${LFR_GIT_FORK_ORG:-}}/${LFR_PULLS_FORK_REPO:-liferay-portal}"
+		number="${pull#\#}"
+		;;
+	esac
+
+	if [[ ! "${number}" =~ ^[0-9]+$ ]] || [[ ! "${repo}" =~ ^[^/]+/[^/]+$ ]]; then
+		echo "lfrWorktreePull: cannot read a pull from '${pull}'" >&2
+		return 1
+	fi
+
+	local clone="" source
+
+	for source in "${LFR_WORKTREE_SOURCES[@]}"; do
+		if [ "$(basename "${source}")" = "${repo#*/}" ]; then
+			clone="${source}"
+			break
+		fi
+	done
+
+	clone="${clone:-${LFR_WORKTREE_SOURCES[0]:-}}"
+
+	if [ -z "${clone}" ]; then
+		echo "lfrWorktreePull: LFR_WORKTREE_SOURCES is empty" >&2
+		return 1
+	fi
+
+	local head sha branch dir
+	IFS=$'\t' read -r head sha < <(gh pr view "${number}" --repo "${repo}" \
+		--json headRefName,headRefOid --jq '[.headRefName, .headRefOid] | @tsv' 2>/dev/null)
+
+	if [ -z "${sha}" ]; then
+		echo "lfrWorktreePull: cannot read the head of ${repo}#${number}" >&2
+		return 1
+	fi
+
+	branch="${head}"
+
+	if git -C "${clone}" show-ref --verify --quiet "refs/heads/${branch}" &&
+		[ "$(git -C "${clone}" rev-parse "${branch}")" != "${sha}" ]; then
+		branch="${head}-pull-${number}"
+	fi
+
+	dir="${LFR_WORKTREE_ROOT:-${HOME}/liferay/repos}/liferay-portal-${branch}"
+
+	if [ -e "${dir}" ]; then
+		echo "lfrWorktreePull: ${repo}#${number} already has a worktree: ${dir}" >&2
+		cd "${dir}" || return 1
+		return 0
+	fi
+
+	echo "lfrWorktreePull: fetching ${repo}#${number} into the branch ${branch}..." >&2
+	git -C "${clone}" fetch --no-tags "git@github.com:${repo}.git" \
+		"+pull/${number}/head:refs/heads/${branch}" || return 1
+
+	if [ "$(git -C "${clone}" rev-parse "${branch}")" != "${sha}" ]; then
+		echo "lfrWorktreePull: the fetched head of ${repo}#${number} is not ${sha}" >&2
+		return 1
+	fi
+
+	local back="${PWD}"
+	cd "${clone}" || return 1
+	lfrWorktree "${branch}" "$@" || { cd "${back}"; return 1; }
+}
+
 # Short aliases.
 lfrw() { lfrWorktree "$@"; }
 lfrwn() { lfrWorktreeRename "$@"; }
 lfrwr() { lfrWorktreeRemove "$@"; }
 lfrwcb() { lfrWorktreeCopyBundle "$@"; }
+lfrwp() { lfrWorktreePull "$@"; }
 
 # Write the source project's run configurations into $2/.idea/runConfigurations, one
 # file each. That is IntelliJ's shared form, the one meant to travel with a project, so

@@ -44,6 +44,8 @@ lfrTools() {
 		                        wired to its own bundle, offering the IntelliJ
 		                        project at the end; copies the built bundle of
 		                        a clean source clone (LFR_WORKTREE_SOURCES)
+		  lfrWorktreePull       make a worktree with the branch of a pull (a link,
+		                        owner/repo#n, or a team fork number)
 		  lfrWorktreeCopyBundle give an existing worktree the built bundle of a
 		                        source clone, keeping its database
 		  lfrWorktreeRename     rename a worktree, its branch, its bundle, its
@@ -107,7 +109,7 @@ lfrTools() {
 		  lfrReload     re-source lfrTools.sh, so edits to any tool take effect
 		                in this shell (no new terminal needed)
 
-		Every command has a short alias: lfrr, lfrw, lfrwn, lfrwr, lfrwcb, lfrs, lfrb, lfrrb,
+		Every command has a short alias: lfrr, lfrw, lfrwp, lfrwn, lfrwr, lfrwcb, lfrs, lfrb, lfrrb,
 		lfraa, lfrc, lfrcv, lfrp, lfrgc, lfrgcd, lfrgs, lfrgse, lfrgr, lfrgro, lfrgrs,
 		lfrgum, lfrgub, lfrgct, lfrpb, lfrptr, lfrrl. Six expand to an lfrPulls subcommand:
 		lfrpw (week), lfrps (stats), lfrpt (ticket), lfrpf (a team or user's

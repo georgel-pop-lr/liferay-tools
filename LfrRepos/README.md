@@ -18,7 +18,7 @@ script runs in a subshell and its `cd` would not reach your interactive shell.
 | File | Purpose |
 |---|---|
 | `lfr-repo.sh` | Defines the `lfrRepos` switcher and its tab-completion. |
-| `lfr-worktree.sh` | Defines the `lfrWorktree` creator, the `lfrWorktreeRename` renamer, the `lfrWorktreeRemove` remover, `lfrWorktreeCopyBundle` for giving an existing worktree a built bundle, `lfrWorktreeIdeaClean` for IntelliJ leftovers, and `lfrWorktreeIdeaInit` for giving a worktree an IntelliJ project. |
+| `lfr-worktree.sh` | Defines the `lfrWorktree` creator, `lfrWorktreePull` for the worktree of a pull, the `lfrWorktreeRename` renamer, the `lfrWorktreeRemove` remover, `lfrWorktreeCopyBundle` for giving an existing worktree a built bundle, `lfrWorktreeIdeaClean` for IntelliJ leftovers, and `lfrWorktreeIdeaInit` for giving a worktree an IntelliJ project. |
 
 The repo list, picker, and per-user config live in the shared module
 `../LfrCommon/lfr-repo-list.sh` (config in `../LfrCommon/repos.local.conf`),
@@ -209,6 +209,32 @@ should not pay those seconds, so the question is asked rather than answered
 either way. Set `LFR_WORKTREE_IDEA=1` to always run it and `0` to never ask,
 which is also what a scripted run needs, since with no terminal the prompt is
 skipped and the command is named instead.
+
+### `lfrWorktreePull`: make a worktree with the branch of a pull
+
+Makes a worktree that holds the head of a pull, so you can review it. Alias
+`lfrwp`. `lfrPullsTriage` uses it for each pull that you assign to yourself, and
+the `worktree-create` skill uses it for a pull link.
+
+| Invocation | Pull |
+|---|---|
+| `lfrWorktreePull https://github.com/<owner>/<repo>/pull/<n>` | a pull link; a tail such as `/files` is ignored |
+| `lfrWorktreePull <owner>/<repo>#<n>` | the same pull, in short form |
+| `lfrWorktreePull <n>` | pull `<n>` of your team fork (`LFR_PULLS_TEAM`) |
+
+It does these steps:
+
+1. It reads the head branch and the head SHA of the pull with `gh`.
+2. It fetches `pull/<n>/head` from the fork URL into a local branch with the
+   name of the head branch. No git remote is needed. If a local branch of that
+   name holds other commits, the branch is `<head>-pull-<n>`.
+3. It stops if the fetched commit is not the head SHA.
+4. It runs `lfrWorktree <branch>` from the source clone with the same name as
+   the repo (`liferay-portal-ee` for an EE pull), else from the first clone of
+   `LFR_WORKTREE_SOURCES`. The options `--copy-bundle=<clone>` and
+   `--no-copy-bundle` go to `lfrWorktree`.
+
+If the worktree is there already, it only moves you into it.
 
 ### `lfrWorktreeCopyBundle`: give an existing worktree a built bundle
 
