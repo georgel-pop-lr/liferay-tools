@@ -828,7 +828,7 @@ def find_supersede(repo, pull, reviewers):
 # Comment
 
 
-def build_comment(pick, upstream, role_name):
+def build_comment(pick, upstream):
 	login = pick["reviewer"]
 	reason = pick["reason"]
 
@@ -866,9 +866,10 @@ def build_comment(pick, upstream, role_name):
 			f"I assigned this review to you because you reviewed "
 			f"#{story['number']} ({story['key']}) of the same story.")
 	else:
-		text = (
-			f"I assigned this review to you as part of the {role_name} review "
-			"rotation of this week.")
+
+		# A rotation pick has no reason to tell, so the pull gets no comment.
+
+		return None
 
 	return f"@{login}, {text} Thanks!"
 
@@ -1106,8 +1107,7 @@ def _plan(args, progress):
 					"blame" if blame_hit else
 					"story" if story_hit else "load")
 
-			pick["comment"] = build_comment(
-				pick, config["upstream"], role_name)
+			pick["comment"] = build_comment(pick, config["upstream"])
 			totals[pick["reviewer"]] += min(weighed["weight"], args.weight_cap)
 
 			candidates = [pick["reviewer"]] + [
@@ -1188,7 +1188,7 @@ def print_report(
 		out("\nComments:\n")
 
 		for item in report["assigned"]:
-			out(f"- #{item['number']}: {item['comment']}")
+			out(f"- #{item['number']}: {item['comment'] or '(no comment)'}")
 	else:
 		out("None.")
 
@@ -1315,7 +1315,7 @@ def override(plan_data, args, repo):
 
 		item["reviewer"] = login
 		item["reason"] = "manual"
-		item["comment"] = build_comment(item, config["upstream"], item["role"])
+		item["comment"] = build_comment(item, config["upstream"])
 		item["jira_account"] = config["jira"].get(login)
 
 	plan_data["assigned"] = [
@@ -1375,9 +1375,10 @@ def apply(args):
 					(["-X", "POST", f"repos/{repo}/issues/{number}/labels",
 						"-f", f"labels[]={label}"], None))
 
-		actions.append(
-			(["-X", "POST", f"repos/{repo}/issues/{number}/comments", "-F",
-				"body=@-"], item["comment"]))
+		if item["comment"]:
+			actions.append(
+				(["-X", "POST", f"repos/{repo}/issues/{number}/comments",
+					"-F", "body=@-"], item["comment"]))
 
 		for arguments, stdin in actions:
 			if args.print_only:
