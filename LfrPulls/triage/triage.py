@@ -860,6 +860,51 @@ def build_comment(pick, upstream, role_name):
 	return f"@{login}, {text} Thanks!"
 
 
+def find_story_hits(stories, keys, number):
+	story_pulls = stories.pulls_of(stories.story_set(keys)) if keys else {}
+	story_hits = {}
+
+	for key, pulls in story_pulls.items():
+		for story_pull in pulls:
+			if story_pull["number"] == number:
+				continue
+
+			for login in story_pull["assignees"]:
+				if login != story_pull["author"]:
+					story_hits.setdefault(login, {})[story_pull["number"]] = key
+
+	return story_hits
+
+
+def score_pool(args, available, pool, totals, hits, story_hits):
+	norms = normalize({login: totals[login] for login in available})
+	max_blame = max(
+		[hits.get(login, {}).get("lines", 0) for login in pool] + [0])
+	max_story = max([len(story_hits.get(login, {})) for login in pool] + [0])
+	table = []
+
+	for login in pool:
+		blame = hits.get(login, {}).get("lines", 0)
+		story = len(story_hits.get(login, {}))
+		blame_norm = blame / max_blame if max_blame else 0
+		story_norm = story / max_story if max_story else 0
+		expertise = ((1 - args.story_weight) * blame_norm +
+			args.story_weight * story_norm)
+		table.append({
+			"blame": blame, "expertise": expertise, "load": totals[login],
+			"load_norm": norms[login], "login": login,
+			"score": norms[login] - args.expertise_weight * expertise,
+			"story": story,
+		})
+
+	table.sort(key=lambda row: (row["score"], row["load_norm"], row["login"]))
+	best = table[0]
+	ties = [row for row in table if row["score"] - best["score"] <= 0.05]
+	ties.sort(key=lambda row: (row["load_norm"], row["login"]))
+
+	return table, ties[0]
+
+
 # Plan
 
 
@@ -995,19 +1040,7 @@ def _plan(args, progress):
 
 		hits = blamer.blame(weighed) if weighed["merge_base"] else {}
 		keys = list(dict.fromkeys(KEY_PATTERN.findall(pull["title"])))
-		story_pulls = stories.pulls_of(
-			stories.story_set(keys)) if keys else {}
-		story_hits = {}
-
-		for key, pulls in story_pulls.items():
-			for story_pull in pulls:
-				if story_pull["number"] == number:
-					continue
-
-				for login in story_pull["assignees"]:
-					if login != story_pull["author"]:
-						story_hits.setdefault(login, {})[
-							story_pull["number"]] = key
+		story_hits = find_story_hits(stories, keys, number)
 
 		explanations[number] = {}
 
@@ -1022,34 +1055,8 @@ def _plan(args, progress):
 
 				continue
 
-			norms = normalize({login: totals[login] for login in available})
-			max_blame = max(
-				[hits.get(login, {}).get("lines", 0) for login in pool] + [0])
-			max_story = max(
-				[len(story_hits.get(login, {})) for login in pool] + [0])
-			table = []
-
-			for login in pool:
-				blame = hits.get(login, {}).get("lines", 0)
-				story = len(story_hits.get(login, {}))
-				blame_norm = blame / max_blame if max_blame else 0
-				story_norm = story / max_story if max_story else 0
-				expertise = ((1 - args.story_weight) * blame_norm +
-					args.story_weight * story_norm)
-				table.append({
-					"blame": blame, "expertise": expertise,
-					"load": totals[login], "load_norm": norms[login],
-					"login": login,
-					"score": norms[login] - args.expertise_weight * expertise,
-					"story": story,
-				})
-
-			table.sort(key=lambda row: (row["score"], row["load_norm"], row["login"]))
-			best = table[0]
-			ties = [row for row in table
-				if row["score"] - best["score"] <= 0.05]
-			ties.sort(key=lambda row: (row["load_norm"], row["login"]))
-			winner = ties[0]
+			table, winner = score_pool(
+				args, available, pool, totals, hits, story_hits)
 			explanations[number][role_name] = table
 
 			pick = {"reviewer": winner["login"]}
@@ -1410,6 +1417,171 @@ def apply(args):
 				print(f"  Jira {key}: assigned to {item['reviewer']}.")
 
 
+# Fit
+
+
+FIT_TTL = 12 * 3600
+
+
+def fit(args):
+	with Progress() as progress:
+		_fit(args, progress)
+
+
+def _fit(args, progress):
+	"""Print "NUMBER<TAB>FIT" for each pull in --pulls.
+
+	FIT says if LOGIN fits as the reviewer of the pull, with the rules of the
+	plan: best (the plan picks LOGIN), good (LOGIN has blame or story hits),
+	ok (the role of LOGIN matches the scope), no-role (it does not), or ? (the
+	scope is not clear). A result stays in the cache for FIT_TTL seconds, or
+	until the head of the pull changes.
+	"""
+
+	login = args.fit
+	repo = args.repo
+	cache_path = os.path.join(CACHE_DIR, "fit.json")
+
+	try:
+		with open(cache_path) as file:
+			cache = json.load(file)
+	except (OSError, ValueError):
+		cache = {}
+
+	progress.step("Read the open pulls")
+	result = subprocess.run(
+		["gh", "pr", "list", "--repo", repo, "--state", "open", "--limit",
+			"200", "--json",
+			"assignees,author,body,createdAt,headRefName,headRefOid,"
+			"headRepositoryOwner,isDraft,labels,number,title,url"],
+		capture_output=True, check=True, text=True)
+	open_pulls = json.loads(result.stdout)
+	by_number = {pull["number"]: pull for pull in open_pulls}
+	numbers = [number for number in args.pulls if number in by_number]
+	now = time.time()
+
+	def cache_key(number):
+		return f"{repo}#{number}#{login}"
+
+	def cached(number):
+		entry = cache.get(cache_key(number))
+
+		return entry and entry["sha"] == by_number[number]["headRefOid"] and \
+			now - entry["time"] < FIT_TTL
+
+	missing = [number for number in numbers if not cached(number)]
+
+	if missing:
+		fits = _fit_pulls(
+			args, progress, login, repo, open_pulls,
+			[by_number[number] for number in missing])
+
+		for number in missing:
+			cache[cache_key(number)] = {
+				"fit": fits[number], "sha": by_number[number]["headRefOid"],
+				"time": now}
+
+		cache = {
+			key: entry for key, entry in cache.items()
+			if now - entry["time"] < FIT_TTL}
+		os.makedirs(CACHE_DIR, exist_ok=True)
+
+		with open(cache_path, "w") as file:
+			json.dump(cache, file, indent="\t")
+
+	progress.stop()
+
+	for number in numbers:
+		print(f"{number}\t{cache[cache_key(number)]['fit']}")
+
+
+def _fit_pulls(args, progress, login, repo, open_pulls, pulls):
+	config = load_config(repo)
+	unavailable = load_unavailable()
+	roles = {"back": config["backend"], "front": config["frontend"]}
+	reviewers = set(roles["back"]) | set(roles["front"])
+	upstream_sha = gh_get(
+		f"repos/{config['upstream']}/branches/{config['upstream_branch']}"
+	)["commit"]["sha"]
+	weigher = Weigher(config, upstream_sha)
+	progress.step("Compute the review load of each reviewer")
+	loads = compute_loads(
+		repo, config, args.window, open_pulls, weigher, roles)
+	totals = {
+		reviewer: total_load(load, args.load_model)
+		for reviewer, load in loads.items()}
+	progress.step("Read the commit emails of the reviewers")
+	blamer = Blamer(
+		config["master_clone"], commit_emails(config, sorted(reviewers)))
+	stories = StoryFinder(repo)
+	progress.step(f"Weigh the changes of {len(pulls)} pulls")
+	weighed_list = parallel(
+		lambda pull: weigher.weigh(
+			repo, pull["number"],
+			(pull.get("headRepositoryOwner") or {}).get("login"),
+			pull["headRefName"], pull["headRefOid"]),
+		pulls)
+	fits = {}
+
+	for index, (pull, weighed) in enumerate(zip(pulls, weighed_list)):
+		number = pull["number"]
+		progress.step(
+			f"Score pull #{number} ({index + 1}/{len(pulls)}) for {login}")
+		labels = {
+			SCOPE_LABELS[norm_label(label["name"])]
+			for label in pull["labels"]
+			if norm_label(label["name"]) in SCOPE_LABELS}
+
+		if labels:
+			needed = sorted(labels)
+		else:
+			scope = classify(weighed)[0] if weighed["ahead_by"] else None
+
+			if scope is None:
+				fits[number] = "?"
+
+				continue
+
+			needed = ["back", "front"] if scope == "mixed" else [scope]
+
+		needed = [role for role in needed if login in roles[role]]
+
+		if not needed:
+			fits[number] = "no-role"
+
+			continue
+
+		author = pull["author"]["login"]
+		supersede = find_supersede(repo, pull, reviewers)
+		hits = blamer.blame(weighed) if weighed["merge_base"] else {}
+		keys = list(dict.fromkeys(KEY_PATTERN.findall(pull["title"])))
+		story_hits = find_story_hits(stories, keys, number)
+		verdict = "ok"
+
+		for role in needed:
+			available = [
+				reviewer for reviewer in roles[role]
+				if reviewer not in unavailable or reviewer == login]
+			pool = [reviewer for reviewer in available if reviewer != author]
+			table, winner = score_pool(
+				args, available, pool, totals, hits, story_hits)
+			pick = winner["login"]
+
+			if supersede and supersede["reviewer"] in pool:
+				pick = supersede["reviewer"]
+
+			mine = next(row for row in table if row["login"] == login)
+
+			if pick == login:
+				verdict = "best"
+			elif verdict == "ok" and (mine["blame"] or mine["story"]):
+				verdict = "good"
+
+		fits[number] = verdict
+
+	return fits
+
+
 def main():
 	parser = argparse.ArgumentParser(
 		description=__doc__,
@@ -1419,12 +1591,17 @@ def main():
 		help="accepted for compatibility; plan mode writes nothing anyway")
 	parser.add_argument("--expertise-weight", default=0.3, type=float)
 	parser.add_argument("--explain", type=int, metavar="PULL_NUMBER")
+	parser.add_argument("--fit", metavar="LOGIN",
+		help="print if LOGIN fits as the reviewer of each pull in --pulls")
 	parser.add_argument("--label-confidence", default="high",
 		choices=["high", "medium", "low", "never"])
 	parser.add_argument("--load-model", default="completed-and-decayed-open",
 		choices=["completed-and-decayed-open", "open-flat", "completed-only"])
 	parser.add_argument("--max-prs", default=30, type=int)
 	parser.add_argument("--out", default=os.path.join(CACHE_DIR, "plan.json"))
+	parser.add_argument("--pulls", default=[],
+		type=lambda value: [int(number) for number in value.split(",") if number],
+		metavar="N,N", help="with --fit, the pulls to check")
 	parser.add_argument("--print-only", action="store_true",
 		help="with --apply, print the writes instead of doing them")
 	parser.add_argument("--repo", default=DEFAULT_REPO)
@@ -1440,6 +1617,8 @@ def main():
 
 	if args.apply:
 		apply(args)
+	elif args.fit:
+		fit(args)
 	else:
 		plan(args)
 

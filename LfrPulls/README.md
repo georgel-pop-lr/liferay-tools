@@ -205,6 +205,25 @@ is.
 on the team account (`liferay-page-management`) means nobody has taken it and
 there is no one person to ask, so such a pull of yours reads `you`, not `ask`.
 
+## FIT on the team fork
+
+On your team's fork, the table has a FIT column. For each `need-review` pull,
+FIT tells if you fit as the reviewer. It uses the rules of `lfrPullsTriage`
+(scope, blame, story, and load), but it assigns nothing. The other rows show `-`.
+
+| FIT | Meaning |
+|---|---|
+| `best` | `lfrPullsTriage` picks you for this pull |
+| `good` | you changed the same lines (blame), or you reviewed a pull of the same story, but somebody else gets a better score |
+| `ok` | your role matches the scope of the pull, but you have no blame or story hits |
+| `no-role` | the scope of the pull is not your role, for example frontend only |
+| `?` | the scope is not clear, so triage puts the pull under "Needs Manual Triage" |
+
+`triage.py --fit` keeps each result in `~/.cache/pr-review-triage/fit.json`.
+A result stays there for 12 hours, or until the head of the pull changes. Thus
+only a new pull or a new push costs a score run, which can take about 2 minutes.
+FIT needs `triage/config.local.yaml`. Without it, the column does not show.
+
 ## The census under each table
 
 Every section closes on the count of the rows it printed out of the pulls it

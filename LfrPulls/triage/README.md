@@ -182,6 +182,19 @@ The report has these sections:
 - Updated Load Per Reviewer, with the load before and after, and the velocity
 - Notes: for example, a reviewer without a commit email or a failed Jira lookup
 
+## Fit mode
+
+`triage.py --fit LOGIN --pulls N,N` prints one line for each pull: the number,
+a tab, and the fit of LOGIN as the reviewer. It uses the same scope, blame,
+story, and load as the plan, and it writes nothing on GitHub or Jira. The values
+are `best`, `good`, `ok`, `no-role`, and `?`. `lfrPulls` shows them in the FIT
+column of the team fork, and `../README.md` tells what each value means.
+
+LOGIN stays in the pool also if `availability.local.yaml` marks LOGIN as not
+available, because LOGIN asks the question. The results stay in
+`~/.cache/pr-review-triage/fit.json` for 12 hours, or until the head of the
+pull changes.
+
 ## Changes from the original
 
 - The weight did not count the frontend source (`ts`, `tsx`, `js`, `jsx`,

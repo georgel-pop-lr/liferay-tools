@@ -194,6 +194,16 @@ _lfrPullsHelp() {
 		yours to pick up on a queue you belong to. On a fork of another team
 		it stays "-", unless the review was requested from you by name.
 
+		FIT, on your team's fork only, tells if you fit as the reviewer of a
+		need-review pull, with the rules of lfrPullsTriage. It assigns nothing:
+		  best     lfrPullsTriage picks you
+		  good     you have blame or story hits, but somebody scores better
+		  ok       your role matches the scope, with no blame or story hits
+		  no-role  the scope is not your role
+		  ?        the scope is not clear
+		The result stays in a cache until the pull gets a new push, or for 12
+		hours, so only a new pull or a new push makes lfrPulls slower.
+
 		Under each table, the count line ends in the census of every open pull
 		the section holds, not only the rows it printed, with the same over
 		ON YOU and over the labels themselves under it:
@@ -1695,6 +1705,30 @@ _lfrPullsCountLine() {
 	return 0
 }
 
+# Print a JSON map from pull number to FIT for each need-review pull in the
+# JSON $2 of the fork $1. FIT says if you fit as the reviewer, with the rules of
+# lfrPullsTriage: best (triage picks you), good (you have blame or story hits),
+# ok (your role matches the scope), no-role (it does not), or ? (the scope is not
+# clear). triage.py keeps each result in a cache until the head of the pull
+# changes or 12 hours pass, so only a new pull or a new push costs a score run.
+# $3 to $5 are what the jq prelude needs: me, senderMe, prChecked.
+_lfrPullsFit() {
+	local numbers
+	numbers="$(printf '%s' "${2}" | jq -r --arg me "${3}" --arg senderMe "${4}" \
+		--arg repoOwner "${1%%/*}" --arg yours "true" --arg prChecked "${5}" \
+		--arg mirrorOwner "${LFR_PULLS_REPO%%/*}" \
+		"${_LFR_PULLS_JQ}"' [.[] | select(onYou == "need-review") | .number] | join(",")')"
+
+	if [ -z "${numbers}" ]; then
+		printf '{}\n'
+		return 0
+	fi
+
+	python3 "${_lfrPullsDir}/triage/triage.py" --repo "${1}" --fit "${3}" \
+		--pulls "${numbers}" |
+		jq -R -s 'split("\n") | map(select(. != "") | split("\t") | {(.[0]): .[1]}) | add // {}'
+}
+
 # Print one fork's open pulls under <heading>, newest first, keeping only what
 # the jq expression <filter> selects. `detail` as $4 adds the age and the pull's
 # own labels; without it the table stays PR / AUTHOR / STATUS / ASSIGNEE / TITLE.
@@ -1721,17 +1755,29 @@ _lfrPullsForkSection() {
 	fi
 	total="$(printf '%s' "${json}" | jq 'length')"
 
+	# FIT only on the team fork, the one repo lfrPullsTriage has the reviewer
+	# roles of.
+	local fitHeader="" fitCell="" fitJson='{}'
+	if [ "${repo%%/*}" = "${LFR_PULLS_TEAM:-}" ] &&
+		[ -r "${_lfrPullsDir}/triage/config.local.yaml" ]; then
+		fitJson="$(_lfrPullsFit "${repo}" "${json}" "${me}" "${senderMe}" "${prChecked}")"
+		[ -n "${fitJson}" ] || fitJson='{}'
+		fitHeader='\tFIT'
+		fitCell='\t\(if onYou == "need-review" then ($fit[.number | tostring] // "?") else "-" end)'
+	fi
+
 	if [ -n "${detail}" ]; then
-		header='H\tPR\tAUTHOR\tSTATUS\tON YOU\tASSIGNEE\tAGE\tLABELS\tTITLE'
-		row='"\(paint)\t#\(.number)\t\(.author.login)\t\(status)\t\(onYou)\t\(assignee)\t\(age)\t\((workflowLabels | join(" | ")) | if . == "" then "-" else . end)\t\(.title[0:60])"'
+		header='H\tPR\tAUTHOR\tSTATUS\tON YOU'"${fitHeader}"'\tASSIGNEE\tAGE\tLABELS\tTITLE'
+		row='"\(paint)\t#\(.number)\t\(.author.login)\t\(status)\t\(onYou)'"${fitCell}"'\t\(assignee)\t\(age)\t\((workflowLabels | join(" | ")) | if . == "" then "-" else . end)\t\(.title[0:60])"'
 	else
-		header='H\tPR\tAUTHOR\tSTATUS\tON YOU\tASSIGNEE\tTITLE'
-		row='"\(paint)\t#\(.number)\t\(.author.login)\t\(status)\t\(onYou)\t\(assignee)\t\(.title[0:60])"'
+		header='H\tPR\tAUTHOR\tSTATUS\tON YOU'"${fitHeader}"'\tASSIGNEE\tTITLE'
+		row='"\(paint)\t#\(.number)\t\(.author.login)\t\(status)\t\(onYou)'"${fitCell}"'\t\(assignee)\t\(.title[0:60])"'
 	fi
 
 	rows="$(printf '%s' "${json}" | jq -r --arg me "${me}" --arg senderMe "${senderMe}" \
 		--arg repoOwner "${repo%%/*}" --arg yours "${yours}" \
 		--arg prChecked "${prChecked}" --arg mirrorOwner "${LFR_PULLS_REPO%%/*}" \
+		--argjson fit "${fitJson}" \
 		"${_LFR_PULLS_JQ} ${filter} | sort_by(.number) | reverse | .[] | ${row}")"
 
 	if [ -z "${rows}" ]; then
