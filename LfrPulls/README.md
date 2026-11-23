@@ -60,6 +60,13 @@ and their mirror pulls come from `lfrPulls stats <login>`.
 - `lfrPulls ticket <TICKET>` (`t`, alias `lfrpt`) - every pull ever opened for one
   ticket, oldest first, then what that ticket has landed on `liferay/liferay-portal`. A bare
   ticket is the same thing: `lfrPulls LPD-12345`.
+- `lfrPullsTriage` (alias `lfrptr`) - give a reviewer to each open pull of the
+  team fork that has none. For each pull, accept the proposed reviewer (Enter or
+  `y`), select another candidate by its number, skip the pull (`s`), or type a
+  login. Only a `y` at "Apply?" writes. Then, for each pull that you assigned
+  to yourself, it offers a worktree with the branch of the pull
+  (`lfrWorktreePull`). The FIT column of `lfrPulls` uses the same rules, but
+  assigns nothing. See [triage/README.md](triage/README.md).
 - `lfrPullsBump <pull> [-y]` (alias `lfrpb`) - resend an open
   pull of yours on the mirror as a new pull, so it goes back to the top of the
   queue. See [Resend a pull](#resend-a-pull).

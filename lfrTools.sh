@@ -102,8 +102,9 @@ lfrTools() {
 		                a new pull, back at the top of the queue (asks first)
 		  lfrPullsTriage  give a reviewer to each open pull of the team fork
 		                that has none; it shows each pull link with its
-		                proposed reviewer to accept or not,
-		                then it applies after a y
+		                proposed reviewer to accept, change, or skip (s),
+		                then it applies after a y, and offers a worktree
+		                for each pull that you assigned to yourself
 
 		These tools
 		  lfrReload     re-source lfrTools.sh, so edits to any tool take effect

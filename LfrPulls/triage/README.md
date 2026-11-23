@@ -12,6 +12,7 @@ pull `assignee`, not a requested reviewer.
 - The apply mode reads `plan.json`, checks each pull again, and does the writes.
   `lfrPullsTriage` runs it only after you answer `y`. Before that, you can
   keep, change (`--reviewer PULL=LOGIN`), or skip (`--skip PULL`) each pull.
+  At the prompt, `s` skips the pull and goes to the next one.
 
 `lfrPullsTriage -h` has the procedure and the arguments. This file tells how
 the script selects a reviewer.
@@ -175,6 +176,13 @@ Apply mode does these steps for each assignment in the plan:
    only if the status is In Review. It does not change the status.
 
 `--print-only` shows these writes and does not do them.
+
+After the apply, `lfrPullsTriage` asks about each pull that you assigned to
+yourself: "Create a worktree with its branch? [y/N]". It asks only if GitHub
+shows you as the assignee, because the apply can skip a pull. A `y` runs
+`lfrWorktreePull` on the pull. That command fetches the head of the pull into a
+local branch with the name of the pull branch, checks the head SHA, and runs
+`lfrWorktree` (see `../../LfrRepos/README.md`).
 
 ## The report
 
