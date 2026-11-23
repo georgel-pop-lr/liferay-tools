@@ -540,6 +540,7 @@ _lfrPullsLoadLandedSubjects() {
 	local dir
 	if dir="$(_lfrPullsMasterDir "${5}")"; then
 		_lfrPullsLoadMasterSubjects "${dir}" "${2}" "${3}" "${4}"
+		_lfrPullsSpinStop
 		printf '(GitHub commit search failed: merged is read off the local %s, as fresh as its last fetch, tip %s.)\n' \
 			"${LFR_PULLS_MASTER_REF}" \
 			"$(git -C "${dir}" log -1 --format='%cd' --date=format:'%Y-%m-%d %H:%M' "${LFR_PULLS_MASTER_REF}" 2>/dev/null)" >&2
@@ -585,18 +586,21 @@ _lfrPullsWeek() {
 	done
 
 	local since json rows sender title status
+	_lfrPullsSpinStart "Read the closed pulls"
 	if [ -z "${person}" ]; then
-		person="$(_lfrPullsMineUser week)" || return 1
+		person="$(_lfrPullsMineUser week)" || { _lfrPullsSpinStop done; return 1; }
 	fi
 	since="$(date -u -d "${days} days ago" +%Y-%m-%dT%H:%M:%SZ)"
 
 	json="$(_lfrPullsMirrorPersonJson "${person}" closed \
-		number,title,headRefName,author,closedAt)" || return 1
+		number,title,headRefName,author,closedAt)" || { _lfrPullsSpinStop done; return 1; }
 
 	# The pulls come first: their titles are what narrows the subject scan.
+	_lfrPullsSpinStart "Match the titles of the pulls against master"
 	local -A masterSubjects=()
 	_lfrPullsLoadLandedSubjects "${person}" "$(date -d "${days} days ago -1 month" +%Y-%m-%d)" \
-		masterSubjects "${json}" week || return 1
+		masterSubjects "${json}" week || { _lfrPullsSpinStop done; return 1; }
+	_lfrPullsSpinStop done
 
 	rows=""
 	while IFS=$'\t' read -r num sender title; do
@@ -1167,6 +1171,46 @@ _lfrPullsBump() {
 
 	rm -f "${bodyFile}" "${commentFile}"
 	echo "The Jira Git Pull Request field still names #${number}."
+}
+
+# A spinner on stderr with the step and the seconds, for the commands that read
+# GitHub for a long time before they print. It shows only when stderr is a
+# terminal. The loop runs in its own process, started from a command
+# substitution, so the shell prints no job lines.
+#
+# Ctrl-C goes to the job in the foreground (gh), not to the loop. Thus the
+# loop watches the shell: a shell at its prompt waits on the terminal in poll
+# or select, and a busy shell waits in do_wait or a pipe read. If the loop sees
+# the shell at the prompt, it stops and writes nothing more, so that the prompt
+# stays. It also stops after 600 seconds, in case nothing stops it.
+_lfrPullsSpinStart() {
+	_lfrPullsSpinStop
+	[ -t 2 ] || return 0
+	_lfrPullsSpinStartedAt="${_lfrPullsSpinStartedAt:-${SECONDS}}"
+	_lfrPullsSpinPid="$(bash -c '
+		frames="|/-\\" i=0 elapsed="$2"
+		while [ "$((elapsed + SECONDS))" -lt 600 ]; do
+			case "$(cat "/proc/$3/wchan" 2>/dev/null || echo gone)" in
+			gone | *poll* | *select* | *n_tty_read*) exit 0 ;;
+			esac
+			printf "\r\033[K%s %s (%ss)" "${frames:i%4:1}" "$1" "$((elapsed + SECONDS))" >&2
+			i=$((i + 1))
+			sleep 0.15
+		done' _lfrPullsSpin "$1" "$((SECONDS - _lfrPullsSpinStartedAt))" "$$" \
+		</dev/null >/dev/null & echo $!)"
+}
+
+# Stops the spinner and clears its line. With "done", the next start counts
+# the seconds from 0 again.
+_lfrPullsSpinStop() {
+	if [ -n "${_lfrPullsSpinPid:-}" ]; then
+		kill "${_lfrPullsSpinPid}" 2>/dev/null
+		while kill -0 "${_lfrPullsSpinPid}" 2>/dev/null; do sleep 0.01; done
+		_lfrPullsSpinPid=""
+		printf '\r\033[K' >&2
+	fi
+	[ "${1:-}" = "done" ] && _lfrPullsSpinStartedAt=""
+	return 0
 }
 
 _lfrPullsAgo() {
@@ -1946,6 +1990,7 @@ _lfrPullsDashboard() {
 	# Resolved here, not at source time: LfrGit's conf can load after this file,
 	# and LFR_GIT_FORK_ORG is where the team fork comes from.
 	local team="${LFR_PULLS_TEAM:-${LFR_GIT_FORK_ORG:-}}"
+	_lfrPullsSpinStart "Read the open pulls of each fork"
 	forkUser="${person:-${LFR_PULLS_USER:-$(gh api user --jq '.login' 2>/dev/null)}}"
 
 	# Every listing the sections below ask for, named before the first one
@@ -1979,6 +2024,7 @@ _lfrPullsDashboard() {
 
 	local -A _lfrPullsOpenCache=()
 	_lfrPullsPrefetchOpen _lfrPullsOpenCache "${openRepos[@]}"
+	_lfrPullsSpinStop done
 
 	_lfrPullsMirrorSection "${mirrorMode}" "${detail}" || return 1
 
