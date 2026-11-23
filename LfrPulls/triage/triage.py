@@ -28,6 +28,8 @@ import re
 import statistics
 import subprocess
 import sys
+import threading
+import time
 import urllib.parse
 import urllib.request
 
@@ -139,6 +141,59 @@ def jira(path, method="GET", body=None):
 		content = response.read()
 
 	return json.loads(content) if content else None
+
+
+class Progress:
+	"""Show a spinner, the step, and the time on stderr while the plan runs.
+
+	It writes only when stderr is a terminal, so a pipe or a log gets no
+	control characters. It clears its line before the report prints.
+	"""
+
+	FRAMES = "|/-\\"
+
+	def __init__(self):
+		self._enabled = sys.stderr.isatty()
+		self._lock = threading.Lock()
+		self._start = time.monotonic()
+		self._step = ""
+		self._stop = threading.Event()
+		self._thread = None
+
+	def __enter__(self):
+		if self._enabled:
+			self._thread = threading.Thread(target=self._run, daemon=True)
+			self._thread.start()
+
+		return self
+
+	def __exit__(self, *exc):
+		self.stop()
+
+	def step(self, text):
+		with self._lock:
+			self._step = text
+
+	def stop(self):
+		if self._thread:
+			self._stop.set()
+			self._thread.join()
+			self._thread = None
+			sys.stderr.write("\r\033[K")
+			sys.stderr.flush()
+
+	def _run(self):
+		frame = 0
+
+		while not self._stop.wait(0.15):
+			with self._lock:
+				step = self._step
+
+			elapsed = int(time.monotonic() - self._start)
+			sys.stderr.write(
+				f"\r\033[K{self.FRAMES[frame % 4]} {step} ({elapsed}s)")
+			sys.stderr.flush()
+			frame += 1
 
 
 def parallel(function, items, workers=8):
@@ -809,6 +864,12 @@ def build_comment(pick, upstream, role_name):
 
 
 def plan(args):
+	with Progress() as progress:
+		_plan(args, progress)
+
+
+def _plan(args, progress):
+	progress.step("Read the configuration and the upstream head")
 	repo = args.repo
 	config = load_config(repo)
 	unavailable = load_unavailable()
@@ -821,6 +882,7 @@ def plan(args):
 		norm_label(label["name"]): label["name"]
 		for label in gh_get(f"repos/{repo}/labels?per_page=100", paginate=True)}
 
+	progress.step("Read the open pulls")
 	result = subprocess.run(
 		["gh", "pr", "list", "--repo", repo, "--state", "open", "--limit",
 			"200", "--json",
@@ -861,12 +923,14 @@ def plan(args):
 			f"{args.max_prs}. Run again after this run.")
 
 	weigher = Weigher(config, upstream_sha)
+	progress.step("Compute the review load of each reviewer")
 	loads = compute_loads(
 		repo, config, args.window, open_pulls, weigher, roles)
 	totals = {
 		login: total_load(load, args.load_model)
 		for login, load in loads.items()}
 	before = dict(totals)
+	progress.step("Read the commit emails of the reviewers")
 	emails = commit_emails(config, sorted(reviewers))
 	blamer = Blamer(config["master_clone"], emails)
 	stories = StoryFinder(repo)
@@ -881,6 +945,7 @@ def plan(args):
 	}
 	explanations = {}
 
+	progress.step(f"Weigh the changes of {len(candidates)} pulls")
 	weighed_list = parallel(
 		lambda pull: weigher.weigh(
 			repo, pull["number"],
@@ -888,9 +953,12 @@ def plan(args):
 			pull["headRefName"], pull["headRefOid"]),
 		candidates)
 
-	for pull, weighed in zip(candidates, weighed_list):
+	for index, (pull, weighed) in enumerate(zip(candidates, weighed_list)):
 		number = pull["number"]
 		author = pull["author"]["login"]
+		progress.step(
+			f"Score pull #{number} ({index + 1}/{len(candidates)}): "
+			"blame, stories, supersede")
 
 		if weighed["ahead_by"] == 0:
 			report["no_new_work"].append(pull)
@@ -1060,8 +1128,34 @@ def plan(args):
 	with open(args.out, "w") as file:
 		json.dump(plan_data, file, indent="\t")
 
+	progress.stop()
 	print_report(
 		args, report, loads, before, totals, unavailable, explanations, roles)
+
+
+def print_table(out, headers, rows):
+	cells = [[str(cell) for cell in row] for row in rows]
+	widths = [
+		max([len(header)] + [len(row[index]) for row in cells])
+		for index, header in enumerate(headers)]
+	numeric = [
+		bool(cells) and all(
+			row[index].replace(".", "", 1).lstrip("-").isdigit()
+			for row in cells)
+		for index in range(len(headers))]
+
+	def line(values):
+		return "| " + " | ".join(
+			value.rjust(width) if right else value.ljust(width)
+			for value, width, right in zip(values, widths, numeric)) + " |"
+
+	out(line(headers))
+	out("|" + "|".join(
+		"-" * (width + 1) + ":" if right else "-" * (width + 2)
+		for width, right in zip(widths, numeric)) + "|")
+
+	for row in cells:
+		out(line(row))
 
 
 def print_report(
@@ -1073,8 +1167,7 @@ def print_report(
 	out("## Assigned\n")
 
 	if report["assigned"]:
-		out("| Pull | Title | Scope | Weight | Reviewer | Reason |")
-		out("|---|---|---|---|---|---|")
+		rows = []
 
 		for item in report["assigned"]:
 			weight = str(item["weight"]) + (
@@ -1083,9 +1176,13 @@ def print_report(
 			labels = (
 				f" Adds label {', '.join(item['add_labels'])}."
 				if item["add_labels"] else "")
-			out(
-				f"| {item['url']} | {item['title'][:60]} | {item['role']} | "
-				f"{weight} | {item['reviewer']} | {item['reason']}.{labels} |")
+			rows.append([
+				item["url"], item["title"][:60], item["role"], weight,
+				item["reviewer"], f"{item['reason']}.{labels}"])
+
+		print_table(
+			out, ["Pull", "Title", "Scope", "Weight", "Reviewer", "Reason"],
+			rows)
 
 		out("\nComments:\n")
 
@@ -1125,18 +1222,25 @@ def print_report(
 
 	out(f"\n## Updated Load Per Reviewer ({args.window} days, "
 		f"{args.load_model})\n")
-	out("| Role | Reviewer | Before | After | Completed | Open | Velocity |")
-	out("|---|---|---|---|---|---|---|")
+	rows = []
 
 	for role in ("back", "front"):
 		for login in roles[role]:
 			load = loads[login]
 			velocity = load["completed_count"] / max(1, load["open_count"])
 			status = f" ({unavailable[login]})" if login in unavailable else ""
-			out(
-				f"| {role}end | {login}{status} | {before[login]:.0f} | "
-				f"{after[login]:.0f} | {load['completed_count']} | "
-				f"{load['open_count']} | {velocity:.1f} |")
+			rows.append([
+				f"{role}end", f"{login}{status}", f"{before[login]:.0f}",
+				f"{after[login]:.0f}", load["completed_count"],
+				load["open_count"], f"{velocity:.1f}"])
+
+	print_table(
+		out,
+		[
+			"Role", "Reviewer", "Before", "After", "Completed", "Open",
+			"Velocity"
+		],
+		rows)
 
 	out("\n## Notes\n")
 	out("\n".join(f"- {note}" for note in dict.fromkeys(notes)) or "None.")
@@ -1149,15 +1253,20 @@ def print_report(
 
 		for role_name, table in explanations.get(args.explain, {}).items():
 			out(f"\n{role_name}:\n")
-			out("| Reviewer | Load | Load norm | Blame lines | Story pulls | "
-				"Expertise | Score |")
-			out("|---|---|---|---|---|---|---|")
-
-			for row in table:
-				out(
-					f"| {row['login']} | {row['load']:.0f} | "
-					f"{row['load_norm']:.2f} | {row['blame']} | {row['story']} | "
-					f"{row['expertise']:.2f} | {row['score']:.2f} |")
+			print_table(
+				out,
+				[
+					"Reviewer", "Load", "Load norm", "Blame lines",
+					"Story pulls", "Expertise", "Score"
+				],
+				[
+					[
+						row["login"], f"{row['load']:.0f}",
+						f"{row['load_norm']:.2f}", row["blame"], row["story"],
+						f"{row['expertise']:.2f}", f"{row['score']:.2f}"
+					]
+					for row in table
+				])
 
 
 # Apply
