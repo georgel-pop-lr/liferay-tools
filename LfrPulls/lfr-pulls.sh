@@ -359,7 +359,7 @@ _lfrPullsStatsTable() {
 		tS=$((tS + s)); tM=$((tM + m)); tR=$((tR + r))
 	done
 	printf 'MONTH\tSENT\tMERGED\tREJECTED\n%sTOTAL\t%s\t%s\t%s\n' \
-		"${rows}" "${tS}" "${tM}" "${tR}" | column -t -s $'\t'
+		"${rows}" "${tS}" "${tM}" "${tR}" | _lfrPullsTable
 }
 
 # Your per-month PR stats, deciding merged/rejected by whether each PR's exact
@@ -432,7 +432,7 @@ _lfrPullsStatsAll() {
 	done
 
 	printf 'MONTH\tSENT\tCLOSED\n%sTOTAL\t%s\t%s\n' "${rows}" "${tSent}" "${tClosed}" |
-		column -t -s $'\t'
+		_lfrPullsTable
 }
 
 # Per-month counts of PRs sent, merged, and rejected. Yours by default (merged =
@@ -630,7 +630,7 @@ _lfrPullsWeek() {
 		echo "No pulls by ${person} closed in the last ${days} day(s) on ${LFR_PULLS_REPO}."
 		return 0
 	fi
-	printf 'PR\tSENDER\tSTATUS\tTITLE\n%s' "${rows}" | column -t -s $'\t' |
+	printf 'PR\tSENDER\tSTATUS\tTITLE\n%s' "${rows}" | _lfrPullsTable |
 		_lfrPullsLinkify "${LFR_PULLS_REPO}"
 }
 
@@ -875,11 +875,11 @@ _lfrPullsRejectedSection() {
 	if _lfrPullsLinksOn; then
 		rows="$(printf '%s\n' "${rowsWithUrl}" | cut -f1-6)"
 		printf 'PR\tCLOSED\tTRIES\tRESENT\tWHY\tTITLE\n%s\n' "${rows}" |
-			column -t -s $'\t' | sed 's/^/  /' |
+			_lfrPullsTable | sed 's/^/  /' |
 			_lfrPullsLinkifyUrls "$(printf '%s\n' "${rowsWithUrl}" | cut -f1,7 | sed 's/^#//')"
 	else
 		printf 'PR\tCLOSED\tTRIES\tRESENT\tWHY\tTITLE\tCOMMENT\n%s\n' "${rowsWithUrl}" |
-			column -t -s $'\t' | sed 's/^/  /'
+			_lfrPullsTable | sed 's/^/  /'
 	fi
 
 	tickets="$(printf '%s\n' "${rowsWithUrl}" | grep -c .)"
@@ -951,7 +951,7 @@ _lfrPullsTicket() {
 	if [ -z "${rows}" ]; then
 		echo "No pull on ${LFR_PULLS_REPO} has ${ticket} in its title."
 	else
-		printf 'PR\tSENDER\tSTATE\tCREATED\tCLOSED\tTITLE\n%s\n' "${rows}" | column -t -s $'\t' |
+		printf 'PR\tSENDER\tSTATE\tCREATED\tCLOSED\tTITLE\n%s\n' "${rows}" | _lfrPullsTable |
 			_lfrPullsLinkify "${LFR_PULLS_REPO}"
 		printf '\n%s pull(s) for %s: %s open, %s closed.\n' \
 			"$(printf '%s' "${json}" | jq 'length')" "${ticket}" \
@@ -1522,12 +1522,42 @@ _LFR_PULLS_JQ='
 # either way, and NO_COLOR honoured. The caller decides that and passes "true"
 # as $1, because this runs mid-pipe, where [ -t 1 ] sees the pipe and never
 # the terminal.
+# Lay a tab-separated table out the way triage.py's print_table does: " | "
+# between the columns, a border on each side, and a rule under the header, so
+# each cell reads as its own. The first line is the header.
+#
+# With `marked`, the first field of each line is the row marker of
+# _lfrPullsPaint. It stays in front of the line, outside the table, and the
+# rule gets the marker R, which paints as plain text.
+_lfrPullsTable() {
+	local marked="${1:-}"
+
+	# The extra empty column makes column pad the last real one too, so the
+	# right border lines up.
+	sed 's/$/\t/' | column -t -s $'\t' -o ' | ' |
+		awk -v marked="${marked}" '{
+			sub(/ +$/, "")
+			marker = ""
+			if (marked != "") {
+				marker = substr($0, 1, 1) " "
+				$0 = substr($0, 5)
+			}
+			line = "| " $0
+			print marker line
+			if (NR == 1) {
+				rule = line
+				gsub(/[^|]/, "-", rule)
+				print (marked != "" ? "R " : "") rule
+			}
+		}'
+}
+
 _lfrPullsPaint() {
 	local on="${1:-false}"
 
 	awk -v on="${on}" '{
 		marker = substr($0, 1, 1)
-		rest = substr($0, 4)
+		rest = substr($0, 3)
 		if ((on == "true") && (marker == "A")) {
 			print "  \033[1;38;5;231m" rest "\033[0m"
 		}
@@ -1564,7 +1594,7 @@ _lfrPullsLinkify() {
 	_lfrPullsLinksOn || { cat; return; }
 
 	esc=$'\033'
-	sed -E "s|^([[:space:]]*(${esc}\\[[0-9;]*m)?)#([0-9]+)|\1${esc}]8;;https://github.com/${repo}/pull/\3${esc}\\\\#\3${esc}]8;;${esc}\\\\|"
+	sed -E "s|^([[:space:]]*(${esc}\\[[0-9;]*m)?[|]? ?)#([0-9]+)|\1${esc}]8;;https://github.com/${repo}/pull/\3${esc}\\\\#\3${esc}]8;;${esc}\\\\|"
 }
 
 # Whether a #number should be rendered as an OSC 8 link at all: on a terminal
@@ -1593,7 +1623,7 @@ _lfrPullsLinkifyUrls() {
 	script=""
 	while IFS=$'\t' read -r number url; do
 		[ -z "${number}" ] || [ -z "${url}" ] && continue
-		script="${script}s|^([[:space:]]*)#${number}\\b|\\1${esc}]8;;${url}${esc}\\\\#${number}${esc}]8;;${esc}\\\\|;"
+		script="${script}s|^([[:space:]]*[|]? ?)#${number}\\b|\\1${esc}]8;;${url}${esc}\\\\#${number}${esc}]8;;${esc}\\\\|;"
 	done <<<"${map}"
 
 	[ -z "${script}" ] && { cat; return; }
@@ -1791,7 +1821,7 @@ _lfrPullsForkSection() {
 		return 0
 	fi
 	[ -n "${quiet}" ] && printf '\n%s\n' "${heading}"
-	printf "${header}"'\n%s\n' "${rows}" | column -t -s $'\t' | _lfrPullsPaint "${color}" |
+	printf "${header}"'\n%s\n' "${rows}" | _lfrPullsTable marked | _lfrPullsPaint "${color}" |
 		_lfrPullsLinkify "${repo}"
 	_lfrPullsCountLine "$(printf '%s\n' "${rows}" | grep -c .)" "${total}" \
 		"${json}" "${me}" "${senderMe}" "${repo%%/*}" "${yours}" "${prChecked}" \
@@ -1851,7 +1881,7 @@ _lfrPullsMirrorSection() {
 		_lfrPullsCountLine 0 "${total}" "${json}" "${me}" "${senderMe}" \
 			"${LFR_PULLS_REPO%%/*}" true true "${detail}"
 	else
-		printf "${header}"'\n%s\n' "${rows}" | column -t -s $'\t' | _lfrPullsPaint "${color}" |
+		printf "${header}"'\n%s\n' "${rows}" | _lfrPullsTable marked | _lfrPullsPaint "${color}" |
 			_lfrPullsLinkify "${LFR_PULLS_REPO}"
 		_lfrPullsCountLine "$(printf '%s\n' "${rows}" | grep -c .)" "${total}" \
 			"${json}" "${me}" "${senderMe}" "${LFR_PULLS_REPO%%/*}" true true \
@@ -1924,7 +1954,7 @@ _lfrPullsTeams() {
 		rows="${rows}${t}	${t#liferay-}	${count:-?}
 "
 	done
-	printf 'TEAM\tSHORT NAME\tOPEN\n%s' "${rows}" | column -t -s $'\t'
+	printf 'TEAM\tSHORT NAME\tOPEN\n%s' "${rows}" | _lfrPullsTable
 
 	printf '\nName a team in full, without the prefix, or by any unique part of it:\n'
 	printf '  lfrPulls liferay-frontend, lfrPulls frontend, lfrPulls experience\n'
