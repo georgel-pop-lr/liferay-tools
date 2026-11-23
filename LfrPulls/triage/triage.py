@@ -1479,10 +1479,15 @@ def _fit(args, progress):
 
 	missing = [number for number in numbers if not cached(number)]
 
+	# The plan gives the pulls in order and adds each pick to the load, so a
+	# fit depends on the other pulls. If one result is missing, score all again.
 	if missing:
+		missing = numbers
 		fits = _fit_pulls(
 			args, progress, login, repo, open_pulls,
-			[by_number[number] for number in missing])
+			sorted(
+				(by_number[number] for number in missing),
+				key=lambda pull: pull["createdAt"]))
 
 		for number in missing:
 			cache[cache_key(number)] = {
@@ -1553,25 +1558,24 @@ def _fit_pulls(args, progress, login, repo, open_pulls, pulls):
 
 			needed = ["back", "front"] if scope == "mixed" else [scope]
 
-		needed = [role for role in needed if login in roles[role]]
-
-		if not needed:
-			fits[number] = "no-role"
-
-			continue
-
 		author = pull["author"]["login"]
 		supersede = find_supersede(repo, pull, reviewers)
 		hits = blamer.blame(weighed) if weighed["merge_base"] else {}
 		keys = list(dict.fromkeys(KEY_PATTERN.findall(pull["title"])))
 		story_hits = find_story_hits(stories, keys, number)
-		verdict = "ok"
+		verdict = "no-role"
 
+		# Score each role, also a role that LOGIN does not have, because the
+		# pick of each role adds to the load, as in the plan.
 		for role in needed:
 			available = [
 				reviewer for reviewer in roles[role]
 				if reviewer not in unavailable or reviewer == login]
 			pool = [reviewer for reviewer in available if reviewer != author]
+
+			if not pool:
+				continue
+
 			table, winner = score_pool(
 				args, available, pool, totals, hits, story_hits)
 			pick = winner["login"]
@@ -1579,12 +1583,19 @@ def _fit_pulls(args, progress, login, repo, open_pulls, pulls):
 			if supersede and supersede["reviewer"] in pool:
 				pick = supersede["reviewer"]
 
-			mine = next(row for row in table if row["login"] == login)
+			totals[pick] += min(weighed["weight"], args.weight_cap)
+			mine = next(
+				(row for row in table if row["login"] == login), None)
+
+			if not mine:
+				continue
 
 			if pick == login:
 				verdict = "best"
-			elif verdict == "ok" and (mine["blame"] or mine["story"]):
+			elif verdict != "best" and (mine["blame"] or mine["story"]):
 				verdict = "good"
+			elif verdict == "no-role":
+				verdict = "ok"
 
 		fits[number] = verdict
 

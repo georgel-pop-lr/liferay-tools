@@ -197,6 +197,10 @@ story, and load as the plan, and it writes nothing on GitHub or Jira. The values
 are `best`, `good`, `ok`, `no-role`, and `?`. `lfrPulls` shows them in the FIT
 column of the team fork, and `../README.md` tells what each value means.
 
+The fit mode gives the pulls in the same order as the plan, oldest first, and
+adds each pick to the load. Thus `best` is the pull that the plan gives to
+LOGIN. If one result is missing in the cache, it scores all the pulls again.
+
 LOGIN stays in the pool also if `availability.local.yaml` marks LOGIN as not
 available, because LOGIN asks the question. The results stay in
 `~/.cache/pr-review-triage/fit.json` for 12 hours, or until the head of the
