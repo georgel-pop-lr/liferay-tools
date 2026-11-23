@@ -26,12 +26,12 @@ _lfrPullsTriageHelp() {
 
 		The plan reads GitHub, Jira, and the master clone, and writes nothing.
 		Then it shows each planned pull with its link and the proposed
-		reviewer, and asks "Accept? [Y/n/<login>]". If 2 or more reviewers
+		reviewer, and asks "Accept? [Y/s/<login>]". If 2 or more reviewers
 		can take the pull, it lists the best candidates with their score
 		(lower is better), the proposed one first, and asks for a number:
 		  Enter, y  accept the proposed reviewer
 		  <number>  select that candidate
-		  n         do not assign this pull
+		  s, n      skip: do not assign this pull
 		  <login>   assign this reviewer instead
 		Then it prints each write and asks "Apply? [y/N]". Only a y writes:
 		the assignee, the scope label, a comment, and the Jira assignee of
@@ -85,7 +85,7 @@ _lfrPullsTriage() {
 	fi
 
 	echo
-	echo "Accept the proposed reviewer of each pull. Enter or y accepts it, n skips the"
+	echo "Accept the proposed reviewer of each pull. Enter or y accepts it, s skips the"
 	echo "pull, a number selects another candidate, and a login assigns that person."
 
 	local -a applyArgs=()
@@ -105,10 +105,11 @@ _lfrPullsTriage() {
 				echo "    $((i + 1))) ${logins[${i}]//:/  score }$([ "${i}" -eq 0 ] && echo "  <- proposed (${reason})")"
 			done
 
-			read -r -p "  Choose [1-${#logins[@]}/n/<login>] (Enter = 1): " answer < /dev/tty
+			echo "    s) skip, do not assign this pull"
+			read -r -p "  Choose [1-${#logins[@]}/s/<login>] (Enter = 1): " answer < /dev/tty
 		else
 			echo "  proposed reviewer: ${reviewer} (${reason})"
-			read -r -p "  Accept? [Y/n/<login>] " answer < /dev/tty
+			read -r -p "  Accept? [Y/s/<login>] (s = skip) " answer < /dev/tty
 		fi
 
 		choice="${answer}"
@@ -119,7 +120,7 @@ _lfrPullsTriage() {
 
 		case "${choice}" in
 		"" | y | Y | "${reviewer}") kept=$((kept + 1)) ;;
-		n | N) applyArgs+=(--skip "${number}") ;;
+		s | S | skip | n | N) applyArgs+=(--skip "${number}"); echo "  skipped" ;;
 		*) applyArgs+=(--reviewer "${number}=${choice}"); kept=$((kept + 1)) ;;
 		esac
 	done < <(jq -r '.assigned[] | [.number, .reviewer, .reason, .url, .title,
