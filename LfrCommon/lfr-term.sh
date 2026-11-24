@@ -60,17 +60,27 @@ _lfrConfirm() {
 
 # A spinner with the step and the seconds, on the terminal (/dev/tty). It writes
 # to /dev/tty and not to stderr, because a logged run (_lfrLogRun) sends stderr
-# into tee, which is not a terminal. With no terminal, it shows nothing.
+# into tee, which is not a terminal. With no terminal, it shows nothing. Use it
+# around a phase of several commands; for one command, use _lfrStep.
+#
+# One spinner at a time. The spinner belongs to the shell that started it
+# ($BASHPID). If a subshell (a command substitution, a background job) calls
+# _lfrSpinStart while the spinner of a parent runs, nothing changes and the
+# parent label stays. In the owner shell, a new _lfrSpinStart replaces the label.
 #
 # The loop runs in its own process, started from a command substitution, so the
 # shell prints no job lines. Ctrl-C goes to the job in the foreground, not to the
 # loop. Thus the loop watches the shell: if the shell waits at its prompt (poll,
 # select, or a tty read), the loop stops, so that the prompt stays clean. It also
-# stops after one hour. _lfrPullsSpinStart in lfr-pulls.sh is the first copy of
-# this loop.
+# stops after one hour.
 _lfrSpinStart() {
+	if [ -n "${_lfrSpinPid:-}" ] && [ "${_lfrSpinOwner:-}" != "${BASHPID}" ] &&
+		kill -0 "${_lfrSpinPid}" 2>/dev/null; then
+		return 0
+	fi
 	_lfrSpinStop
 	{ : >/dev/tty; } 2>/dev/null || return 0
+	_lfrSpinOwner="${BASHPID}"
 	_lfrSpinPid="$(bash -c '
 		frames="|/-\\" i=0
 		while [ "${SECONDS}" -lt 3600 ]; do
@@ -83,26 +93,39 @@ _lfrSpinStart() {
 		done' _lfrSpin "$1" "$$" </dev/null >/dev/tty 2>/dev/null & echo $!)"
 }
 
-# Stops the spinner and clears its line.
+# Stops the spinner and clears its line. Only the owner shell stops it.
 _lfrSpinStop() {
-	[ -n "${_lfrSpinPid:-}" ] || return 0
+	[ -n "${_lfrSpinPid:-}" ] && [ "${_lfrSpinOwner:-}" = "${BASHPID}" ] || return 0
 	kill "${_lfrSpinPid}" 2>/dev/null
 	while kill -0 "${_lfrSpinPid}" 2>/dev/null; do sleep 0.01; done
 	_lfrSpinPid=""
 	{ printf '\r\033[K' >/dev/tty; } 2>/dev/null
 }
 
-# Runs one step of a long command and shows "<label> (<seconds>s)" with a spinner
-# while the step runs, so a step that waits (a push, a fetch, a 1Password
-# approval) shows which step it is. The output of the step goes to a temporary
-# file and prints when the step ends, because a line from the step would break
-# the spinner line. Stderr prints with stdout. With no terminal, the step runs
-# as is. Returns the exit code of the step. $1 is the label, the rest is the
-# command (a function is fine).
+# Runs one step of a command and shows "<label> (<seconds>s)" with a spinner
+# while the step runs, so a step that waits (a push, a fetch, a gh call, a
+# 1Password approval) shows which step it is. This is the pattern for each step
+# of each lfr tool:
+#
+#     _lfrStep "Push master to origin" git push origin master
+#     json="$(_lfrStep "Read the open pulls" gh pr list --json number)"
+#
+# The output of the step goes to temporary files and prints when the step ends,
+# because a line from the step would break the spinner line. Stdout prints to
+# stdout and stderr to stderr, so a command substitution gets only the stdout.
+# Do not use it for an interactive command (git rebase -i, a prompt) or for a
+# command that streams a long output (ant all), since the output then shows only
+# at the end.
+#
+# With no terminal, the step runs as is. If a spinner already runs (an outer
+# step, or _lfrSpinStart around a phase), the step also runs as is, and the outer
+# label stays. Returns the exit code of the step. $1 is the label, the rest is
+# the command (a function is fine).
 _lfrStep() {
-	local label="${1}" out rc
+	local label="${1}" out err rc
 	shift
-	if ! { : >/dev/tty; } 2>/dev/null; then
+	if ! { : >/dev/tty; } 2>/dev/null ||
+		{ [ -n "${_lfrSpinPid:-}" ] && kill -0 "${_lfrSpinPid}" 2>/dev/null; }; then
 		"$@"
 		return
 	fi
@@ -110,11 +133,13 @@ _lfrStep() {
 		"$@"
 		return
 	}
+	err="${out}.err"
 	_lfrSpinStart "${label}"
-	"$@" >"${out}" 2>&1
+	"$@" >"${out}" 2>"${err}"
 	rc=$?
 	_lfrSpinStop
 	cat "${out}"
-	rm -f "${out}"
+	cat "${err}" >&2
+	rm -f "${out}" "${err}"
 	return "${rc}"
 }
