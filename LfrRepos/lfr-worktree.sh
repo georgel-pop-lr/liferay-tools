@@ -87,7 +87,7 @@ _lfrWorktreeCreateDatabase() {
 		return 0
 	fi
 
-	if PGPASSWORD="${password}" psql -h "${host}" -p "${port}" -U "${user}" -tAc \
+	if PGPASSWORD="${password}" _lfrStep "Check the database ${db_name}" psql -h "${host}" -p "${port}" -U "${user}" -tAc \
 			"select 1 from pg_database where datname = '${db_name}'" 2>/dev/null |
 			grep -q 1; then
 		echo "${caller}: database ${db_name} already exists" >&2
@@ -97,7 +97,7 @@ _lfrWorktreeCreateDatabase() {
 
 	# template0 with an explicit encoding, so the new database does not inherit whatever
 	# the cluster's template1 happens to carry.
-	if PGPASSWORD="${password}" psql -h "${host}" -p "${port}" -U "${user}" -q -c \
+	if PGPASSWORD="${password}" _lfrStep "Create the database ${db_name}" psql -h "${host}" -p "${port}" -U "${user}" -q -c \
 			"create database \"${db_name}\" with encoding 'UTF8' lc_collate 'en_US.UTF-8' lc_ctype 'en_US.UTF-8' template template0" \
 			2>/dev/null; then
 		echo "${caller}: created database ${db_name}" >&2
@@ -313,7 +313,7 @@ _lfrWorktreeSourcePick() {
 
 		# The commit must be in this repo too, which another clone may not share.
 		if ! git cat-file -e "${commit}^{commit}" 2>/dev/null; then
-			git fetch --quiet --no-tags "${src}" "$(git -C "${src}" branch --show-current)" 2>/dev/null ||
+			_lfrStep "Fetch the build commit from ${src}" git fetch --quiet --no-tags "${src}" "$(git -C "${src}" branch --show-current)" 2>/dev/null ||
 				true
 		fi
 
@@ -383,7 +383,7 @@ _lfrWorktreeCopyBundle() {
 
 	echo "lfrWorktree: copying the bundle ${src_bundle} -> ${dst_bundle}..." >&2
 
-	rsync -a "${delete[@]}" \
+	_lfrStep "Copy the bundle ${src_bundle}" rsync -a "${delete[@]}" \
 		--include=/data/ --include='/data/license/***' --exclude='/data/*' \
 		--exclude=/deploy/ --exclude=/elasticsearch-sidecar/ --exclude=/glowroot/data/ \
 		--exclude=/logs/ --exclude=/osgi/state/ --exclude=/reports/ \
@@ -400,7 +400,7 @@ _lfrWorktreeCopyBundle() {
 
 	if [ -n "${sidecar}" ] && [ -d "${src_bundle}/elasticsearch-sidecar/${sidecar}" ]; then
 		mkdir -p "${dst_bundle}/elasticsearch-sidecar"
-		rsync -a "${delete[@]}" --exclude=/logs/ "${src_bundle}/elasticsearch-sidecar/${sidecar}" \
+		_lfrStep "Copy the Elasticsearch sidecar ${sidecar}" rsync -a "${delete[@]}" --exclude=/logs/ "${src_bundle}/elasticsearch-sidecar/${sidecar}" \
 			"${dst_bundle}/elasticsearch-sidecar/" || return 1
 	fi
 
@@ -419,7 +419,7 @@ _lfrWorktreeCopyBundle() {
 		cd "${src}" &&
 		git ls-files --others --ignored --exclude-standard --directory -- "${tops[@]}" |
 		command grep -vE "^[^/]*\\.${USER}\\.properties/?$"
-	) | rsync -rlpD --files-from=- "${src}/" "${dir}/" || return 1
+	) | _lfrStep "Copy the build state of ${src}" rsync -rlpD --files-from=- "${src}/" "${dir}/" || return 1
 
 	# Gradle reads the bundle paths from .gradle/gradle.properties, which ant writes with
 	# absolute paths. Point the paths of the source bundle at the new bundle, and the
@@ -593,7 +593,7 @@ lfrWorktree() {
 		exists=1
 	elif [ "${remote}" != "${base}" ] && git remote get-url "${remote}" >/dev/null 2>&1; then
 		echo "lfrWorktree: fetching ${remote} ${ref}..." >&2
-		git fetch "${remote}" "${ref}" || return 1
+		_lfrStep "Fetch ${remote} ${ref}" git fetch "${remote}" "${ref}" || return 1
 	elif ! git rev-parse --verify --quiet "${base}^{commit}" >/dev/null; then
 		echo "lfrWorktree: base ref '${base}' not found (not a local ref or <remote>/<ref>)" >&2
 		return 1
@@ -628,15 +628,15 @@ lfrWorktree() {
 		# The branch already exists: check it out in the new worktree (git refuses
 		# if it is already checked out elsewhere; relay that error). base is ignored.
 		echo "lfrWorktree: branch ${branch} exists; checking it out in ${dir}..." >&2
-		git worktree add "${dir}" "${branch}" || return 1
+		_lfrStep "Check out ${branch} in ${dir}" git worktree add "${dir}" "${branch}" || return 1
 	elif [ -n "${source}" ]; then
 		# Cut the branch from the commit of the copied bundle, not from the tip of the
 		# base, so the worktree and its bundle hold the same code.
 		echo "lfrWorktree: cutting ${branch} from ${source_commit:0:13}, the build of ${source}" >&2
-		git worktree add -b "${branch}" "${dir}" "${source_commit}" || return 1
+		_lfrStep "Check out ${branch} in ${dir}" git worktree add -b "${branch}" "${dir}" "${source_commit}" || return 1
 	else
 		# New branch off the base ref, fetched above.
-		git worktree add -b "${branch}" "${dir}" "${base}" || return 1
+		_lfrStep "Check out ${branch} in ${dir}" git worktree add -b "${branch}" "${dir}" "${base}" || return 1
 	fi
 
 	# Copy the invoking clone's per-user (gitignored) *.${USER}.properties into the
@@ -1415,7 +1415,7 @@ _lfrWorktreeDropDatabase() {
 		return 0
 	fi
 
-	if ! PGPASSWORD="${password}" psql -h "${host}" -p "${port}" -U "${user}" -tAc \
+	if ! PGPASSWORD="${password}" _lfrStep "Check the database ${db_name}" psql -h "${host}" -p "${port}" -U "${user}" -tAc \
 			"select 1 from pg_database where datname = '${db_name}'" 2>/dev/null |
 			grep -q 1; then
 		echo "lfrWorktreeRemove: there is no ${db_name} database to drop" >&2
@@ -1432,7 +1432,7 @@ _lfrWorktreeDropDatabase() {
 		return 0
 	fi
 
-	connections="$(PGPASSWORD="${password}" psql -h "${host}" -p "${port}" -U "${user}" -tAc \
+	connections="$(PGPASSWORD="${password}" _lfrStep "Count the connections to ${db_name}" psql -h "${host}" -p "${port}" -U "${user}" -tAc \
 		"select count(*) from pg_stat_activity where datname = '${db_name}'" 2>/dev/null)"
 
 	if [ "${connections:-0}" != "0" ]; then
@@ -1441,10 +1441,10 @@ _lfrWorktreeDropDatabase() {
 		return 0
 	fi
 
-	size="$(PGPASSWORD="${password}" psql -h "${host}" -p "${port}" -U "${user}" -tAc \
+	size="$(PGPASSWORD="${password}" _lfrStep "Measure the database ${db_name}" psql -h "${host}" -p "${port}" -U "${user}" -tAc \
 		"select pg_size_pretty(pg_database_size('${db_name}'))" 2>/dev/null)"
 
-	if PGPASSWORD="${password}" psql -h "${host}" -p "${port}" -U "${user}" -q -c \
+	if PGPASSWORD="${password}" _lfrStep "Drop the database ${db_name}" psql -h "${host}" -p "${port}" -U "${user}" -q -c \
 			"drop database \"${db_name}\"" 2>/dev/null; then
 		echo "lfrWorktreeRemove: dropped the ${db_name} database (${size:-unknown size})" >&2
 	else
@@ -1622,10 +1622,10 @@ lfrWorktreeRemove() {
 	fi
 
 	if [ "${force}" = "--force" ]; then
-		git worktree remove --force "${dir}" || return 1
+		_lfrStep "Remove the worktree ${dir}" git worktree remove --force "${dir}" || return 1
 		git branch -D "${branch}" || return 1
 	else
-		git worktree remove "${dir}" || {
+		_lfrStep "Remove the worktree ${dir}" git worktree remove "${dir}" || {
 			echo "lfrWorktreeRemove: worktree has changes; rerun with --force to discard them" >&2
 			return 1
 		}
@@ -1654,12 +1654,12 @@ lfrWorktreeRemove() {
 	fi
 
 	local bundle_size
-	bundle_size="$(du -sh "${bundle_dir}" 2>/dev/null | cut -f1)"
+	bundle_size="$(_lfrStep "Measure the bundle ${bundle_dir}" du -sh "${bundle_dir}" 2>/dev/null | cut -f1)"
 
 	if [ -n "${keep_bundle}" ]; then
 		echo "lfrWorktreeRemove: kept ${bundle_dir} (${bundle_size:-unknown size}) as asked" >&2
 	else
-		rm -rf "${bundle_dir}" || return 1
+		_lfrStep "Delete the bundle ${bundle_dir}" rm -rf "${bundle_dir}" || return 1
 		echo "lfrWorktreeRemove: deleted the bundle ${bundle_dir} (${bundle_size:-unknown size})" >&2
 	fi
 
@@ -1706,7 +1706,7 @@ _lfrWorktreeRenameDatabase() {
 		return 1
 	fi
 
-	if ! PGPASSWORD="${password}" psql -h "${host}" -p "${port}" -U "${user}" -tAc \
+	if ! PGPASSWORD="${password}" _lfrStep "Check the database ${old_db}" psql -h "${host}" -p "${port}" -U "${user}" -tAc \
 			"select 1 from pg_database where datname = '${old_db}'" 2>/dev/null |
 			grep -q 1; then
 		echo "lfrWorktreeRename: there is no ${old_db} database to rename" >&2
@@ -1714,7 +1714,7 @@ _lfrWorktreeRenameDatabase() {
 		return 2
 	fi
 
-	if PGPASSWORD="${password}" psql -h "${host}" -p "${port}" -U "${user}" -q -c \
+	if PGPASSWORD="${password}" _lfrStep "Rename the database ${old_db}" psql -h "${host}" -p "${port}" -U "${user}" -q -c \
 			"alter database \"${old_db}\" rename to \"${new_db}\"" 2>/dev/null; then
 		echo "lfrWorktreeRename: renamed the database ${old_db} to ${new_db}, data and all" >&2
 
@@ -2138,9 +2138,9 @@ lfrWorktreeRename() {
 
 		if [ -d "${state_dir}" ]; then
 			local state_size
-			state_size="$(du -sh "${state_dir}" | cut -f1)"
+			state_size="$(_lfrStep "Measure the OSGi state" du -sh "${state_dir}" | cut -f1)"
 
-			rm -rf "${state_dir}" &&
+			_lfrStep "Delete the OSGi state" rm -rf "${state_dir}" &&
 				echo "lfrWorktreeRename: deleted the OSGi state ${state_dir} (${state_size}), which named the old bundle; the first boot rebuilds it" >&2
 		fi
 	fi
@@ -2293,7 +2293,7 @@ lfrWorktreePull() {
 	fi
 
 	local head sha branch dir
-	IFS=$'\t' read -r head sha < <(gh pr view "${number}" --repo "${repo}" \
+	IFS=$'\t' read -r head sha < <(_lfrStep "Read ${repo}#${number}" gh pr view "${number}" --repo "${repo}" \
 		--json headRefName,headRefOid --jq '[.headRefName, .headRefOid] | @tsv' 2>/dev/null)
 
 	if [ -z "${sha}" ]; then
@@ -2981,7 +2981,7 @@ lfrWorktreeIdeaInit() {
 	# below, and the rest of it is that clone's open editors and window layout.
 	echo "lfrWorktreeIdeaInit: copying the project model from ${src}..." >&2
 
-	rsync --archive --ignore-existing \
+	_lfrStep "Copy the project model from ${src}" rsync --archive --ignore-existing \
 		--exclude=dataSources --exclude='dataSources*.xml' --exclude=easycode \
 		--exclude=shelf --exclude=workspace.xml \
 		"${src}/.idea/" "${dir}/.idea/" || return 1
@@ -3003,18 +3003,23 @@ lfrWorktreeIdeaInit() {
 	# says nothing for that long reads as a hang, so say what is happening first.
 	echo "lfrWorktreeIdeaInit: scanning ${src} for .iml files (the slow part)..." >&2
 
+	_lfrSpinStart "Scan ${src} for .iml files"
 	(cd "${src}" && find . -name '*.iml' -not -path '*/node_modules/*' -printf '%P\n') |
 		sort | comm -23 - "${tracked}" >"${list}"
+	_lfrSpinStop
 
 	if [ -s "${list}" ]; then
 		echo "lfrWorktreeIdeaInit: copying $(wc -l <"${list}") .iml files..." >&2
 
+		_lfrSpinStart "Copy the .iml files"
 		tar --create --directory="${src}" --files-from="${list}" --file=- |
 			tar --extract --directory="${dir}" --file=- || {
+			_lfrSpinStop
 			rm -f "${list}" "${tracked}"
 
 			return 1
 		}
+		_lfrSpinStop
 
 		echo "lfrWorktreeIdeaInit: copied $(wc -l <"${list}") .iml files" >&2
 	fi
