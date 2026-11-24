@@ -155,7 +155,7 @@ _lfrBundleStopLines() {
 	local pid base name
 	while IFS=$'\t' read -r pid base; do
 		[ -n "${pid}" ] || continue
-		name="$(basename "$(dirname "${base}")")"
+		name="$(_lfrBundleDisplayName "$(dirname "${base}")")"
 		_lfrBundleKill "${pid}" "${name}"
 	done
 }
@@ -194,7 +194,7 @@ _lfrBundleToggleOne() {
 	shift
 	pid="$(_lfrBundlePidForDir "${path}")"
 	if [ -n "${pid}" ]; then
-		_lfrBundleKill "${pid}" "$(basename "${path}")"
+		_lfrBundleKill "${pid}" "$(_lfrBundleDisplayName "${path}")"
 	else
 		"${_lfrBundleDir}/start-liferay.sh" "$@" "${path}"
 	fi
@@ -206,7 +206,9 @@ _lfrBundleResolve() {
 	local arg="${1}" matches=() path name
 	[ -d "${arg}" ] && { (cd "${arg}" && pwd); return 0; }
 	while IFS=$'\t' read -r path name; do
-		[ "$(basename "${path}")" = "${arg}" ] && matches+=("${path}")
+		# The name, not the folder: the bundle of a nested worktree is a folder named
+		# bundles, and it goes by the name of the worktree around it.
+		[ "${name%%  (*}" = "${arg}" ] && matches+=("${path}")
 	done < <(_lfrBundleEntries)
 	case "${#matches[@]}" in
 	1) printf '%s\n' "${matches[0]}" ;;
@@ -322,7 +324,7 @@ _lfrBundleUpgrade() {
 	path="$(_lfrBundleNameOrPick "${name}" 'upgrade bundle> ')" || return 1
 	pid="$(_lfrBundlePidForDir "${path}")"
 	if [ -n "${pid}" ]; then
-		echo "lfrBundles: $(basename "${path}") is running (PID ${pid}); stop it before upgrading." >&2
+		echo "lfrBundles: $(_lfrBundleDisplayName "${path}") is running (PID ${pid}); stop it before upgrading." >&2
 		return 1
 	fi
 	dir="$(_lfrBundleHome "${path}")/tools/portal-tools-db-upgrade-client"

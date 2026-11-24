@@ -19,6 +19,81 @@ _lfrCommonDir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ -z "${LFR_WORKTREE_SOURCES+x}" ] && LFR_WORKTREE_SOURCES=()
 LFR_WORKTREE_ROOT="${LFR_WORKTREE_ROOT:-${HOME}/liferay/repos}"
 LFR_WORKTREE_BASE="${LFR_WORKTREE_BASE:-upstream/master}"
+# How a new worktree sits on disk. "flat": <root>/liferay-portal-<name> is the
+# checkout, and its bundle is in a bundles root (LFR_BUNDLES_DIRS). "nested":
+# <root>/liferay-portal-<name> is a home folder that holds the checkout (portal/),
+# its bundle (bundles/), and a marker file (.lfr-worktree), so one folder is the
+# whole worktree. It decides only where a new worktree goes: the commands that act
+# on an existing one read its layout off the marker.
+LFR_WORKTREE_LAYOUT="${LFR_WORKTREE_LAYOUT:-flat}"
+
+# The file in the home folder of a nested worktree that says what it holds: one
+# key=value per line (repo, branch, database, source, created).
+LFR_WORKTREE_MARKER=".lfr-worktree"
+
+# Echo the checkout directory of the worktree <name> (a branch, or the suffix a
+# rename made from one) under [root], default LFR_WORKTREE_ROOT. The one place
+# that builds this path, so the layout can change in one spot.
+_lfrWorktreeDir() {
+	local name="${1:?_lfrWorktreeDir: no name}"
+	local root="${2:-${LFR_WORKTREE_ROOT:-${HOME}/liferay/repos}}"
+
+	case "${LFR_WORKTREE_LAYOUT:-flat}" in
+	flat) printf '%s\n' "${root}/liferay-portal-${name}" ;;
+	nested) printf '%s\n' "${root}/liferay-portal-${name}/portal" ;;
+	*)
+		echo "lfrTools: unknown LFR_WORKTREE_LAYOUT '${LFR_WORKTREE_LAYOUT}' (flat or nested)" >&2
+		return 1
+		;;
+	esac
+}
+
+# Echo the bundle directory of the nested worktree <name> under [root]: the bundles/
+# folder next to its checkout. Returns 1 in the flat layout, where the bundle path
+# comes from the per-user properties instead.
+_lfrWorktreeBundleDir() {
+	local name="${1:?_lfrWorktreeBundleDir: no name}"
+	local root="${2:-${LFR_WORKTREE_ROOT:-${HOME}/liferay/repos}}"
+
+	[ "${LFR_WORKTREE_LAYOUT:-flat}" = nested ] || return 1
+
+	printf '%s\n' "${root}/liferay-portal-${name}/bundles"
+}
+
+# Echo the home folder of the checkout $1 when it is a nested worktree: the checkout
+# is named portal and its parent holds the marker. Returns 1 for any other checkout,
+# so a flat worktree or a clone is never taken for one.
+_lfrWorktreeNestedHome() {
+	local dir="${1%/}"
+
+	[ "${dir##*/}" = portal ] && [ -f "${dir%/*}/${LFR_WORKTREE_MARKER}" ] || return 1
+
+	printf '%s\n' "${dir%/*}"
+}
+
+# Set the key $2 to the value $3 in the marker of the home folder $1, adding the key
+# when it is not there yet.
+_lfrWorktreeMarkerSet() {
+	local marker="${1}/${LFR_WORKTREE_MARKER}" key="${2}" value="${3}"
+
+	if [ -f "${marker}" ] && command grep -q "^${key}=" "${marker}"; then
+		sed -i "s|^${key}=.*|${key}=${value}|" "${marker}"
+	else
+		printf '%s=%s\n' "${key}" "${value}" >>"${marker}"
+	fi
+}
+
+# The name a picker shows for the repo at $1: its folder name, or for a nested
+# checkout (portal/) the name of the home folder around it.
+_lfrRepoDisplayName() {
+	local path="${1%/}"
+
+	if [ "${path##*/}" = portal ]; then
+		path="${path%/*}"
+	fi
+
+	printf '%s\n' "${path##*/}"
+}
 
 # Emit "<path>\t<name>  (<root>)" for every git repo under the configured roots,
 # with LFR_REPO_PRIORITY prefixes sorted first (stable within each rank).
@@ -37,7 +112,15 @@ _lfrRepoEntries() {
 		for root in "${LFR_REPO_ROOTS[@]}"; do
 			[ -d "${root}" ] || continue
 			for dir in "${root}"/*/; do
-				[ -e "${dir}.git" ] || continue
+				# A nested worktree is a home folder with its checkout in portal/,
+				# and it shows under the name of the home folder.
+				if [ -e "${dir}.git" ]; then
+					path="${dir%/}"
+				elif [ -e "${dir}portal/.git" ]; then
+					path="${dir}portal"
+				else
+					continue
+				fi
 				name="$(basename "${dir}")"
 				rank=9999
 				for i in "${!LFR_REPO_PRIORITY[@]}"; do
@@ -48,11 +131,11 @@ _lfrRepoEntries() {
 				done
 				label="${name}  (${root})"
 				if [ "${branches}" = 1 ]; then
-					branch="$(git -C "${dir%/}" symbolic-ref --short -q HEAD ||
-						git -C "${dir%/}" rev-parse --short HEAD 2>/dev/null)"
-					label="${branch:-?}"$'\t'"${dir%/}"
+					branch="$(git -C "${path}" symbolic-ref --short -q HEAD ||
+						git -C "${path}" rev-parse --short HEAD 2>/dev/null)"
+					label="${branch:-?}"$'\t'"${path}"
 				fi
-				printf '%d\t%d\t%s\t%s\n' "${rank}" "${seq}" "${dir%/}" "${label}"
+				printf '%d\t%d\t%s\t%s\n' "${rank}" "${seq}" "${path}" "${label}"
 				seq=$((seq + 1))
 			done
 		done
@@ -253,7 +336,7 @@ _lfrRepoPick() {
 	fi
 	if [ -n "${query}" ]; then
 		mapfile -t matches < <(printf '%s\n' "${entries}" |
-			awk -F'\t' -v q="${query}" '{name = $1; sub(/.*\//, "", name); if (index(name, q)) print $1}')
+			awk -F'\t' -v q="${query}" '{n = split($1, part, "/"); name = part[n]; if (name == "portal" && n > 1) name = part[n - 1]; if (index(name, q)) print $1}')
 		if [ "${#matches[@]}" -eq 1 ]; then
 			printf '%s\n' "${matches[0]}"
 			return 0

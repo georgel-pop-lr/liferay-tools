@@ -13,18 +13,25 @@ fi
 [ -z "${LFR_BUNDLES_PRIORITY+x}" ] && LFR_BUNDLES_PRIORITY=("liferay-bundle-master" "liferay-bundle")
 
 # Emit "<path>\t<name>  (<root>)" for every launchable Tomcat bundle under the
-# roots (a Tomcat dir directly or under liferay-dxp/, matching start-liferay.sh),
+# roots (a Tomcat dir directly or under liferay-dxp/, matching start-liferay.sh,
+# or the bundles/ folder of a nested worktree, named after its home folder),
 # with LFR_BUNDLES_PRIORITY prefixes sorted first (stable within each rank).
 # Empty shells (a bare .liferay-home, no server) and non-Tomcat (Wildfly/JBoss)
 # bundles are skipped, since lfrBundles only launches Tomcat.
 _lfrBundleEntries() {
-	local root d name rank i seq=0
+	local root d name rank i seq=0 path
 	{
 		for root in "${LFR_BUNDLES_DIRS[@]}"; do
 			[ -d "${root}" ] || continue
 			for d in "${root}"/*/; do
 				[ -d "${d}" ] || continue
+				path=""
 				if compgen -G "${d}tomcat*" >/dev/null 2>&1 || compgen -G "${d}liferay-dxp/tomcat*" >/dev/null 2>&1; then
+					path="${d%/}"
+				elif compgen -G "${d}bundles/tomcat*" >/dev/null 2>&1; then
+					path="${d}bundles"
+				fi
+				if [ -n "${path}" ]; then
 					name="$(basename "${d}")"
 					rank=9999
 					for i in "${!LFR_BUNDLES_PRIORITY[@]}"; do
@@ -33,12 +40,22 @@ _lfrBundleEntries() {
 							break
 						fi
 					done
-					printf '%d\t%d\t%s\t%s  (%s)\n' "${rank}" "${seq}" "${d%/}" "${name}" "${root}"
+					printf '%d\t%d\t%s\t%s  (%s)\n' "${rank}" "${seq}" "${path}" "${name}" "${root}"
 					seq=$((seq + 1))
 				fi
 			done
 		done
 	} | sort -t$'\t' -k1,1n -k2,2n | cut -f3-
+}
+
+# The name a message shows for the bundle at $1: its folder name, or for the bundles/
+# folder of a nested worktree the name of the worktree folder around it.
+_lfrBundleDisplayName() {
+	local path="${1%/}"
+
+	[ "${path##*/}" = bundles ] && path="${path%/*}"
+
+	printf '%s\n' "${path##*/}"
 }
 
 # Emit "<bundle>\t<repo>\t<branch>\t<shared>\t<path>" for every repo that points
@@ -62,7 +79,7 @@ _lfrBundleRepoBranches() {
 		value="${value//\$\{project.dir\}/${path}}"
 		branch="$(git -C "${path}" symbolic-ref --short -q HEAD ||
 			git -C "${path}" rev-parse --short HEAD 2>/dev/null)"
-		printf '%s\t%s\t%s\t%s\t%s\n' "$(readlink -m "${value}")" "$(basename "${path}")" \
+		printf '%s\t%s\t%s\t%s\t%s\n' "$(readlink -m "${value}")" "$(_lfrRepoDisplayName "${path}")" \
 			"${branch:-?}" \
 			"$([ -f "${path}/app.server.${USER}.lfrshare-bak.properties" ] && echo shared)" \
 			"${path}"

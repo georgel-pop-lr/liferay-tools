@@ -43,7 +43,12 @@ _lfrShareBundle() {
 	[ -z "${b}" ] && { echo "lfrShare: give a bundle path or name" >&2; return 1; }
 	if [ -d "${b}" ]; then (cd "${b}" && pwd); return 0; fi
 	for root in "${LFR_BUNDLES_DIRS[@]}"; do
-		[ -d "${root}/${b}" ] && matches+=("${root}/${b}")
+		# A nested worktree's bundle sits in bundles/ inside the folder named <b>.
+		if [ -d "${root}/${b}/bundles" ]; then
+			matches+=("${root}/${b}/bundles")
+		elif [ -d "${root}/${b}" ]; then
+			matches+=("${root}/${b}")
+		fi
 	done
 	case "${#matches[@]}" in
 	1) printf '%s\n' "${matches[0]}" ;;
