@@ -322,7 +322,7 @@ _lfrPullsHelp() {
 # Count PRs matching a GitHub search query via the search API (exact total, no
 # result fetch).
 _lfrPullsCount() {
-	gh api graphql \
+	_lfrStep "Count the pulls on GitHub" gh api graphql \
 		-f searchQuery="${1}" \
 		-f query='query($searchQuery:String!){ search(query:$searchQuery, type:ISSUE, first:0){ issueCount } }' \
 		--jq '.data.search.issueCount' 2>/dev/null
@@ -482,7 +482,7 @@ _lfrPullsStats() {
 _lfrPullsSearchCommits() {
 	local qualifiers="${1}" from="${2}" to="${3}" jqItems out total pages page
 	jqItems='.items[] | "\(.sha)\t\(.commit.committer.date[:10])\t\(.commit.message | split("\n")[0])"'
-	out="$(gh api -X GET search/commits \
+	out="$(_lfrStep "Search the commits of ${from}..${to}" gh api -X GET search/commits \
 		-f q="repo:${LFR_PULLS_UPSTREAM_REPO} ${qualifiers} committer-date:${from}..${to}" \
 		-f sort=committer-date -f order=desc -f per_page=100 -f page=1 \
 		--jq ".total_count, (${jqItems})" 2>/dev/null)" || return 1
@@ -501,7 +501,7 @@ _lfrPullsSearchCommits() {
 	[ "${total:-0}" -gt 1000 ] && total=1000
 	pages=$(( (${total:-0} + 99) / 100 ))
 	for ((page = 2; page <= pages; page++)); do
-		gh api -X GET search/commits \
+		_lfrStep "Read page ${page} of the commits of ${from}..${to}" gh api -X GET search/commits \
 			-f q="repo:${LFR_PULLS_UPSTREAM_REPO} ${qualifiers} committer-date:${from}..${to}" \
 			-f sort=committer-date -f order=desc -f per_page=100 -f page="${page}" \
 			--jq "${jqItems}" 2>/dev/null || return 1
@@ -550,7 +550,7 @@ _lfrPullsLoadLandedSubjects() {
 	local dir
 	if dir="$(_lfrPullsMasterDir "${5}")"; then
 		_lfrPullsLoadMasterSubjects "${dir}" "${2}" "${3}" "${4}"
-		_lfrPullsSpinStop
+		_lfrSpinStop
 		printf '(GitHub commit search failed: merged is read off the local %s, as fresh as its last fetch, tip %s.)\n' \
 			"${LFR_PULLS_MASTER_REF}" \
 			"$(git -C "${dir}" log -1 --format='%cd' --date=format:'%Y-%m-%d %H:%M' "${LFR_PULLS_MASTER_REF}" 2>/dev/null)" >&2
@@ -596,21 +596,21 @@ _lfrPullsWeek() {
 	done
 
 	local since json rows sender title status
-	_lfrPullsSpinStart "Read the closed pulls"
+	_lfrSpinStart "Read the closed pulls"
 	if [ -z "${person}" ]; then
-		person="$(_lfrPullsMineUser week)" || { _lfrPullsSpinStop done; return 1; }
+		person="$(_lfrPullsMineUser week)" || { _lfrSpinStop; return 1; }
 	fi
 	since="$(date -u -d "${days} days ago" +%Y-%m-%dT%H:%M:%SZ)"
 
 	json="$(_lfrPullsMirrorPersonJson "${person}" closed \
-		number,title,headRefName,author,closedAt)" || { _lfrPullsSpinStop done; return 1; }
+		number,title,headRefName,author,closedAt)" || { _lfrSpinStop; return 1; }
 
 	# The pulls come first: their titles are what narrows the subject scan.
-	_lfrPullsSpinStart "Match the titles of the pulls against master"
+	_lfrSpinStart "Match the titles of the pulls against master"
 	local -A masterSubjects=()
 	_lfrPullsLoadLandedSubjects "${person}" "$(date -d "${days} days ago -1 month" +%Y-%m-%d)" \
-		masterSubjects "${json}" week || { _lfrPullsSpinStop done; return 1; }
-	_lfrPullsSpinStop done
+		masterSubjects "${json}" week || { _lfrSpinStop; return 1; }
+	_lfrSpinStop
 
 	rows=""
 	while IFS=$'\t' read -r num sender title; do
@@ -701,6 +701,7 @@ _lfrPullsClosedPersonJson() {
 	senderOwner="$(_lfrPullsSenderOwner "${person}")"
 
 	dir="$(mktemp -d -t lfr-pulls-closed.XXXXXXXX 2>/dev/null)" || return 1
+	_lfrSpinStart "Read the closed pulls of ${person}"
 	(
 		gh pr list --repo "${LFR_PULLS_REPO}" --state closed --limit 500 \
 			--search "author:${person} updated:>=${since}" --json "${fields}" \
@@ -710,6 +711,7 @@ _lfrPullsClosedPersonJson() {
 			>"${dir}/forwarded" 2>/dev/null &
 		wait
 	)
+	_lfrSpinStop
 
 	# Empty is how a failed fetch arrives; a person with nothing closed in the
 	# window still gets "[]" from both, so an empty file is never a real answer.
@@ -782,7 +784,7 @@ _lfrPullsLoadUpstreamTickets() {
 # would buy the dashboard a second or so at the cost of coupling the two.
 _lfrPullsRejectedSection() {
 	local person="${1}" days="${2}"
-	local me="${LFR_PULLS_USER:-$(gh api user --jq '.login' 2>/dev/null)}" senderMe
+	local me="${LFR_PULLS_USER:-$(_lfrStep "Read your GitHub user" gh api user --jq '.login' 2>/dev/null)}" senderMe
 	senderMe="$(_lfrPullsSenderOwner "${me}" "${me}")"
 
 	printf '\n%s rejected pulls (%s, last %s day(s), still not landed on %s)\n' \
@@ -939,7 +941,7 @@ _lfrPullsTicket() {
 	echo "Searching ${LFR_PULLS_REPO} for ${ticket}..." >&2
 
 	local json
-	json="$(gh pr list --repo "${LFR_PULLS_REPO}" --search "${ticket} in:title" \
+	json="$(_lfrStep "Search the pulls for ${ticket}" gh pr list --repo "${LFR_PULLS_REPO}" --search "${ticket} in:title" \
 		--state all --limit 200 \
 		--json number,title,state,headRefName,author,createdAt,closedAt,url)" || return 1
 
@@ -1028,7 +1030,7 @@ _lfrPullsBump() {
 	senderMe="$(_lfrPullsSenderOwner "${me}" "${me}")"
 	dir="$(_lfrPullsMasterDir bump)" || return 1
 
-	json="$(gh pr view "${number}" --repo "${LFR_PULLS_REPO}" \
+	json="$(_lfrStep "Read #${number}" gh pr view "${number}" --repo "${LFR_PULLS_REPO}" \
 		--json number,state,title,body,author,baseRefName,headRefName,headRefOid,url,comments)" || return 1
 
 	local state title author baseRefName headRefName headSha url
@@ -1070,7 +1072,7 @@ _lfrPullsBump() {
 			jq -r '.body | capture("^Forwarded from: (?<u>https://github.com/[^ ]+/pull/[0-9]+)").u // empty')"
 		if [ -n "${forwardedFrom}" ]; then
 			markerSource="${forwardedFrom}"
-			markerText="$(gh pr view "${forwardedFrom}" --json body,comments |
+			markerText="$(_lfrStep "Read ${forwardedFrom}" gh pr view "${forwardedFrom}" --json body,comments |
 				jq -r --arg sha "${headSha}" "${markerJq}")"
 		fi
 	fi
@@ -1156,7 +1158,7 @@ _lfrPullsBump() {
 	fi
 
 	local newUrl
-	if ! newUrl="$(gh pr create --repo "${LFR_PULLS_REPO}" --base "${baseRefName}" \
+	if ! newUrl="$(_lfrStep "Open the new pull" gh pr create --repo "${LFR_PULLS_REPO}" --base "${baseRefName}" \
 			--head "${me}:${branch}" --title "${title}" --body-file "${bodyFile}")"; then
 		echo "lfrPullsBump: the new pull was not opened; #${number} is still open as it was." >&2
 		rm -f "${bodyFile}" "${commentFile}"
@@ -1167,13 +1169,13 @@ _lfrPullsBump() {
 
 	if [ ! -s "${commentFile}" ]; then
 		echo "The copied description carries the pr-check marker for ${headSha:0:10}."
-	elif gh pr comment "${newUrl}" --body-file "${commentFile}" >/dev/null; then
+	elif _lfrStep "Post the pr-check marker" gh pr comment "${newUrl}" --body-file "${commentFile}" >/dev/null; then
 		echo "Posted the pr-check marker for ${headSha:0:10} on it."
 	else
 		echo "lfrPullsBump: the marker did not post on ${newUrl}; publish it with pr-check-publish." >&2
 	fi
 
-	if gh pr comment "${url}" --body "$(printf 'ci:close\n\nResent as %s, same head %s.' "${newUrl}" "${headSha:0:10}")" >/dev/null; then
+	if _lfrStep "Comment ci:close on #${number}" gh pr comment "${url}" --body "$(printf 'ci:close\n\nResent as %s, same head %s.' "${newUrl}" "${headSha:0:10}")" >/dev/null; then
 		echo "Commented ci:close on #${number}."
 	else
 		echo "lfrPullsBump: ci:close did not post on ${url}; close it by hand." >&2
@@ -1181,46 +1183,6 @@ _lfrPullsBump() {
 
 	rm -f "${bodyFile}" "${commentFile}"
 	echo "The Jira Git Pull Request field still names #${number}."
-}
-
-# A spinner on stderr with the step and the seconds, for the commands that read
-# GitHub for a long time before they print. It shows only when stderr is a
-# terminal. The loop runs in its own process, started from a command
-# substitution, so the shell prints no job lines.
-#
-# Ctrl-C goes to the job in the foreground (gh), not to the loop. Thus the
-# loop watches the shell: a shell at its prompt waits on the terminal in poll
-# or select, and a busy shell waits in do_wait or a pipe read. If the loop sees
-# the shell at the prompt, it stops and writes nothing more, so that the prompt
-# stays. It also stops after 600 seconds, in case nothing stops it.
-_lfrPullsSpinStart() {
-	_lfrPullsSpinStop
-	[ -t 2 ] || return 0
-	_lfrPullsSpinStartedAt="${_lfrPullsSpinStartedAt:-${SECONDS}}"
-	_lfrPullsSpinPid="$(bash -c '
-		frames="|/-\\" i=0 elapsed="$2"
-		while [ "$((elapsed + SECONDS))" -lt 600 ]; do
-			case "$(cat "/proc/$3/wchan" 2>/dev/null || echo gone)" in
-			gone | *poll* | *select* | *n_tty_read*) exit 0 ;;
-			esac
-			printf "\r\033[K%s %s (%ss)" "${frames:i%4:1}" "$1" "$((elapsed + SECONDS))" >&2
-			i=$((i + 1))
-			sleep 0.15
-		done' _lfrPullsSpin "$1" "$((SECONDS - _lfrPullsSpinStartedAt))" "$$" \
-		</dev/null >/dev/null & echo $!)"
-}
-
-# Stops the spinner and clears its line. With "done", the next start counts
-# the seconds from 0 again.
-_lfrPullsSpinStop() {
-	if [ -n "${_lfrPullsSpinPid:-}" ]; then
-		kill "${_lfrPullsSpinPid}" 2>/dev/null
-		while kill -0 "${_lfrPullsSpinPid}" 2>/dev/null; do sleep 0.01; done
-		_lfrPullsSpinPid=""
-		printf '\r\033[K' >&2
-	fi
-	[ "${1:-}" = "done" ] && _lfrPullsSpinStartedAt=""
-	return 0
 }
 
 _lfrPullsAgo() {
@@ -1238,7 +1200,7 @@ _lfrPullsAgo() {
 # "#num<TAB>closedAt<TAB>title". gh sorts by creation, so fetch a batch and pick
 # the latest closedAt.
 _lfrPullsLastClosed() {
-	gh pr list --repo "${LFR_PULLS_REPO}" --state closed --limit 60 \
+	_lfrStep "Read the last closed pull" gh pr list --repo "${LFR_PULLS_REPO}" --state closed --limit 60 \
 		--json number,title,closedAt 2>/dev/null |
 		jq -r 'map(select(.closedAt)) | sort_by(.closedAt) | reverse | .[0] // empty |
 			"#\(.number)\t\(.closedAt)\t\(.title)"'
@@ -1257,7 +1219,7 @@ _lfrPullsLastActiveLine() {
 # Echo your GitHub login, from the config or from gh. $1 names the calling
 # command for the error message.
 _lfrPullsMineUser() {
-	local mineUser="${LFR_PULLS_USER:-$(gh api user --jq '.login' 2>/dev/null)}"
+	local mineUser="${LFR_PULLS_USER:-$(_lfrStep "Read your GitHub user" gh api user --jq '.login' 2>/dev/null)}"
 	if [ -z "${mineUser}" ]; then
 		echo "lfrPulls ${1}: set LFR_PULLS_USER in ${_lfrPullsDir}/lfr-pulls.local.conf." >&2
 		return 1
@@ -1270,7 +1232,7 @@ _lfrPullsMineUser() {
 # instead: LFR_PULLS_MINE_ORG. Pass your login as $2 to save the gh call.
 _lfrPullsSenderOwner() {
 	local person="${1}" me="${2:-}"
-	[ -z "${me}" ] && me="${LFR_PULLS_USER:-$(gh api user --jq '.login' 2>/dev/null)}"
+	[ -z "${me}" ] && me="${LFR_PULLS_USER:-$(_lfrStep "Read your GitHub user" gh api user --jq '.login' 2>/dev/null)}"
 	if [ "${person}" = "${me}" ]; then
 		printf '%s\n' "${LFR_PULLS_MINE_ORG:-${person}}"
 	else
@@ -1295,9 +1257,9 @@ _lfrPullsMirrorPersonJson() {
 	local person="${1}" state="${2:-all}" fields="${3}" senderOwner authored forwarded
 	senderOwner="$(_lfrPullsSenderOwner "${person}")"
 
-	authored="$(gh pr list --repo "${LFR_PULLS_REPO}" --author "${person}" \
+	authored="$(_lfrStep "Read the pulls of ${person}" gh pr list --repo "${LFR_PULLS_REPO}" --author "${person}" \
 		--state "${state}" --limit 500 --json "${fields}")" || return 1
-	forwarded="$(gh pr list --repo "${LFR_PULLS_REPO}" --search "mentions:${person}" \
+	forwarded="$(_lfrStep "Read the pulls that mention ${person}" gh pr list --repo "${LFR_PULLS_REPO}" --search "mentions:${person}" \
 		--state "${state}" --limit 500 --json "${fields}")" || return 1
 
 	# Both blobs go in on stdin, not as --argjson: a prolific person's two
@@ -1612,7 +1574,7 @@ _lfrPullsLinkifyUrls() {
 # changes-requested review was made against; they cost one field each on the
 # same call, not a second request.
 _lfrPullsOpenJsonFetch() {
-	gh pr list --repo "${1}" --state open --limit 200 \
+	_lfrStep "Read the open pulls of ${1}" gh pr list --repo "${1}" --state open --limit 200 \
 		--json number,title,headRefName,author,isDraft,mergeable,reviewDecision,assignees,reviewRequests,labels,createdAt,headRefOid,reviews 2>/dev/null
 }
 
@@ -1743,7 +1705,7 @@ _lfrPullsFit() {
 # row, and returns 1 so the caller knows the section stayed silent.
 _lfrPullsForkSection() {
 	local repo="${1}" filter="${2}" heading="${3}" detail="${4:-}" quiet="${5:-}" json rows total header row
-	local me="${LFR_PULLS_USER:-$(gh api user --jq '.login' 2>/dev/null)}" yours="false"
+	local me="${LFR_PULLS_USER:-$(_lfrStep "Read your GitHub user" gh api user --jq '.login' 2>/dev/null)}" yours="false"
 	local prChecked="true" senderMe color="false"
 	_lfrPullsColorOn && color="true"
 	senderMe="$(_lfrPullsSenderOwner "${me}" "${me}")"
@@ -1809,7 +1771,7 @@ _lfrPullsForkSection() {
 # only means something here because the mirror is the merge queue.
 _lfrPullsMirrorSection() {
 	local mode="${1}" detail="${2:-}" filter='.' json rows header row
-	local me="${LFR_PULLS_USER:-$(gh api user --jq '.login' 2>/dev/null)}"
+	local me="${LFR_PULLS_USER:-$(_lfrStep "Read your GitHub user" gh api user --jq '.login' 2>/dev/null)}"
 	local senderMe color="false"
 	_lfrPullsColorOn && color="true"
 	senderMe="$(_lfrPullsSenderOwner "${me}" "${me}")"
@@ -1940,7 +1902,7 @@ _lfrPullsTeams() {
 	# Read off GitHub so a stale clone cannot hide a new team, and off the local
 	# ref only when that fails.
 	local codeowners where="${LFR_PULLS_UPSTREAM_REPO}"
-	if ! codeowners="$(gh api -H 'Accept: application/vnd.github.raw' \
+	if ! codeowners="$(_lfrStep "Read the CODEOWNERS of ${LFR_PULLS_UPSTREAM_REPO}" gh api -H 'Accept: application/vnd.github.raw' \
 		"repos/${LFR_PULLS_UPSTREAM_REPO}/contents/.github/CODEOWNERS" 2>/dev/null)"; then
 		dir="$(_lfrPullsMasterDir teams 2>/dev/null)" || return 0
 		codeowners="$(git -C "${dir}" show "${LFR_PULLS_MASTER_REF}:.github/CODEOWNERS" 2>/dev/null)"
@@ -2043,8 +2005,8 @@ _lfrPullsDashboard() {
 	# Resolved here, not at source time: LfrGit's conf can load after this file,
 	# and LFR_GIT_FORK_ORG is where the team fork comes from.
 	local team="${LFR_PULLS_TEAM:-${LFR_GIT_FORK_ORG:-}}"
-	_lfrPullsSpinStart "Read the open pulls of each fork"
-	forkUser="${person:-${LFR_PULLS_USER:-$(gh api user --jq '.login' 2>/dev/null)}}"
+	_lfrSpinStart "Read the open pulls of each fork"
+	forkUser="${person:-${LFR_PULLS_USER:-$(_lfrStep "Read your GitHub user" gh api user --jq '.login' 2>/dev/null)}}"
 
 	# Every listing the sections below ask for, named before the first one
 	# prints, which is what lets them all be fetched at once. The conditions are
@@ -2077,7 +2039,7 @@ _lfrPullsDashboard() {
 
 	local -A _lfrPullsOpenCache=()
 	_lfrPullsPrefetchOpen _lfrPullsOpenCache "${openRepos[@]}"
-	_lfrPullsSpinStop done
+	_lfrSpinStop
 
 	_lfrPullsMirrorSection "${mirrorMode}" "${detail}" || return 1
 

@@ -94,7 +94,7 @@ _lfrPullsTriage() {
 
 	local -a applyArgs=() mine=()
 	local -a logins
-	local me="${LFR_PULLS_USER:-$(gh api user --jq '.login' 2>/dev/null)}"
+	local me="${LFR_PULLS_USER:-$(_lfrStep "Read your GitHub user" gh api user --jq '.login' 2>/dev/null)}"
 	local number reviewer reason url title candidates answer choice kept=0 i
 
 	while IFS=$'\t' read -r number reviewer reason url title candidates; do
@@ -139,13 +139,13 @@ _lfrPullsTriage() {
 	fi
 
 	echo
-	python3 "${script}" --apply "${plan}" --print-only "${applyArgs[@]}" || return 1
+	_lfrStep "Check the plan" python3 "${script}" --apply "${plan}" --print-only "${applyArgs[@]}" || return 1
 
 	echo
 	read -r -p "Apply? [y/N] " answer < /dev/tty
 
 	case "${answer}" in
-	y | Y) python3 "${script}" --apply "${plan}" "${applyArgs[@]}" || return 1 ;;
+	y | Y) _lfrStep "Apply the plan on GitHub" python3 "${script}" --apply "${plan}" "${applyArgs[@]}" || return 1 ;;
 	*) echo "Nothing was written."; return 0 ;;
 	esac
 
@@ -155,7 +155,7 @@ _lfrPullsTriage() {
 	repo="$(jq -r '.repo' "${plan}")"
 
 	for number in "${mine[@]}"; do
-		gh pr view "${number}" --repo "${repo}" --json assignees \
+		_lfrStep "Read the assignees of #${number}" gh pr view "${number}" --repo "${repo}" --json assignees \
 			--jq '.assignees[].login' 2>/dev/null | grep -qx "${me}" || continue
 		echo
 		read -r -p "You review #${number}. Create a worktree with its branch? [y/N] " answer < /dev/tty
