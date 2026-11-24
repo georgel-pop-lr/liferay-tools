@@ -288,6 +288,7 @@ if [ "$PICK" = "1" ]; then
 			done | fzf \
 				--ansi \
 				--delimiter=$'\t' \
+				--exact \
 				--height=40% \
 				--min-height="$((tooltipRows + 8))" \
 				--preview="label={2..}; [ \${#label} -gt \$((FZF_PREVIEW_COLUMNS - 2)) ] && rest=\"\${label#/*/}\" && printf '\\033[38;5;250m%s\\033[38;5;245m/%s/\\033[38;5;229m%s\\033[0m\n' \"\${label%/\"\$rest\"}\" \"\${rest%/*}\" \"\${label##*/}\"" \
