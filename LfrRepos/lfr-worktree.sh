@@ -576,6 +576,29 @@ _lfrWorktreeWriteMarker() {
 	} >"${home}/${LFR_WORKTREE_MARKER}" || return 1
 
 	echo "lfrWorktree: wrote ${home}/${LFR_WORKTREE_MARKER}" >&2
+
+	_lfrWorktreeCacheLinks "${home}" "${src_root}"
+}
+
+# The binaries caches that tools expect next to a checkout (../<name>): the build
+# default of build.properties and liferay-intellij (intellij_common checks
+# ../liferay-binaries-cache-2017 and -2020, and asks for a clone or a symbolic link).
+LFR_BINARIES_CACHES=("liferay-binaries-cache-2017" "liferay-binaries-cache-2020")
+
+# Link each binaries cache that sits next to the clone $2 into the nested worktree
+# home $1, so ../<cache> from the checkout resolves as it does for a flat worktree.
+# A link that exists is left alone; a cache the clone does not have is skipped.
+_lfrWorktreeCacheLinks() {
+	local home="${1}" src_root="${2}" name target
+
+	for name in "${LFR_BINARIES_CACHES[@]}"; do
+		[ -e "${home}/${name}" ] || [ -L "${home}/${name}" ] && continue
+
+		target="$(realpath -e "${src_root}/../${name}" 2>/dev/null)" || continue
+
+		ln -s "${target}" "${home}/${name}" &&
+			echo "lfrWorktree: linked ${home}/${name} -> ${target}" >&2
+	done
 }
 
 lfrWorktree() {
@@ -1593,13 +1616,19 @@ _lfrWorktreeRemoveHome() {
 
 	[ -n "${home}" ] && [ -d "${home}" ] || return 0
 
-	local left
-	left="$(find "${home}" -mindepth 1 -maxdepth 1 ! -name "${LFR_WORKTREE_MARKER}" -printf '%f ' 2>/dev/null)"
+	local left name
+	left="$(find "${home}" -mindepth 1 -maxdepth 1 ! -name "${LFR_WORKTREE_MARKER}" \
+		! \( -type l -name 'liferay-binaries-cache-*' \) -printf '%f ' 2>/dev/null)"
 
 	if [ -n "${left}" ]; then
 		echo "lfrWorktreeRemove: kept ${home}, which still holds: ${left% }" >&2
 		return 0
 	fi
+
+	# The cache links only point at the shared caches, so removing them removes no data.
+	for name in "${LFR_BINARIES_CACHES[@]}"; do
+		[ -L "${home}/${name}" ] && rm -f "${home:?}/${name}"
+	done
 
 	rm -f "${home:?}/${LFR_WORKTREE_MARKER}" && rmdir "${home}" &&
 		echo "lfrWorktreeRemove: removed the worktree folder ${home}" >&2
