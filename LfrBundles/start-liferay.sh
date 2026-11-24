@@ -83,6 +83,11 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# The step spinner of the lfr tools (_lfrStep). Without the file, each step runs
+# with no spinner.
+. "$SCRIPT_DIR/../LfrCommon/lfr-term.sh" 2>/dev/null ||
+	_lfrStep() { shift; "$@"; }
+
 # Machine-specific defaults. Override them in start-liferay.conf next to this
 # script (gitignored - copy start-liferay.conf.example to get started).
 BUNDLES_DIRS=(
@@ -381,7 +386,7 @@ if [ "${#TOMCAT_REMOVE[@]}" -gt 0 ] && [ -t 0 ] && [ "$ASSUME_YES" != "1" ]; the
 	echo "Keeping $TOMCAT_DIR"
 	echo "Other tomcat version(s) still in this bundle:"
 	for _t in "${TOMCAT_REMOVE[@]}"; do
-		echo "  $_t  ($(du -sh "$_t" 2>/dev/null | cut -f1))"
+		echo "  $_t  ($(_lfrStep "Measure $_t" du -sh "$_t" 2>/dev/null | cut -f1))"
 		for _z in "$_t".zip "$_t"-*.zip; do
 			if [ -f "$_z" ]; then echo "  $_z  ($(du -h "$_z" 2>/dev/null | cut -f1))"; fi
 		done
@@ -399,7 +404,7 @@ if [ "${#TOMCAT_REMOVE[@]}" -gt 0 ] && [ -t 0 ] && [ "$ASSUME_YES" != "1" ]; the
 	done
 	if [ "$_del_reply" = y ]; then
 		for _t in "${TOMCAT_REMOVE[@]}"; do
-			if rm -rf "$_t"; then echo "  removed $_t"; else echo "  could not remove $_t" >&2; fi
+			if _lfrStep "Delete $_t" rm -rf "$_t"; then echo "  removed $_t"; else echo "  could not remove $_t" >&2; fi
 			for _z in "$_t".zip "$_t"-*.zip; do
 				if [ -f "$_z" ] && rm -f "$_z"; then echo "  removed $_z"; fi
 			done
@@ -533,7 +538,7 @@ _recover_via_docker() {
 
 	local chosen="${names[$((choice - 1))]}"
 	echo "  Retrying via docker exec $chosen ..."
-	_run_reset "$chosen" || _db_reset_failed "Reset inside container $chosen failed."
+	_lfrStep "Reset the database $db in $chosen" _run_reset "$chosen" || _db_reset_failed "Reset inside container $chosen failed."
 	echo "  Database reset succeeded via container $chosen."
 }
 
@@ -579,14 +584,14 @@ reset_database() {
 	# --db-docker forces the reset inside the named container.
 	if [ -n "$DB_DOCKER" ]; then
 		echo "  $engine via docker exec $DB_DOCKER: dropping and recreating \"$db\" (user $user)"
-		_run_reset "$DB_DOCKER" || _db_reset_failed "Reset inside container $DB_DOCKER failed."
+		_lfrStep "Reset the database $db in $DB_DOCKER" _run_reset "$DB_DOCKER" || _db_reset_failed "Reset inside container $DB_DOCKER failed."
 		return 0
 	fi
 
 	# Otherwise try the host client (also reaches a Docker DB that publishes its
 	# port); on failure, fall into the interactive container picker.
 	echo "  $engine: dropping and recreating \"$db\" on $host:$port (user $user)"
-	if ! _run_reset ""; then
+	if ! _lfrStep "Reset the database $db" _run_reset ""; then
 		_recover_via_docker
 	fi
 }
@@ -596,7 +601,7 @@ _remove_paths() {
 	local target
 	for target in "$@"; do
 		if [ -e "$target" ]; then
-			rm -rf "$target"
+			_lfrStep "Delete $target" rm -rf "$target"
 			echo "  removed $target"
 		fi
 	done
