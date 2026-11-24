@@ -113,7 +113,7 @@ _lfrGitHelp() {
 # Preview what would be removed. Run this before lfrGitClean.
 lfrGitCleanDry() {
 	case "${1-}" in -h | --help) _lfrGitHelp; return 0 ;; esac
-	git clean -xdn "${_lfrGitCleanExcludes[@]}" "$@"
+	_lfrStep "List the files that a clean removes" git clean -xdn "${_lfrGitCleanExcludes[@]}" "$@"
 }
 
 # Actually remove untracked and ignored files (keeps the excludes above). Each
@@ -124,7 +124,7 @@ lfrGitClean() {
 		_LFR_LOG_RUN=1 _lfrLogRun "${_LFR_GIT_LOG_DIR}" clean lfrGitClean "$@"
 		return
 	fi
-	git clean -xdf "${_lfrGitCleanExcludes[@]}" "$@"
+	_lfrStep "Remove the untracked and ignored files" git clean -xdf "${_lfrGitCleanExcludes[@]}" "$@"
 }
 
 # Resolve the fork org: use the passed argument, else LFR_GIT_FORK_ORG. Echoes
@@ -144,7 +144,7 @@ lfrGitSync() {
 	case "${1-}" in -h | --help) _lfrGitHelp; return 0 ;; esac
 	local org
 	org="$(_lfrGitForkOrg "${1-}")" || return 1
-	gh repo sync "${org}/liferay-portal" \
+	_lfrStep "Sync ${org}/liferay-portal" gh repo sync "${org}/liferay-portal" \
 		--source "${LFR_GIT_UPSTREAM_ORG}/liferay-portal"
 }
 
@@ -154,7 +154,7 @@ lfrGitSyncEE() {
 	case "${1-}" in -h | --help) _lfrGitHelp; return 0 ;; esac
 	local org
 	org="$(_lfrGitForkOrg "${1-}")" || return 1
-	gh repo sync "${org}/liferay-portal-ee" --branch master \
+	_lfrStep "Sync ${org}/liferay-portal-ee" gh repo sync "${org}/liferay-portal-ee" --branch master \
 		--source "${LFR_GIT_UPSTREAM_ORG}/liferay-portal-ee" --branch master
 }
 
@@ -664,7 +664,7 @@ lfrGitRebaseStack() {
 			return 1
 		fi
 		echo "${branch}: backup ${backup} = $(git rev-parse "${backup}")" | tee -a "${log}"
-		git -C "${wt}" rebase --onto "${new}" "${old}" 2>&1 | tee -a "${log}"
+		_lfrStep "Rebase ${branch} onto $(git rev-parse --short "${new}")" git -C "${wt}" rebase --onto "${new}" "${old}" 2>&1 | tee -a "${log}"
 		rc="${PIPESTATUS[0]}"
 		if [ "${rc}" != 0 ]; then
 			echo "${branch}: STOP, rebase exit ${rc}" >>"${log}"
@@ -780,10 +780,10 @@ lfrGitUpdateMaster() {
 	# the repo's remotes, not the folder name).
 	if git remote -v 2>/dev/null | grep -q 'liferay-portal-ee'; then
 		echo "Syncing EE fork..."
-		_lfrStep "Sync the EE fork" lfrGitSyncEE
+		lfrGitSyncEE
 	else
 		echo "Syncing fork..."
-		_lfrStep "Sync the fork" lfrGitSync
+		lfrGitSync
 	fi
 
 	local target
@@ -919,7 +919,7 @@ lfrGitUpdateBranch() {
 	up="${remote}/${branch}"
 
 	echo "Updating ${branch} from ${up} (no tags)..."
-	if ! git fetch --no-tags "${remote}" "${branch}"; then
+	if ! _lfrStep "Fetch ${branch} from ${remote}" git fetch --no-tags "${remote}" "${branch}"; then
 		echo "  ${remote} has no branch ${branch}; nothing to update." >&2
 		return 1
 	fi
@@ -928,8 +928,8 @@ lfrGitUpdateBranch() {
 		return 1
 	fi
 
-	_lfrGitUpdateLocalMirror "${branch}" "${up}"
-	[ "${push}" = 1 ] && _lfrGitPushMirror "${branch}" "${up}" "${remote}"
+	_lfrStep "Update the local ${branch}" _lfrGitUpdateLocalMirror "${branch}" "${up}"
+	[ "${push}" = 1 ] && _lfrStep "Push ${up} to the ${branch} of the fork" _lfrGitPushMirror "${branch}" "${up}" "${remote}"
 	return 0
 }
 
@@ -979,7 +979,7 @@ lfrGitCheckoutTag() {
 	# is written, and --no-tags keeps git from dragging in every other tag that
 	# points into the history it just downloaded.
 	echo "Fetching ${tag} from ${remote}..."
-	if ! git fetch --no-tags "${remote}" "refs/tags/${tag}"; then
+	if ! _lfrStep "Fetch the tag ${tag} from ${remote}" git fetch --no-tags "${remote}" "refs/tags/${tag}"; then
 		echo "  ${remote} has no tag ${tag}." >&2
 		return 1
 	fi
@@ -1002,18 +1002,18 @@ lfrGitCheckoutTag() {
 		if [ "$(git symbolic-ref -q HEAD)" = "refs/heads/${branch}" ]; then
 			echo "  already on ${branch}."
 		else
-			git switch "${branch}" || return 1
+			_lfrStep "Check out ${branch}" git switch "${branch}" || return 1
 		fi
 	else
 		echo "  branching ${branch} off ${tag}..."
-		git switch -c "${branch}" "${tag_commit}" || return 1
+		_lfrStep "Check out ${branch} from ${tag}" git switch -c "${branch}" "${tag_commit}" || return 1
 	fi
 
 	if [ "${push}" = 1 ]; then
 		local push_remote
 		push_remote="$(_lfrGitPushRemote "${branch}" "${remote}")"
 		echo "  pushing ${branch} to ${push_remote}..."
-		git push -u "${push_remote}" "refs/heads/${branch}:refs/heads/${branch}"
+		_lfrStep "Push ${branch} to ${push_remote}" git push -u "${push_remote}" "refs/heads/${branch}:refs/heads/${branch}"
 	fi
 }
 
