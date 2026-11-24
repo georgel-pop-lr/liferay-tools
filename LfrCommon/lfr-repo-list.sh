@@ -138,6 +138,10 @@ _lfrPick() {
 		--ansi
 		--bind='right:accept,left:abort'
 		--delimiter=$'\t'
+		# Match the query as a substring, not as a fuzzy pattern. Fuzzy mode found
+		# LPD-116351 in LPD-111365-...-LPD-113912-... and showed 15 rows for one repo.
+		# Type ' before a term to get a fuzzy match for that term.
+		--exact
 		--exit-0
 		--height=40%
 		--prompt="${prompt}"
