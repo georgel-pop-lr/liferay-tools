@@ -110,7 +110,7 @@ _lfrAntPrecheck() {
 	}
 
 	local stale
-	stale="$(_lfrAntPrecheckStaleCore "${root}" | tr '\n' ' ')"
+	stale="$(_lfrStep "Check the portal core jars" _lfrAntPrecheckStaleCore "${root}" | tr '\n' ' ')"
 	if [ -n "${stale}" ]; then
 		echo "lfrAntAll precheck: skipped, the portal core snapshot is older than its source (${stale% }). Only 'ant all' rebuilds it." >&2
 		return 0
@@ -151,8 +151,10 @@ _lfrAntPrecheck() {
 	local start=${SECONDS} rc took
 	printf 'Start  : %s\nRepo   : %s\nHEAD   : %s\nTasks  : %s\n\n' "$(date '+%F %T')" "${root}" \
 		"$(git -C "${root}" log -1 --format='%h %s' 2>/dev/null)" "${tasks[*]}" >"${log}"
+	_lfrSpinStart "Build the ${#tasks[@]} changed module(s)"
 	(cd "${root}/modules" && "${root}/gradlew" --console=plain "${tasks[@]}" </dev/null >>"${log}" 2>&1)
 	rc=$?
+	_lfrSpinStop
 	took=$((SECONDS - start))
 	printf '\nEnd    : %s (exit %s)\nTook   : %dm %02ds\n' "$(date '+%F %T')" "${rc}" \
 		$((took / 60)) $((took % 60)) >>"${log}"
