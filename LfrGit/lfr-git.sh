@@ -483,7 +483,7 @@ _lfrGitRebaseAll() {
 		fi
 
 		echo
-		(cd "${wt}" && _lfrGitRebaseOnto "${branch}" "${target}" "${force_rebase}" "${rebase_onto}")
+		(cd "${wt}" && _lfrStep "Rebase ${branch} in ${name} onto ${target}" _lfrGitRebaseOnto "${branch}" "${target}" "${force_rebase}" "${rebase_onto}")
 		rc="$?"
 		case "${rc}" in
 		0) report+=("rebased  ${branch} in ${name}") ;;
@@ -768,22 +768,22 @@ lfrGitUpdateMaster() {
 		fi
 		up="${remote}/master"
 		echo "Updating ${branch} from ${up} (no tags)..."
-		if ! git fetch --no-tags "${remote}" master; then
+		if ! _lfrStep "Fetch master from ${remote}" git fetch --no-tags "${remote}" master; then
 			echo "  fetch from ${remote} failed; skipping ${branch}." >&2
 			continue
 		fi
-		_lfrGitPushMirror "${branch}" "${up}" "${remote}"
-		_lfrGitUpdateLocalMirror "${branch}" "${up}"
+		_lfrStep "Push ${up} to the ${branch} of the fork" _lfrGitPushMirror "${branch}" "${up}" "${remote}"
+		_lfrStep "Update the local ${branch}" _lfrGitUpdateLocalMirror "${branch}" "${up}"
 	done
 
 	# Sync the team fork; liferay-portal-ee checkouts use lfrGitSyncEE (detected by
 	# the repo's remotes, not the folder name).
 	if git remote -v 2>/dev/null | grep -q 'liferay-portal-ee'; then
 		echo "Syncing EE fork..."
-		lfrGitSyncEE
+		_lfrStep "Sync the EE fork" lfrGitSyncEE
 	else
 		echo "Syncing fork..."
-		lfrGitSync
+		_lfrStep "Sync the fork" lfrGitSync
 	fi
 
 	local target
@@ -817,7 +817,7 @@ lfrGitUpdateMaster() {
 	# fork-point cut. _lfrGitRebaseOnto applies that cut on its own whenever the branch
 	# turns out to be built on another mirror, so -f can no longer drag that
 	# mirror's history in as your commits.
-	_lfrGitRebaseOnto "${cur}" "${target}" "${force_rebase}" "${rebase_onto}"
+	_lfrStep "Rebase ${cur} onto ${target}" _lfrGitRebaseOnto "${cur}" "${target}" "${force_rebase}" "${rebase_onto}"
 	case "$?" in
 	0) ;;
 	2) return 0 ;;
@@ -838,7 +838,7 @@ lfrGitUpdateMaster() {
 		*) push_remote="origin" ;;
 		esac
 		echo "Force-pushing ${cur} to ${push_remote} (--force-with-lease)..."
-		git push --force-with-lease "${push_remote}" "${cur}"
+		_lfrStep "Push ${cur} to ${push_remote}" git push --force-with-lease "${push_remote}" "${cur}"
 		push_rc="$?"
 
 		# The stash can fail to reapply while the rebase itself succeeded, which
