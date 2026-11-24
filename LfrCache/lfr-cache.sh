@@ -152,8 +152,8 @@ EOF
 			fi
 			local_cache="${r}/.gradle/caches/build-cache-1"
 			if [ -d "${local_cache}" ]; then
-				sz=$(du -sb "${local_cache}" 2>/dev/null | cut -f1)
-				rm -rf "${local_cache}" &&
+				sz=$(_lfrStep "Measure ${local_cache}" du -sb "${local_cache}" 2>/dev/null | cut -f1)
+				_lfrStep "Delete ${local_cache}" rm -rf "${local_cache}" &&
 					{ freed=$((freed + sz)); echo "pruned ${local_cache} ($(awk "BEGIN{printf \"%.0f\", ${sz}/1048576}") MB)"; }
 			else
 				echo "nothing to prune: ${r}"
