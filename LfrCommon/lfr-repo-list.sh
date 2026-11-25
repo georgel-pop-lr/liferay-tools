@@ -19,13 +19,10 @@ _lfrCommonDir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ -z "${LFR_WORKTREE_SOURCES+x}" ] && LFR_WORKTREE_SOURCES=()
 LFR_WORKTREE_ROOT="${LFR_WORKTREE_ROOT:-${HOME}/liferay/repos}"
 LFR_WORKTREE_BASE="${LFR_WORKTREE_BASE:-upstream/master}"
-# How a new worktree sits on disk. "flat": <root>/liferay-portal-<name> is the
-# checkout, and its bundle is in a bundles root (LFR_BUNDLES_DIRS). "nested":
-# <root>/liferay-portal-<name> is a home folder that holds the checkout (portal/),
-# its bundle (bundles/), and a marker file (.lfr-worktree), so one folder is the
-# whole worktree. It decides only where a new worktree goes: the commands that act
-# on an existing one read its layout off the marker.
-LFR_WORKTREE_LAYOUT="${LFR_WORKTREE_LAYOUT:-flat}"
+# A worktree is one folder, <root>/liferay-portal-<name>. It holds the checkout
+# (portal/), its bundle (bundles/), and a marker file (.lfr-worktree). The flat
+# layout, where <root>/liferay-portal-<name> was the checkout and its bundle was in a
+# bundles root, was removed on 2026-11-25, after all the worktrees were moved.
 
 # The file in the home folder of a nested worktree that says what it holds: one
 # key=value per line (repo, branch, database, source, created).
@@ -38,31 +35,12 @@ _lfrWorktreeDir() {
 	local name="${1:?_lfrWorktreeDir: no name}"
 	local root="${2:-${LFR_WORKTREE_ROOT:-${HOME}/liferay/repos}}"
 
-	case "${LFR_WORKTREE_LAYOUT:-flat}" in
-	flat) printf '%s\n' "${root}/liferay-portal-${name}" ;;
-	nested) printf '%s\n' "${root}/liferay-portal-${name}/portal" ;;
-	*)
-		echo "lfrTools: unknown LFR_WORKTREE_LAYOUT '${LFR_WORKTREE_LAYOUT}' (flat or nested)" >&2
-		return 1
-		;;
-	esac
-}
-
-# Echo the bundle directory of the nested worktree <name> under [root]: the bundles/
-# folder next to its checkout. Returns 1 in the flat layout, where the bundle path
-# comes from the per-user properties instead.
-_lfrWorktreeBundleDir() {
-	local name="${1:?_lfrWorktreeBundleDir: no name}"
-	local root="${2:-${LFR_WORKTREE_ROOT:-${HOME}/liferay/repos}}"
-
-	[ "${LFR_WORKTREE_LAYOUT:-flat}" = nested ] || return 1
-
-	printf '%s\n' "${root}/liferay-portal-${name}/bundles"
+	printf '%s\n' "${root}/liferay-portal-${name}/portal"
 }
 
 # Echo the home folder of the checkout $1 when it is a nested worktree: the checkout
 # is named portal and its parent holds the marker. Returns 1 for any other checkout,
-# so a flat worktree or a clone is never taken for one.
+# so a clone is never taken for one.
 _lfrWorktreeNestedHome() {
 	local dir="${1%/}"
 

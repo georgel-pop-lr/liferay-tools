@@ -11,11 +11,12 @@
 #     lfrWorktree hotfix           # branch hotfix EXISTS -> check it out in the worktree
 #
 # Run it from inside any liferay-portal clone; the worktree is created under
-# LFR_WORKTREE_ROOT as a sibling named liferay-portal-<branch>. Whether the branch
-# is new or existing, the invoking clone's per-user *.${USER}.properties (which are
-# gitignored, so a fresh worktree has none) are copied into the worktree, with any
-# bundle path repointed to bundles/liferay-bundle-<branch>, so this worktree deploys
-# to / tests against its own bundle instead of clobbering the default one.
+# LFR_WORKTREE_ROOT as one folder named liferay-portal-<branch>, which holds the
+# checkout (portal/) and its bundle (bundles/). Whether the branch is new or existing,
+# the invoking clone's per-user *.${USER}.properties (which are gitignored, so a fresh
+# worktree has none) are copied into the checkout, pointed at that bundles/ folder, so
+# this worktree deploys to / tests against its own bundle instead of clobbering the
+# default one.
 #
 # That bundle dir is created too, with the invoking bundle's portal-ext.properties
 # copied in and its JDBC URL pointed at a database of its own, which is created for
@@ -596,7 +597,7 @@ _lfrWorktreeWriteMarker() {
 LFR_BINARIES_CACHES=("liferay-binaries-cache-2017" "liferay-binaries-cache-2020")
 
 # Link each binaries cache that sits next to the clone $2 into the nested worktree
-# home $1, so ../<cache> from the checkout resolves as it does for a flat worktree.
+# home $1, so ../<cache> from the checkout resolves to the shared cache.
 # A link that exists is left alone; a cache the clone does not have is skipped.
 _lfrWorktreeCacheLinks() {
 	local home="${1}" src_root="${2}" name target
@@ -623,18 +624,14 @@ lfrWorktree() {
 			  lfrWorktree <branch> <base>   create <branch> off the given base ref
 			                                (a local branch, <remote>/<ref>, or a sha)
 
-			The worktree is created next to your repos as liferay-portal-<branch> and
-			you are moved into it. Your per-user *.${USER}.properties are copied in with
-			the bundle repointed to bundles/liferay-bundle-<branch>. That bundle dir is
-			created with your portal-ext.properties copied in, on a database of its own
-			(portal-<branch>), which is created for you when PostgreSQL is reachable.
-			Run from inside any liferay-portal clone.
-
-			With LFR_WORKTREE_LAYOUT=nested the worktree is one folder,
-			liferay-portal-<branch>, that holds the checkout (portal/), its bundle
+			The worktree is one folder, liferay-portal-<branch> in LFR_WORKTREE_ROOT,
+			and you are moved into it. It holds the checkout (portal/), its bundle
 			(bundles/), and a marker (.lfr-worktree: repo, branch, database, source).
-			The per-user properties point at ${project.dir}/../bundles, and the
-			binaries cache path stays ../<cache>, through a link in the home folder.
+			Your per-user *.${USER}.properties are copied in, pointed at
+			${project.dir}/../bundles. The bundle gets your portal-ext.properties, on a
+			database of its own (portal-<branch>), which is created for you when
+			PostgreSQL is reachable. The binaries cache path stays ../<cache>, through
+			a link in the home folder. Run from inside any liferay-portal clone.
 
 			Two questions, both answered y or n:
 
@@ -696,14 +693,14 @@ lfrWorktree() {
 	# create it if it does not exist so a freshly-configured tree works without a
 	# manual mkdir.
 	local wt_root="${LFR_WORKTREE_ROOT:-${HOME}/liferay/repos}"
-	local dir home=""
+	local dir home
 	dir="$(_lfrWorktreeDir "${branch}" "${wt_root}")" || return 1
 
-	# In the nested layout the home folder is the worktree, so it must not exist yet.
-	[ "${LFR_WORKTREE_LAYOUT:-flat}" = nested ] && home="${dir%/*}"
+	# The home folder is the worktree, so it must not exist yet.
+	home="${dir%/*}"
 
-	if [ -e "${dir}" ] || { [ -n "${home}" ] && [ -e "${home}" ]; }; then
-		echo "lfrWorktree: ${home:-${dir}} already exists" >&2
+	if [ -e "${home}" ]; then
+		echo "lfrWorktree: ${home} already exists" >&2
 		return 1
 	fi
 
@@ -768,32 +765,15 @@ lfrWorktree() {
 	fi
 
 	# Copy the invoking clone's per-user (gitignored) *.${USER}.properties into the
-	# worktree, repointing any bundle path to liferay-bundle-<branch> so this
-	# worktree targets its own bundle. Slashes in the branch become dashes in the
-	# bundle dir name. Files with no bundle path are copied unchanged.
+	# worktree, pointed at the bundles/ folder of its home. Slashes in the branch
+	# become dashes in the database name.
 	local bundle_suffix="${branch//\//-}"
-	local f name
-	local -a copied=()
-	if [ -n "${home}" ]; then
-		_lfrWorktreeNestedProperties "${src_root}" "${dir}" || return 1
-	else
-		for f in "${src_root}"/*."${USER}".properties; do
-			[ -f "${f}" ] || continue
-			name="$(basename "${f}")"
-			sed -E "s#(bundles/liferay-bundle-)[^/[:space:]]+#\1${bundle_suffix}#g" \
-				"${f}" >"${dir}/${name}" || return 1
-			copied+=("${name}")
-		done
-		if [ "${#copied[@]}" -gt 0 ]; then
-			echo "lfrWorktree: copied per-user config (bundle -> liferay-bundle-${bundle_suffix}): ${copied[*]}" >&2
-		fi
-	fi
+
+	_lfrWorktreeNestedProperties "${src_root}" "${dir}" || return 1
 
 	_lfrWorktreeBundleConfig "${src_root}" "${dir}" "${bundle_suffix}"
 
-	if [ -n "${home}" ]; then
-		_lfrWorktreeWriteMarker "${home}" "${src_root}" "${branch}" "${source}"
-	fi
+	_lfrWorktreeWriteMarker "${home}" "${src_root}" "${branch}" "${source}"
 
 	if [ -n "${source}" ]; then
 		_lfrWorktreeCopyBundle "${source}" "${dir}" ||
@@ -1419,10 +1399,9 @@ _lfrWorktreeIdeaWaitClosed() {
 # Echoes one path per line.
 #
 # A missing directory alone is not enough to call a project a leftover, so three things
-# have to hold. It sits directly in a root where worktrees are made: LFR_WORKTREE_ROOT,
-# or one of LFR_REPO_ROOTS, where the flat worktrees were before the nested layout. Its
-# name is one lfrWorktree makes (liferay-portal-<branch>), or it is the portal/ checkout
-# of such a folder. And its root is there, since with the Data drive unmounted every
+# have to hold. It is the portal/ checkout of a folder that lfrWorktree makes
+# (liferay-portal-<branch>), directly in LFR_WORKTREE_ROOT or in one of LFR_REPO_ROOTS
+# (the source clones). That whole folder is gone. And its root is there, since with the Data drive unmounted every
 # project on it is missing, and forgetting all of them over an unmounted drive is the
 # one failure this command must not have.
 #
@@ -1447,16 +1426,10 @@ _lfrWorktreeIdeaOrphans() {
 		while IFS= read -r key; do
 			key="${key/\$USER_HOME\$/${HOME}}"
 
-			# A flat worktree is <root>/liferay-portal-<branch>, and a nested one is the
-			# portal/ checkout inside such a folder. A nested one counts as gone only when
-			# its whole home folder is gone, the same test one level down.
+			# A worktree counts as gone only when its whole home folder is gone.
 			local match=""
 			for root in "${roots[@]}"; do
-				if [ "${key%/*}" = "${root}" ]; then
-					case "${key##*/}" in
-					liferay-portal-?*) match=1 ;;
-					esac
-				elif [ "${key##*/}" = portal ] && [ "${key%/*/*}" = "${root}" ]; then
+				if [ "${key##*/}" = portal ] && [ "${key%/*/*}" = "${root}" ]; then
 					case "${key%/*}" in
 					*/liferay-portal-?*) [ -e "${key%/*}" ] || match=1 ;;
 					esac
@@ -1683,7 +1656,7 @@ _lfrWorktreeStopGradleDaemons() {
 # Remove the home folder $1 of a nested worktree once its checkout and bundle are gone:
 # the marker goes, then the folder, but only when nothing else is left in it. A kept
 # bundle (--keep-bundle) or a file put there by hand keeps the folder and the marker,
-# and says so. No-op for an empty $1, which is a flat worktree.
+# and says so. No-op for an empty $1, which is a checkout that is not a worktree.
 _lfrWorktreeRemoveHome() {
 	local home="${1-}"
 
@@ -2011,18 +1984,17 @@ _lfrWorktreeRenameHelp() {
 
 		Everything lfrWorktree wires under one name is moved to another, so a branch
 		that turns out to be the wrong ticket costs a rename instead of a removal and
-		a fresh build: the branch, the worktree directory (liferay-portal-<new>), the
-		bundle directory (liferay-bundle-<new>), the bundle path in the worktree's
-		per-user *.${USER}.properties and in the generated .gradle/gradle.properties
-		every Gradle deploy reads, the database (portal-<new>, renamed with its
+		a fresh build: the branch, the worktree folder (liferay-portal-<new>,
+		with the checkout and the bundle in it), the paths in the generated
+		.gradle/gradle.properties every Gradle deploy reads, the database (portal-<new>, renamed with its
 		data in it), and the project IntelliJ offers on its welcome screen. The build
 		in the bundle is kept as it is, apart from osgi/state, which names the bundle's
 		own absolute path everywhere and is deleted so the first boot rebuilds it.
 
 		The old name is the worktree's own, read off its directory rather than off the
 		branch, so a branch renamed by hand is brought back into line: give it the name
-		the branch already has and the worktree, the bundle, its path in the per-user
-		and generated Gradle properties and the database move onto it, the branch
+		the branch already has and the worktree, the bundle, the paths in the
+		generated Gradle properties and the database move onto it, the branch
 		itself staying put.
 
 		It says what it is about to move and asks once before moving any of it, and
@@ -2173,35 +2145,24 @@ lfrWorktreeRename() {
 	# renamed by hand leaves behind. A directory named by hand has no such name to read,
 	# so there the branch is still it.
 	#
-	# A nested worktree (its marker next to the checkout) is named by its home folder,
-	# and renamed as one: the home folder moves with the checkout and the bundle in it.
-	# The layout is read off the worktree, not off LFR_WORKTREE_LAYOUT, which decides
-	# only where a new worktree goes.
-	local home="" new_home=""
-	home="$(_lfrWorktreeNestedHome "${dir}")" || home=""
+	# A worktree (its marker next to the checkout) is named by its home folder, and
+	# renamed as one: the home folder moves with the checkout and the bundle in it.
+	local home new_home
 
-	local dir_name="${dir##*/}"
-	local old_suffix="${old_branch//\//-}"
+	if ! home="$(_lfrWorktreeNestedHome "${dir}")"; then
+		echo "lfrWorktreeRename: ${dir} is not a worktree that lfrWorktree made (no ${LFR_WORKTREE_MARKER} next to it)" >&2
 
-	[ -n "${home}" ] && dir_name="${home##*/}"
-
-	case "${dir_name}" in
-	liferay-portal-?*) old_suffix="${dir_name#liferay-portal-}" ;;
-	esac
+		return 1
+	fi
 
 	local new_dir
+	new_home="${home%/*}/liferay-portal-${new_suffix}"
+	new_dir="${new_home}/portal"
 
-	if [ -n "${home}" ]; then
-		new_home="${home%/*}/liferay-portal-${new_suffix}"
-		new_dir="${new_home}/portal"
+	if [ "${new_home}" != "${home}" ] && [ -e "${new_home}" ]; then
+		echo "lfrWorktreeRename: ${new_home} already exists" >&2
 
-		if [ "${new_home}" != "${home}" ] && [ -e "${new_home}" ]; then
-			echo "lfrWorktreeRename: ${new_home} already exists" >&2
-
-			return 1
-		fi
-	else
-		new_dir="$(LFR_WORKTREE_LAYOUT=flat _lfrWorktreeDir "${new_suffix}" "${dir%/*}")" || return 1
+		return 1
 	fi
 
 	if [ "${new_dir}" != "${dir}" ] && [ -e "${new_dir}" ]; then
@@ -2222,25 +2183,12 @@ lfrWorktreeRename() {
 	if [ -n "${bundle_dir}" ] && [ -d "${bundle_dir}" ]; then
 		if [ -f "${dir}/app.server.${USER}.lfrshare-bak.properties" ]; then
 			echo "lfrWorktreeRename: ${bundle_dir} is shared with this worktree by lfrShare; leaving the bundle alone" >&2
-		elif [ -n "${home}" ]; then
-			# The bundle of a nested worktree is the bundles/ folder of its home, and it
-			# moves with the home folder; any other bundle is not this worktree's own.
-			if [ "$(cd "${bundle_dir}" && pwd -P)" = "$(cd "${home}" && pwd -P)/bundles" ]; then
-				new_bundle_dir="${new_home}/bundles"
-			else
-				echo "lfrWorktreeRename: ${bundle_dir} is not the bundles folder of ${home}; leaving the bundle alone" >&2
-			fi
-		elif [ "${bundle_dir##*/}" != "liferay-bundle-${old_suffix}" ] &&
-			[ "${bundle_dir##*/}" != "liferay-bundle-${new_suffix}" ]; then
-			echo "lfrWorktreeRename: ${bundle_dir} is not named after ${old_suffix}; leaving the bundle alone" >&2
+		elif [ "$(cd "${bundle_dir}" && pwd -P)" = "$(cd "${home}" && pwd -P)/bundles" ]; then
+			# The bundle of a worktree is the bundles/ folder of its home, and it moves
+			# with the home folder; any other bundle is not this worktree's own.
+			new_bundle_dir="${new_home}/bundles"
 		else
-			new_bundle_dir="${bundle_dir%/*}/liferay-bundle-${new_suffix}"
-
-			if [ "${new_bundle_dir}" != "${bundle_dir}" ] && [ -e "${new_bundle_dir}" ]; then
-				echo "lfrWorktreeRename: ${new_bundle_dir} already exists" >&2
-
-				return 1
-			fi
+			echo "lfrWorktreeRename: ${bundle_dir} is not the bundles folder of ${home}; leaving the bundle alone" >&2
 		fi
 	fi
 
@@ -2332,7 +2280,7 @@ lfrWorktreeRename() {
 		_lfrWorktreeStopGradleDaemons "${dir}" lfrWorktreeRename
 	fi
 
-	if [ "${new_dir}" != "${dir}" ] && [ -n "${home}" ]; then
+	if [ "${new_dir}" != "${dir}" ]; then
 		# The home folder moves as one, the checkout and the bundle with it, and git is
 		# told where its worktree went. Both its links name the old path until then.
 		if ! mv "${home}" "${new_home}"; then
@@ -2353,21 +2301,6 @@ lfrWorktreeRename() {
 		"${dir}"/*) cd "${new_dir}" || return 1 ;;
 		"${home}"/*) cd "${new_home}" || return 1 ;;
 		esac
-	elif [ "${new_dir}" != "${dir}" ]; then
-		if ! git worktree move "${dir}" "${new_dir}"; then
-			echo "lfrWorktreeRename: could not move the worktree; nothing was renamed" >&2
-
-			return 1
-		fi
-
-		echo "lfrWorktreeRename: moved the worktree to ${new_dir}" >&2
-
-		# The shell is left standing in a directory that is not there any more when it
-		# was inside the worktree, so follow the move. An empty * still matches, so the
-		# worktree itself is covered as well as anything under it.
-		case "${PWD}/" in
-		"${dir}"/*) cd "${new_dir}" || return 1 ;;
-		esac
 	fi
 
 	if [ "${old_branch}" != "${new_branch}" ]; then
@@ -2383,42 +2316,8 @@ lfrWorktreeRename() {
 	fi
 
 	if [ -n "${new_bundle_dir}" ] && [ "${new_bundle_dir}" != "${bundle_dir}" ]; then
-		# A nested bundle moved with its home folder already, and its per-user path
+		# The bundle moved with its home folder already, and its per-user path
 		# (${project.dir}/../bundles) names no folder of its own, so it needs no repoint.
-		if [ -z "${home}" ] && ! mv "${bundle_dir}" "${new_bundle_dir}"; then
-			echo "lfrWorktreeRename: could not move ${bundle_dir}; left the worktree pointing at it" >&2
-
-			return 1
-		fi
-
-		[ -z "${home}" ] && echo "lfrWorktreeRename: moved the bundle to ${new_bundle_dir}" >&2
-
-		# The same rewrite the creation does when it copies these in, so the worktree
-		# keeps deploying into its own bundle under the bundle's new name.
-		local f name
-		local -a repointed=()
-
-		for f in "${new_dir}"/*."${USER}".properties; do
-			[ -z "${home}" ] || break
-
-			[ -f "${f}" ] || continue
-
-			# Only the ones naming a bundle, so the message says what really moved: a
-			# per-user file with no bundle path in it (build.${USER}.properties) is
-			# untouched by this and has no business in that list.
-			grep -q "bundles/liferay-bundle-" "${f}" || continue
-
-			name="${f##*/}"
-
-			sed -i -E "s#(bundles/liferay-bundle-)[^/[:space:]]+#\1${new_suffix}#g" "${f}" ||
-				return 1
-
-			repointed+=("${name}")
-		done
-
-		if [ "${#repointed[@]}" -gt 0 ]; then
-			echo "lfrWorktreeRename: repointed the per-user config (bundle -> liferay-bundle-${new_suffix}): ${repointed[*]}" >&2
-		fi
 
 		# setenv.sh is the one file in a built bundle whose absolute paths can be
 		# rewritten: the build writes the JaCoCo agent's jar and its destfile into it, one
@@ -2464,28 +2363,11 @@ lfrWorktreeRename() {
 	# renamed worktree: 60 spellings of the worktree directory and 54 of the bundle, every
 	# one of them built on the worktree's own path, which is why both rewrites are needed.
 	local gradle_properties="${new_dir}/.gradle/gradle.properties"
-	local bundle_moved=""
 
-	if [ -n "${new_bundle_dir}" ] && [ "${new_bundle_dir}" != "${bundle_dir}" ]; then
-		bundle_moved=yes
-	fi
-
-	if [ -f "${gradle_properties}" ] && [ -n "${home}" ] && [ "${new_dir}" != "${dir}" ]; then
-		# Every path of a nested worktree is under its home folder: the checkout, the
+	if [ -f "${gradle_properties}" ] && [ "${new_dir}" != "${dir}" ]; then
+		# Every path of a worktree is under its home folder: the checkout, the
 		# bundle as the copy wrote it, and the bundle as ant wrote it (portal/../bundles).
 		sed -i -E "s#${home//./\\.}/#${new_home}/#g" "${gradle_properties}" || return 1
-
-		echo "lfrWorktreeRename: repointed the generated Gradle config ${gradle_properties}" >&2
-	elif [ -f "${gradle_properties}" ] &&
-		{ [ "${new_dir}" != "${dir}" ] || [ -n "${bundle_moved}" ]; }; then
-		sed -i -E "s#${dir//./\\.}#${new_dir}#g" "${gradle_properties}" || return 1
-
-		# The bundle's name on top of that, and only when the bundle moved: one left alone
-		# keeps its own name whatever the worktree is called now.
-		if [ -n "${bundle_moved}" ]; then
-			sed -i -E "s#(bundles/liferay-bundle-)[^/[:space:]]+#\1${new_suffix}#g" \
-				"${gradle_properties}" || return 1
-		fi
 
 		echo "lfrWorktreeRename: repointed the generated Gradle config ${gradle_properties}" >&2
 	fi
@@ -2539,355 +2421,6 @@ lfrWorktreeRename() {
 	if [ -n "${upstream}" ] && [ "${old_branch}" != "${new_branch}" ]; then
 		echo "lfrWorktreeRename: ${new_branch} still tracks ${upstream}; push it under its new name yourself" >&2
 	fi
-}
-
-_lfrWorktreeMoveHelp() {
-	cat <<-'EOF2'
-		lfrWorktreeMove - move a flat worktree and its bundle into the nested layout.
-
-		Usage:
-		  lfrWorktreeMove <branch|path>              move the worktree that has <branch>
-		                                             checked out, or the one at <path>
-		  lfrWorktreeMove <branch|path> --root <dir> put it under <dir> instead
-		  lfrWorktreeMove <branch|path> -y           do not ask before the move
-
-		A flat worktree is <repos>/liferay-portal-<x>, with its bundle somewhere else
-		(bundles/liferay-bundle-<x>). This moves it to one folder:
-
-		  <root>/liferay-portal-<x>/portal     the checkout (git worktree move)
-		  <root>/liferay-portal-<x>/bundles    the bundle (one mv, the same disk)
-		  <root>/liferay-portal-<x>/.lfr-worktree
-
-		<root> is LFR_WORKTREE_ROOT when LFR_WORKTREE_LAYOUT=nested, else --root, else
-		a worktrees/ folder next to the flat worktree. The branch and the database keep
-		their names. The per-user properties get app.server.parent.dir=${project.dir}/../bundles
-		and build.binaries.cache.dir=../<cache>. .gradle/gradle.properties and setenv.sh
-		get the new paths, and osgi/state is deleted, so the first boot rebuilds it (a
-		normal start; -cc is not needed). IntelliJ forgets the old path; run lfrWorktreeIdeaInit after.
-
-		It refuses a worktree that is nested already, a home folder that exists, a bundle
-		with a running Tomcat, a bundle that another checkout points at or that lfrShare
-		gave it, and a bundle or worktree on another disk than <root>.
-	EOF2
-}
-
-# Escape $1 for the left side of an extended sed expression that uses # as its delimiter.
-_lfrWorktreeSedEscape() {
-	printf '%s' "${1}" | sed -E 's/[][\\.^$*+?(){}|#]/\\&/g'
-}
-
-lfrWorktreeMove() {
-	case "${1-}" in -h | --help) _lfrWorktreeMoveHelp; return 0 ;; esac
-
-	local target="" root="" yes=""
-
-	while [ "$#" -gt 0 ]; do
-		case "${1}" in
-		-y | --yes) yes=yes ;;
-		--root)
-			root="${2-}"
-			[ -n "${root}" ] || { echo "lfrWorktreeMove: --root needs a folder" >&2; return 1; }
-			shift
-			;;
-		-*)
-			echo "lfrWorktreeMove: unknown option ${1}" >&2
-			echo "usage: lfrWorktreeMove <branch|path> [--root <dir>] [-y]" >&2
-
-			return 1
-			;;
-		*)
-			[ -z "${target}" ] || { echo "usage: lfrWorktreeMove <branch|path> [--root <dir>] [-y]" >&2; return 1; }
-			target="${1}"
-			;;
-		esac
-
-		shift
-	done
-
-	if [ -z "${target}" ]; then
-		echo "usage: lfrWorktreeMove <branch|path> [--root <dir>] [-y]" >&2
-
-		return 1
-	fi
-
-	# A path is taken as it is. A branch is looked for in the worktree list of the repo
-	# in hand, then of each source clone, the way the other commands find a worktree.
-	local dir="" repo
-	local -a repos=()
-
-	if [ -d "${target}" ]; then
-		dir="$(cd "${target}" && pwd)"
-	else
-		git rev-parse --is-inside-work-tree >/dev/null 2>&1 && repos+=("${PWD}")
-		repos+=("${LFR_WORKTREE_SOURCES[@]}")
-
-		for repo in "${repos[@]}"; do
-			[ -d "${repo}" ] || continue
-
-			dir="$(git -C "${repo}" worktree list --porcelain 2>/dev/null |
-				awk -v branch="refs/heads/${target}" '
-					/^worktree /  { path = substr($0, 10) }
-					$0 == "branch " branch { print path; exit }
-				')"
-
-			[ -n "${dir}" ] && break
-		done
-	fi
-
-	if [ -z "${dir}" ] || [ "$(git -C "${dir}" rev-parse --show-toplevel 2>/dev/null)" != "${dir}" ]; then
-		echo "lfrWorktreeMove: no worktree found for ${target}" >&2
-
-		return 1
-	fi
-
-	local main_root
-	main_root="$(git -C "${dir}" worktree list --porcelain | awk '/^worktree / { print substr($0, 10); exit }')"
-
-	if [ "${dir}" = "${main_root}" ]; then
-		echo "lfrWorktreeMove: ${dir} is the clone itself, not a worktree of it" >&2
-
-		return 1
-	fi
-
-	if _lfrWorktreeNestedHome "${dir}" >/dev/null || [ "${dir##*/}" = portal ]; then
-		echo "lfrWorktreeMove: ${dir} is in the nested layout already" >&2
-
-		return 1
-	fi
-
-	local name="${dir##*/}"
-
-	case "${name}" in
-	liferay-portal-?*) ;;
-	*)
-		echo "lfrWorktreeMove: ${name} is not named liferay-portal-<x>; rename it with lfrWorktreeRename first" >&2
-
-		return 1
-		;;
-	esac
-
-	if [ -z "${root}" ]; then
-		if [ "${LFR_WORKTREE_LAYOUT:-flat}" = nested ]; then
-			root="${LFR_WORKTREE_ROOT:-${HOME}/liferay/repos}"
-		else
-			root="${dir%/*}/worktrees"
-		fi
-	fi
-
-	root="$(realpath -m "${root}")"
-
-	local home="${root}/${name}"
-	local new_dir="${home}/portal"
-
-	if [ -e "${home}" ]; then
-		echo "lfrWorktreeMove: ${home} already exists" >&2
-
-		return 1
-	fi
-
-	# The nearest folder of the root that exists, for the check of the disk.
-	local root_fs="${root}"
-	while [ ! -d "${root_fs}" ]; do
-		root_fs="${root_fs%/*}"
-	done
-
-	if [ "$(stat -c %d "${dir}")" != "$(stat -c %d "${root_fs}")" ]; then
-		echo "lfrWorktreeMove: ${dir} is on another disk than ${root}; a move there is a copy" >&2
-
-		return 1
-	fi
-
-	# Resolved while the worktree still stands where its properties say it does.
-	local bundle_dir=""
-	bundle_dir="$(cd "${dir}" && _lfrRepoBundleDir)" || bundle_dir=""
-	[ -d "${bundle_dir}" ] || bundle_dir=""
-
-	if [ -n "${bundle_dir}" ]; then
-		if [ -f "${dir}/app.server.${USER}.lfrshare-bak.properties" ]; then
-			echo "lfrWorktreeMove: lfrShare gave ${bundle_dir} to this worktree; it is not its own bundle" >&2
-
-			return 1
-		fi
-
-		local real_bundle other bundle path
-		real_bundle="$(readlink -m "${bundle_dir}")"
-
-		while IFS=$'\t' read -r bundle _ _ _ path; do
-			if [ "${bundle}" = "${real_bundle}" ] && [ "$(readlink -m "${path}")" != "$(readlink -m "${dir}")" ]; then
-				other="${path}"
-				break
-			fi
-		done < <(_lfrBundleRepoBranches)
-
-		if [ -n "${other:-}" ]; then
-			echo "lfrWorktreeMove: ${other} also points at ${bundle_dir}; it is not this worktree's own bundle" >&2
-
-			return 1
-		fi
-
-		if [ "$(stat -c %d "${bundle_dir}")" != "$(stat -c %d "${root_fs}")" ]; then
-			echo "lfrWorktreeMove: ${bundle_dir} is on another disk than ${root}; a move there is a copy" >&2
-
-			return 1
-		fi
-
-		# Extract each running catalina.base and compare, rather than grepping ps for the
-		# bundle path: a pattern holding the path matches this very grep in the ps output.
-		local catalina_base
-		while IFS= read -r catalina_base; do
-			case "${catalina_base}" in
-			"${bundle_dir}" | "${bundle_dir}"/*)
-				echo "lfrWorktreeMove: a Tomcat is running out of ${bundle_dir}; stop it first" >&2
-
-				return 1
-				;;
-			esac
-		done < <(ps -eo args | grep --only-matching -- "-Dcatalina\.base=[^ ]*" | sed "s/-Dcatalina.base=//")
-	fi
-
-	local db=""
-	[ -n "${bundle_dir}" ] && db="$(_lfrWorktreeBundleDatabase "${bundle_dir}/portal-ext.properties")"
-
-	echo "lfrWorktreeMove: ${name} -> nested" >&2
-	echo "  Worktree : ${dir} -> ${new_dir}" >&2
-	echo "  Bundle   : ${bundle_dir:-none} -> ${bundle_dir:+${home}/bundles}" >&2
-	echo "  Database : ${db:-none}, kept as it is" >&2
-
-	if [ -z "${yes}" ] && [ -t 0 ] && ! _lfrConfirm "lfrWorktreeMove: move it?"; then
-		echo "lfrWorktreeMove: nothing was moved" >&2
-
-		return 1
-	fi
-
-	local idea_clear="" idea_listed=""
-
-	if _lfrWorktreeIdeaLists "${dir}"; then
-		idea_listed=yes
-
-		if _lfrWorktreeIdeaCloseOrRefuse lfrWorktreeMove; then
-			idea_clear=yes
-		fi
-	fi
-
-	# The per-user properties are rewritten from the old place, where the relative
-	# binaries cache path still resolves, into a scratch folder, and put in after the move.
-	local props_tmp
-	props_tmp="$(mktemp -d)" || return 1
-
-	if ! _lfrWorktreeNestedProperties "${dir}" "${props_tmp}" 2>/dev/null; then
-		echo "lfrWorktreeMove: could not rewrite the per-user properties; nothing was moved" >&2
-		rm -rf "${props_tmp}"
-
-		return 1
-	fi
-
-	_lfrStep "Make ${home}" mkdir -p "${home}" || { rm -rf "${props_tmp}"; return 1; }
-
-	if ! _lfrStep "Move the checkout" git -C "${main_root}" worktree move "${dir}" "${new_dir}"; then
-		echo "lfrWorktreeMove: could not move the worktree; nothing was moved" >&2
-		rmdir "${home}" 2>/dev/null
-		rm -rf "${props_tmp}"
-
-		return 1
-	fi
-
-	echo "lfrWorktreeMove: moved the worktree to ${new_dir}" >&2
-
-	case "${PWD}/" in
-	"${dir}"/*) cd "${new_dir}" || return 1 ;;
-	esac
-
-	if [ -n "${bundle_dir}" ]; then
-		if ! _lfrStep "Move the bundle" mv "${bundle_dir}" "${home}/bundles"; then
-			echo "lfrWorktreeMove: moved the worktree, but not the bundle ${bundle_dir}; move it to ${home}/bundles by hand" >&2
-			rm -rf "${props_tmp}"
-
-			return 1
-		fi
-
-		echo "lfrWorktreeMove: moved the bundle to ${home}/bundles" >&2
-	fi
-
-	local f
-	local -a written=()
-
-	for f in "${props_tmp}"/*; do
-		[ -f "${f}" ] || continue
-		cp "${f}" "${new_dir}/" || return 1
-		written+=("${f##*/}")
-	done
-
-	rm -rf "${props_tmp}"
-
-	echo "lfrWorktreeMove: rewrote the per-user config (bundle -> \${project.dir}/../bundles, binaries cache through the home folder link): ${written[*]}" >&2
-
-	local new_bundle_dir="${home}/bundles"
-	local dir_re bundle_re
-	dir_re="$(_lfrWorktreeSedEscape "${dir}")"
-	bundle_re="$(_lfrWorktreeSedEscape "${bundle_dir}")"
-
-	if [ -n "${bundle_dir}" ]; then
-		# The build writes the JaCoCo paths into setenv.sh, one under the bundle and one
-		# under the worktree (see lfrWorktreeRename).
-		local setenv
-		for setenv in "${new_bundle_dir}"/tomcat-*/bin/setenv.sh; do
-			[ -f "${setenv}" ] || continue
-
-			grep -qF "${bundle_dir}" "${setenv}" || grep -qF "${dir}" "${setenv}" || continue
-
-			sed -i -E -e "s#${bundle_re}(/|\$|[^-[:alnum:]_.])#${new_bundle_dir}\1#g" \
-				-e "s#${dir_re}(/|\$|[^-[:alnum:]_.])#${new_dir}\1#g" "${setenv}" || return 1
-
-			echo "lfrWorktreeMove: repointed the paths in ${setenv}" >&2
-		done
-
-		# osgi/state names the old bundle path in a serialized form that cannot be
-		# rewritten, so it goes, and the first boot rebuilds it (see lfrWorktreeRename).
-		local state_dir="${new_bundle_dir}/osgi/state"
-
-		if [ -d "${state_dir}" ]; then
-			local state_size
-			state_size="$(_lfrStep "Measure the OSGi state" du -sh "${state_dir}" | cut -f1)"
-
-			_lfrStep "Delete the OSGi state" rm -rf "${state_dir}" &&
-				echo "lfrWorktreeMove: deleted the OSGi state ${state_dir} (${state_size}), which named the old bundle; the first boot rebuilds it" >&2
-		fi
-	fi
-
-	# Every Gradle deploy reads the absolute paths in .gradle/gradle.properties, so they
-	# follow the move, the bundle first (see lfrWorktreeRename).
-	local gradle_properties="${new_dir}/.gradle/gradle.properties"
-
-	if [ -f "${gradle_properties}" ]; then
-		if [ -n "${bundle_dir}" ]; then
-			sed -i -E "s#${bundle_re}(/|\$|[^-[:alnum:]_.])#${new_bundle_dir}\1#g" "${gradle_properties}" || return 1
-		fi
-
-		sed -i -E "s#${dir_re}(/|\$|[^-[:alnum:]_.])#${new_dir}\1#g" "${gradle_properties}" || return 1
-
-		echo "lfrWorktreeMove: repointed the generated Gradle config ${gradle_properties}" >&2
-	fi
-
-	local branch source=""
-	branch="$(git -C "${new_dir}" symbolic-ref --short -q HEAD || git -C "${new_dir}" rev-parse --short HEAD)"
-	[ -f "${new_bundle_dir}/.lfr-build-head" ] &&
-		source="$(_lfrWorktreeStampValue "${new_bundle_dir}/.lfr-build-head" copied_from)"
-
-	_lfrWorktreeWriteMarker "${home}" "${main_root}" "${branch}" "${source}" 2>/dev/null &&
-		echo "lfrWorktreeMove: wrote ${home}/${LFR_WORKTREE_MARKER}" >&2
-
-	_lfrWorktreeIdeaName "${new_dir}"
-
-	if [ -n "${idea_clear}" ]; then
-		_lfrWorktreeIdeaTrustProject "${dir}" "${new_dir}" lfrWorktreeMove
-		_lfrWorktreeIdeaMoveTaskState "${dir}" "${new_dir}" lfrWorktreeMove
-		_lfrWorktreeRemoveIdeaProject "${dir}" lfrWorktreeMove
-		_lfrWorktreeIdeaRecentProject "${new_dir}" lfrWorktreeMove
-	elif [ -n "${idea_listed}" ]; then
-		echo "lfrWorktreeMove: IntelliJ still lists ${dir}; once it is closed run lfrWorktreeIdeaClean, then lfrWorktreeIdeaInit ${branch} --recent" >&2
-	fi
-
-	echo "lfrWorktreeMove: done. ${name} is now ${home}. Its first boot rebuilds the OSGi state." >&2
 }
 
 # Make a worktree that holds the head of a pull, so you can review it or work on
@@ -3011,7 +2544,6 @@ lfrwn() { lfrWorktreeRename "$@"; }
 lfrwr() { lfrWorktreeRemove "$@"; }
 lfrwcb() { lfrWorktreeCopyBundle "$@"; }
 lfrwp() { lfrWorktreePull "$@"; }
-lfrwm() { lfrWorktreeMove "$@"; }
 
 # Write the source project's run configurations into $2/.idea/runConfigurations, one
 # file each. That is IntelliJ's shared form, the one meant to travel with a project, so
@@ -3605,21 +3137,14 @@ lfrWorktreeIdeaInit() {
 			return 1
 		fi
 	elif [ ! -d "${dir}" ]; then
-		# A branch name: the worktree in the layout new ones get, else the one in the other
-		# layout, else the worktree git has that branch checked out in.
+		# A branch name: the worktree lfrWorktree makes for it, else the worktree git has
+		# that branch checked out in.
 		local name="${dir}" other
 
 		dir="$(_lfrWorktreeDir "${name}" "${wt_root}")" || return 1
 
 		if [ ! -d "${dir}" ]; then
-			case "${LFR_WORKTREE_LAYOUT:-flat}" in
-			nested) other="$(LFR_WORKTREE_LAYOUT=flat _lfrWorktreeDir "${name}" "${wt_root}")" ;;
-			*) other="$(LFR_WORKTREE_LAYOUT=nested _lfrWorktreeDir "${name}" "${wt_root}")" ;;
-			esac
-
-			if [ -d "${other}" ]; then
-				dir="${other}"
-			elif other="$(git -C "${src}" worktree list --porcelain 2>/dev/null |
+			if other="$(git -C "${src}" worktree list --porcelain 2>/dev/null |
 					awk -v branch="refs/heads/${name}" '
 						/^worktree /  { path = substr($0, 10) }
 						$0 == "branch " branch { print path; exit }
