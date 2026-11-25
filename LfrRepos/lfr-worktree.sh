@@ -2504,8 +2504,8 @@ _lfrWorktreeMoveHelp() {
 		a worktrees/ folder next to the flat worktree. The branch and the database keep
 		their names. The per-user properties get app.server.parent.dir=${project.dir}/../bundles
 		and build.binaries.cache.dir=../<cache>. .gradle/gradle.properties and setenv.sh
-		get the new paths, and osgi/state is deleted, so the first boot rebuilds it (start
-		the bundle with -cc). IntelliJ forgets the old path; run lfrWorktreeIdeaInit after.
+		get the new paths, and osgi/state is deleted, so the first boot rebuilds it (a
+		normal start; -cc is not needed). IntelliJ forgets the old path; run lfrWorktreeIdeaInit after.
 
 		It refuses a worktree that is nested already, a home folder that exists, a bundle
 		with a running Tomcat, a bundle that another checkout points at or that lfrShare
@@ -2827,7 +2827,7 @@ lfrWorktreeMove() {
 		echo "lfrWorktreeMove: IntelliJ still lists ${dir}; once it is closed run lfrWorktreeIdeaClean, then lfrWorktreeIdeaInit ${branch} --recent" >&2
 	fi
 
-	echo "lfrWorktreeMove: done. ${name} is now ${home}. Start its bundle the first time with -cc." >&2
+	echo "lfrWorktreeMove: done. ${name} is now ${home}. Its first boot rebuilds the OSGi state." >&2
 }
 
 # Make a worktree that holds the head of a pull, so you can review it or work on
