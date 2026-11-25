@@ -2520,6 +2520,8 @@ lfrWorktreeRename() {
 		fi
 	fi
 
+	_lfrWorktreeIdeaName "${new_dir}"
+
 	if [ -n "${idea_clear}" ]; then
 		_lfrWorktreeIdeaTrustProject "${dir}" "${new_dir}" lfrWorktreeRename
 		_lfrWorktreeIdeaMoveTaskState "${dir}" "${new_dir}" lfrWorktreeRename
@@ -2873,6 +2875,8 @@ lfrWorktreeMove() {
 
 	_lfrWorktreeWriteMarker "${home}" "${main_root}" "${branch}" "${source}" 2>/dev/null &&
 		echo "lfrWorktreeMove: wrote ${home}/${LFR_WORKTREE_MARKER}" >&2
+
+	_lfrWorktreeIdeaName "${new_dir}"
 
 	if [ -n "${idea_clear}" ]; then
 		_lfrWorktreeIdeaTrustProject "${dir}" "${new_dir}" lfrWorktreeMove
@@ -3361,6 +3365,19 @@ _lfrWorktreeIdeaMoveTaskState() {
 #
 # $2 is the calling command, used only to prefix the messages, since lfrWorktreeRename
 # registers a project here too.
+# A nested checkout is always the folder portal/, and IntelliJ names a project after its
+# folder when .idea/.name is not there. So each nested project was "portal", and the
+# Welcome screen showed the full path to tell the 23 of them apart. The name of the home
+# folder (liferay-portal-<branch>) gives each project its own name.
+_lfrWorktreeIdeaName() {
+	local dir="${1%/}"
+	local home="${dir%/*}"
+
+	[ "${dir##*/}" = portal ] && [ -d "${dir}/.idea" ] || return 0
+
+	printf '%s' "${home##*/}" >"${dir}/.idea/.name"
+}
+
 _lfrWorktreeIdeaRecentProject() {
 	local dir="${1}"
 	local caller="${2:-lfrWorktreeIdeaInit}"
@@ -3389,6 +3406,9 @@ _lfrWorktreeIdeaRecentProject() {
 
 	now="$(($(date +%s) * 1000))"
 
+	local title="${dir##*/}"
+	[ -s "${dir}/.idea/.name" ] && title="$(cat "${dir}/.idea/.name")"
+
 	for recent in "${config_root}"/IntelliJIdea*/options/recentProjects.xml; do
 		[ -f "${recent}" ] || continue
 
@@ -3410,7 +3430,7 @@ _lfrWorktreeIdeaRecentProject() {
 
 		tmp="$(mktemp)" || return 1
 
-		awk -v key="${key}" -v now="${now}" -v title="${dir##*/}" '
+		awk -v key="${key}" -v now="${now}" -v title="${title}" '
 			!inserted && /^[[:space:]]*<\/map>[[:space:]]*$/ {
 				printf "        <entry key=\"%s\">\n", key
 				print "          <value>"
@@ -3632,6 +3652,7 @@ lfrWorktreeIdeaInit() {
 			_lfrWorktreeIdeaTrustProject "${src}" "${dir}" lfrWorktreeIdeaInit
 		fi
 
+		_lfrWorktreeIdeaName "${dir}"
 		_lfrWorktreeIdeaRecentProject "${dir}"
 
 		return
@@ -3680,6 +3701,9 @@ lfrWorktreeIdeaInit() {
 		"${src}/.idea/" "${dir}/.idea/" || return 1
 
 	echo "lfrWorktreeIdeaInit: copied the project model into ${dir}/.idea" >&2
+
+	# The copy brings the .name of the source clone, so write the name of this one over it.
+	_lfrWorktreeIdeaName "${dir}"
 
 	# modules.xml is nothing without the .iml files it points at, and only a handful of
 	# them are tracked, so a fresh worktree has almost none. The tracked ones are held
