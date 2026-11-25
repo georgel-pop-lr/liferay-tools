@@ -496,13 +496,17 @@ _lfrWorktreeIdeaInitPrompt() {
 # Copy the invoking clone's per-user *.${USER}.properties into the nested worktree $2,
 # where the checkout is <home>/portal. Two values change, since both are relative to the
 # checkout: app.server.parent.dir becomes ${project.dir}/../bundles, the bundles/ folder
-# next to it, and build.binaries.cache.dir becomes the absolute path it has for the
-# clone $1, since its ../ is now the home folder and not the repos folder. Both are
-# written even when the clone does not set them, so the tools that read the per-user
-# file (_lfrRepoBundleDir, _lfrBundleRepoBranches) and the build both find them.
+# next to it, and build.binaries.cache.dir becomes ../<cache> when the cache is one of
+# LFR_BINARIES_CACHES, since _lfrWorktreeCacheLinks puts a link of that name in the home
+# folder. Keep it relative: util.gradle builds the path as
+# new File(rootDir.parentFile, <value>), so an absolute value lands under the checkout
+# and the Yarn offline cache step finds nothing (NO-SOURCE, no error). A cache with
+# another name gets the absolute path it has for the clone $1. Both are written even
+# when the clone does not set them, so the tools that read the per-user file
+# (_lfrRepoBundleDir, _lfrBundleRepoBranches) and the build both find them.
 _lfrWorktreeNestedProperties() {
 	local src_root="${1}" dir="${2}"
-	local f name val cache="" repo_name
+	local f name val cache="" value="" repo_name
 	local -a copied=()
 
 	# The cache path the clone uses: its own setting, else the default of build.properties
@@ -521,13 +525,19 @@ _lfrWorktreeNestedProperties() {
 		/*) cache="$(realpath -m "${val}")" ;;
 		*) cache="$(realpath -m "${src_root}/${val}")" ;;
 		esac
+
+		value="${cache}"
+
+		for name in "${LFR_BINARIES_CACHES[@]}"; do
+			[ "${cache##*/}" = "${name}" ] && value="../${name}"
+		done
 	fi
 
 	for f in "${src_root}"/*."${USER}".properties; do
 		[ -f "${f}" ] || continue
 		name="$(basename "${f}")"
 		sed -E -e 's#^([[:space:]]*app\.server\.parent\.dir[[:space:]]*=).*#\1${project.dir}/../bundles#' \
-			-e "s#^([[:space:]]*build\.binaries\.cache\.dir[[:space:]]*=).*#\1${cache}#" \
+			-e "s#^([[:space:]]*build\.binaries\.cache\.dir[[:space:]]*=).*#\1${value}#" \
 			"${f}" >"${dir}/${name}" || return 1
 		copied+=("${name}")
 	done
@@ -544,12 +554,12 @@ _lfrWorktreeNestedProperties() {
 
 	if [ -n "${cache}" ] &&
 		! command grep -q '^[[:space:]]*build\.binaries\.cache\.dir[[:space:]]*=' "${f}" 2>/dev/null; then
-		printf 'build.binaries.cache.dir=%s\n' "${cache}" >>"${f}" || return 1
+		printf 'build.binaries.cache.dir=%s\n' "${value}" >>"${f}" || return 1
 		[ -n "$(printf '%s\n' "${copied[@]}" | command grep -xF "build.${USER}.properties")" ] ||
 			copied+=("build.${USER}.properties")
 	fi
 
-	echo "lfrWorktree: copied per-user config (bundle -> \${project.dir}/../bundles, binaries cache -> ${cache:-not set}): ${copied[*]}" >&2
+	echo "lfrWorktree: copied per-user config (bundle -> \${project.dir}/../bundles, binaries cache -> ${value:-not set}): ${copied[*]}" >&2
 
 	if [ -n "${cache}" ] && [ ! -d "${cache}" ]; then
 		echo "lfrWorktree: the binaries cache ${cache} does not exist; the build will not find it" >&2
@@ -624,7 +634,7 @@ lfrWorktree() {
 			liferay-portal-<branch>, that holds the checkout (portal/), its bundle
 			(bundles/), and a marker (.lfr-worktree: repo, branch, database, source).
 			The per-user properties point at ${project.dir}/../bundles, and the
-			binaries cache path is made absolute, since ../ is now the home folder.
+			binaries cache path stays ../<cache>, through a link in the home folder.
 
 			Two questions, both answered y or n:
 
@@ -2480,7 +2490,7 @@ _lfrWorktreeMoveHelp() {
 		<root> is LFR_WORKTREE_ROOT when LFR_WORKTREE_LAYOUT=nested, else --root, else
 		a worktrees/ folder next to the flat worktree. The branch and the database keep
 		their names. The per-user properties get app.server.parent.dir=${project.dir}/../bundles
-		and an absolute build.binaries.cache.dir. .gradle/gradle.properties and setenv.sh
+		and build.binaries.cache.dir=../<cache>. .gradle/gradle.properties and setenv.sh
 		get the new paths, and osgi/state is deleted, so the first boot rebuilds it (start
 		the bundle with -cc). IntelliJ forgets the old path; run lfrWorktreeIdeaInit after.
 
@@ -2738,7 +2748,7 @@ lfrWorktreeMove() {
 
 	rm -rf "${props_tmp}"
 
-	echo "lfrWorktreeMove: rewrote the per-user config (bundle -> \${project.dir}/../bundles, absolute binaries cache): ${written[*]}" >&2
+	echo "lfrWorktreeMove: rewrote the per-user config (bundle -> \${project.dir}/../bundles, binaries cache through the home folder link): ${written[*]}" >&2
 
 	local new_bundle_dir="${home}/bundles"
 	local dir_re bundle_re
