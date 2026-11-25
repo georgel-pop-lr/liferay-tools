@@ -174,6 +174,8 @@ EOF
 		for root in "${LFR_REPO_ROOTS[@]}"; do
 			[ -d "${root}" ] || continue
 			for d in "${root}"/*/; do
+				# A nested worktree is a home folder with its checkout in portal/.
+				[ ! -e "${d}.git" ] && [ -e "${d}portal/.git" ] && d="${d}portal/"
 				bc="${d}.gradle/caches/build-cache-1"
 				[ -d "${bc}" ] || continue
 				found=1
