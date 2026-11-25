@@ -10,6 +10,7 @@
 #   lfrBundles stop-all                  stop every running bundle (confirms)
 #   lfrBundles cd [<bundle>]             jump to a bundle's Liferay home, no start
 #   lfrBundles upgrade [<bundle>]        run the bundle's database upgrade tool
+#   lfrBundles wait <bundle>             wait until a starting bundle is ready
 #
 # A running bundle is a java process started by `catalina.sh run`, so it carries
 # -Dcatalina.base=<bundle>/tomcat-x.y.z; that is how we find them. Ports come
@@ -335,8 +336,126 @@ _lfrBundleUpgrade() {
 	(cd "${dir}" && ./db_upgrade_client.sh "$@")
 }
 
+# Wait until the running bundle $1 is ready, and print one line for each gate it
+# passes, so a Monitor shows the progress. The gates, in order:
+#   1. its JVM runs (the launcher gets up to 120 s to start it),
+#   2. HTTP 200 on its own port, read from portal.instance.inet.socket.address, which
+#      the launcher writes on each launch (never 8080 by default: another bundle can
+#      answer there first; a first boot blocks HTTP until the site initializers end),
+#   3. the Arquillian connector listens, only when the bundle runs with -t
+#      (osgi/test in module.framework.auto.deploy.dirs),
+#   4. the newest liferay.*.log has not moved for --quiet seconds (default 20).
+# It does not look for "Server startup in": a launcher bundle has no catalina.out,
+# and liferay.log never gets that line. Exit 0 when ready, 1 on a timeout (--timeout
+# seconds, default 1800), when the JVM exits, or when the bundle is not known.
+_lfrBundleWait() {
+	local name="" timeout=1800 quiet=20
+
+	while [ "$#" -gt 0 ]; do
+		case "${1}" in
+		--timeout) timeout="${2:?}"; shift 2 ;;
+		--quiet) quiet="${2:?}"; shift 2 ;;
+		*) name="${1}"; shift ;;
+		esac
+	done
+
+	if [ -z "${name}" ]; then
+		echo "lfrBundles wait: name the bundle (a path or a name); there is no picker here" >&2
+		return 1
+	fi
+
+	local path home
+	path="$(_lfrBundleResolve "${name}")" || return 1
+	home="$(_lfrBundleHome "${path}")"
+
+	local start pid="" port="" connector="" test_run="" http_ok="" log age now
+	start="$(date +%s)"
+
+	while :; do
+		now="$(date +%s)"
+
+		if [ $((now - start)) -ge "${timeout}" ]; then
+			echo "lfrBundles wait: FAILED, not ready after ${timeout} s (${path})"
+			return 1
+		fi
+
+		if [ -z "${pid}" ]; then
+			pid="$(_lfrBundlePidForDir "${path}")"
+
+			if [ -z "${pid}" ]; then
+				if [ $((now - start)) -ge 120 ]; then
+					echo "lfrBundles wait: FAILED, no JVM runs for ${path}"
+					return 1
+				fi
+
+				sleep 5
+				continue
+			fi
+
+			echo "lfrBundles wait: JVM ${pid} runs"
+		elif ! kill -0 "${pid}" 2>/dev/null; then
+			echo "lfrBundles wait: FAILED, the JVM ${pid} exited"
+			return 1
+		fi
+
+		if [ -z "${port}" ]; then
+			port="$(sed -n 's/^[[:space:]]*portal\.instance\.inet\.socket\.address[[:space:]]*=[[:space:]]*[^:]*:\([0-9]\{1,\}\).*/\1/p' \
+				"${home}/portal-ext.properties" 2>/dev/null | tail -1)"
+
+			if command grep -q '^[[:space:]]*module\.framework\.auto\.deploy\.dirs[[:space:]]*=.*/test\b' \
+				"${home}/portal-ext.properties" 2>/dev/null; then
+				test_run=yes
+				connector="$(command grep -oE 'port="?[0-9]+' \
+					"${home}/osgi/configs/com.liferay.arquillian.extension.junit.bridge.connector.ArquillianConnector.config" \
+					2>/dev/null | command grep -oE '[0-9]+' | head -1)"
+			fi
+
+			if [ -z "${port}" ]; then
+				echo "lfrBundles wait: FAILED, no portal.instance.inet.socket.address in ${home}/portal-ext.properties"
+				return 1
+			fi
+		fi
+
+		if [ -z "${http_ok}" ]; then
+			if [ "$(curl -s -m 20 -o /dev/null -w '%{http_code}' "http://localhost:${port}/" 2>/dev/null)" != 200 ]; then
+				sleep 10
+				continue
+			fi
+
+			http_ok=yes
+			echo "lfrBundles wait: HTTP 200 on port ${port}"
+		fi
+
+		if [ -n "${test_run}" ] && [ -n "${connector}" ] &&
+			! ss -ltnH 2>/dev/null | awk '{ print $4 }' | command grep -qE ":${connector}\$"; then
+			sleep 5
+			continue
+		fi
+
+		log="$(ls -t "${home}"/logs/liferay.*.log 2>/dev/null | head -1)"
+
+		if [ -n "${log}" ]; then
+			age=$((now - $(stat -c %Y "${log}")))
+
+			# Short steps, so the loop sees a JVM that exits in the meantime.
+			if [ "${age}" -lt "${quiet}" ]; then
+				sleep 5
+				continue
+			fi
+		fi
+
+		echo "lfrBundles wait: READY, HTTP ${port}${connector:+, connector ${connector}}, log quiet ${quiet} s, after $((now - start)) s (${path})"
+		return 0
+	done
+}
+
 lfrBundles() {
 	case "${1-}" in
+	wait)
+		shift
+		_lfrBundleWait "$@"
+		return
+		;;
 	status | ls)
 		if [ -z "$(_lfrBundleProcs)" ]; then
 			echo "No running Liferay bundles."
@@ -377,6 +496,14 @@ lfrBundles() {
 			                                starts or stops anything
 			  lfrBundles upgrade [<bundle>] run a stopped bundle's database upgrade
 			                                tool (extra args go to db_upgrade_client.sh)
+			  lfrBundles wait <bundle> [--timeout S] [--quiet S]
+			                                wait until a starting bundle is ready: its
+			                                JVM runs, HTTP 200 on its own port, the
+			                                Arquillian connector listens (with -t), and
+			                                its liferay log is quiet for S s (default
+			                                20). One line per gate; exit 0 when ready,
+			                                1 on a timeout (default 1800 s) or when the
+			                                JVM exits. Run it in a Monitor.
 
 			Toggle means a stopped bundle is started and a running one is stopped.
 			Press Esc to cancel the picker.
