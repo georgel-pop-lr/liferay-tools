@@ -112,6 +112,19 @@ fi
 
 BUNDLE_DEFAULT="${BUNDLE_DEFAULT:-${BUNDLES_DIRS[0]}/liferay-bundle-master}"
 
+# The roots of the lfrBundles picker (LFR_BUNDLES_DIRS in LfrCommon/repos.local.conf)
+# hold the nested worktrees and the source clones, so the picker scans them too. The
+# file is read in a subshell, so that only this one array comes from it.
+REPOS_CONF_FILE="$SCRIPT_DIR/../LfrCommon/repos.local.conf"
+if [ -f "$REPOS_CONF_FILE" ]; then
+	while IFS= read -r root; do
+		case " ${BUNDLES_DIRS[*]} " in
+		*" $root "*) ;;
+		*) [ -n "$root" ] && BUNDLES_DIRS+=("$root") ;;
+		esac
+	done < <(bash -c '. "$1" >/dev/null 2>&1; printf "%s\n" "${LFR_BUNDLES_DIRS[@]}"' _ "$REPOS_CONF_FILE")
+fi
+
 DEBUG=0
 JPDA_SUSPEND="${JPDA_SUSPEND:-n}"
 PICK=0
@@ -247,10 +260,17 @@ if [ "$PICK" = "1" ]; then
 
 		for entry in "$dir"/*/; do
 			entry="${entry%/}"
-			# Accept any directory that has a tomcat folder we can find.
+			# Accept any directory that has a tomcat folder we can find. A nested
+			# worktree is a home folder with its bundle in bundles/.
 			for c in "$entry/tomcat" $entry/tomcat-* "$entry/liferay-dxp/tomcat" $entry/liferay-dxp/tomcat-*; do
 				if [ -d "$c" ]; then
 					bundles+=("$entry")
+					continue 2
+				fi
+			done
+			for c in $entry/bundles/tomcat-*; do
+				if [ -d "$c" ]; then
+					bundles+=("$entry/bundles")
 					break
 				fi
 			done
@@ -287,9 +307,11 @@ if [ "$PICK" = "1" ]; then
 		done
 		choice="$(
 			for entry in "${bundles[@]}"; do
-				rest="${entry#/*/}"
+				# The bundles/ folder of a nested worktree shows as its worktree folder.
+				label="${entry%/bundles}"
+				rest="${label#/*/}"
 				printf '%s\t\033[38;5;250m%s\033[38;5;245m/%s/\033[38;5;229m%s\033[0m\n' \
-					"$entry" "${entry%/"$rest"}" "${rest%/*}" "${entry##*/}"
+					"$entry" "${label%/"$rest"}" "${rest%/*}" "${label##*/}"
 			done | fzf \
 				--ansi \
 				--delimiter=$'\t' \
