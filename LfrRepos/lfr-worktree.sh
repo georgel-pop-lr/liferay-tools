@@ -1276,17 +1276,22 @@ _lfrWorktreeRemoveIdeaProject() {
 		config_dir="${recent%/options/recentProjects.xml}"
 
 		for key in "${keys[@]}"; do
-			id="$(_lfrWorktreeRemoveIdeaEntry "${recent}" "${key}")" || continue
+			if id="$(_lfrWorktreeRemoveIdeaEntry "${recent}" "${key}")"; then
+				echo "${caller}: ${config_dir##*/} forgot the project ${dir}" >&2
 
-			echo "${caller}: ${config_dir##*/} forgot the project ${dir}" >&2
-
-			# The workspace file holds the project's open editors, run configurations and
-			# window layout, and is named by the id the entry carried.
-			if [ -n "${id}" ]; then
-				rm -f "${config_dir}/workspace/${id}.xml"
+				# The workspace file holds the project's open editors, run configurations
+				# and window layout, and is named by the id the entry carried.
+				if [ -n "${id}" ]; then
+					rm -f "${config_dir}/workspace/${id}.xml"
+				fi
 			fi
 
-			_lfrWorktreeRemoveIdeaEntry "${config_dir}/options/trusted-paths.xml" "${key}" >/dev/null
+			# A moved or renamed project has no Welcome screen entry at its old path any
+			# more, but its trusted path and its Open File history can still be there.
+			if _lfrWorktreeRemoveIdeaEntry "${config_dir}/options/trusted-paths.xml" "${key}" >/dev/null; then
+				echo "${caller}: ${config_dir##*/} forgot the trusted path ${dir}" >&2
+			fi
+
 			_lfrWorktreeRemoveIdeaRecentFile "${config_dir}/options/other.xml" "${key}"
 		done
 
@@ -1414,21 +1419,30 @@ _lfrWorktreeIdeaWaitClosed() {
 # Echoes one path per line.
 #
 # A missing directory alone is not enough to call a project a leftover, so three things
-# have to hold. It sits directly in LFR_WORKTREE_ROOT, which is where lfrWorktree puts
-# every worktree, so a deleted clone kept elsewhere is none of this command's business.
-# Its name is one lfrWorktree makes (liferay-portal-<branch>), never a clone itself. And
-# its parent is there, since with the Data drive unmounted every project on it is
-# missing, and forgetting all of them over an unmounted drive is the one failure this
-# command must not have.
+# have to hold. It sits directly in a root where worktrees are made: LFR_WORKTREE_ROOT,
+# or one of LFR_REPO_ROOTS, where the flat worktrees were before the nested layout. Its
+# name is one lfrWorktree makes (liferay-portal-<branch>), or it is the portal/ checkout
+# of such a folder. And its root is there, since with the Data drive unmounted every
+# project on it is missing, and forgetting all of them over an unmounted drive is the
+# one failure this command must not have.
+#
+# The paths come from the Welcome screen list (recentProjects.xml) and from the trusted
+# paths (trusted-paths.xml). A move or a rename rewrites the Welcome screen entry, but
+# the trusted path of the old folder stays, and IntelliJ keeps it with no end.
 _lfrWorktreeIdeaOrphans() {
 	local config_root="${XDG_CONFIG_HOME:-${HOME}/.config}/JetBrains"
-	local wt_root="${LFR_WORKTREE_ROOT:-${HOME}/liferay/repos}"
+	local -a roots=()
+	local root
 
-	[ -d "${wt_root}" ] || return 0
+	for root in "${LFR_WORKTREE_ROOT:-${HOME}/liferay/repos}" "${LFR_REPO_ROOTS[@]}"; do
+		[ -d "${root}" ] && roots+=("${root%/}")
+	done
 
-	local key recent
-	for recent in "${config_root}"/*/options/recentProjects.xml; do
-		[ -f "${recent}" ] || continue
+	[ "${#roots[@]}" -gt 0 ] || return 0
+
+	local config_dir key
+	for config_dir in "${config_root}"/*/options; do
+		[ -d "${config_dir}" ] || continue
 
 		while IFS= read -r key; do
 			key="${key/\$USER_HOME\$/${HOME}}"
@@ -1436,26 +1450,29 @@ _lfrWorktreeIdeaOrphans() {
 			# A flat worktree is <root>/liferay-portal-<branch>, and a nested one is the
 			# portal/ checkout inside such a folder. A nested one counts as gone only when
 			# its whole home folder is gone, the same test one level down.
-			if [ "${key%/*}" = "${wt_root}" ]; then
-				case "${key##*/}" in
-				liferay-portal-?*) ;;
-				*) continue ;;
-				esac
-			elif [ "${key##*/}" = portal ] && [ "${key%/*/*}" = "${wt_root}" ]; then
-				case "${key%/*}" in
-				*/liferay-portal-?*) ;;
-				*) continue ;;
-				esac
+			local match=""
+			for root in "${roots[@]}"; do
+				if [ "${key%/*}" = "${root}" ]; then
+					case "${key##*/}" in
+					liferay-portal-?*) match=1 ;;
+					esac
+				elif [ "${key##*/}" = portal ] && [ "${key%/*/*}" = "${root}" ]; then
+					case "${key%/*}" in
+					*/liferay-portal-?*) [ -e "${key%/*}" ] || match=1 ;;
+					esac
+				fi
 
-				[ -e "${key%/*}" ] && continue
-			else
-				continue
-			fi
+				[ -n "${match}" ] && break
+			done
 
+			[ -n "${match}" ] || continue
 			[ -e "${key}" ] && continue
 
 			printf '%s\n' "${key}"
-		done < <(sed -nE 's/^[[:space:]]*<entry key="([^"]+)">$/\1/p' "${recent}")
+		done < <(
+			sed -nE 's/^[[:space:]]*<entry key="([^"]+)">$/\1/p' "${config_dir}/recentProjects.xml" 2>/dev/null
+			sed -nE 's/^[[:space:]]*<entry key="([^"]+)" value="[^"]*" \/>$/\1/p' "${config_dir}/trusted-paths.xml" 2>/dev/null
+		)
 	done | sort -u
 }
 
@@ -1464,10 +1481,12 @@ _lfrWorktreeIdeaCleanHelp() {
 		lfrWorktreeIdeaClean - make IntelliJ forget worktree projects that are gone.
 
 		Usage:
-		  lfrWorktreeIdeaClean      for every liferay-portal-<branch> project in
-		                            LFR_WORKTREE_ROOT whose directory no longer
-		                            exists, remove it from the Welcome screen and
-		                            delete its index cache
+		  lfrWorktreeIdeaClean      for every liferay-portal-<branch> project, or
+		                            its portal/ checkout, in LFR_WORKTREE_ROOT or
+		                            one of LFR_REPO_ROOTS whose directory no
+		                            longer exists, remove it from the Welcome
+		                            screen and the trusted paths, and delete its
+		                            index cache
 		  lfrWorktreeIdeaCleanDry   list those projects (removes nothing)
 
 		lfrWorktreeRemove already does this for the worktree it removes, so this is
