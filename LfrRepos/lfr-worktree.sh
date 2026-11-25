@@ -1617,6 +1617,50 @@ _lfrWorktreeDropDatabase() {
 # (LfrCommon/lfr-log.sh). The log keeps the head of the deleted branch.
 _LFR_REPOS_LOG_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/logs"
 
+# The PIDs of the Gradle daemons of the checkout $1, one per line. gradlew sets
+# gradle.user.home to <checkout>/.gradle, so the command line of each daemon of the
+# checkout names that folder. The command lines are read from /proc, because a pgrep
+# pattern that holds the path also matches the shell that runs it.
+_lfrWorktreeGradleDaemonPids() {
+	local dir="${1%/}" pid
+
+	for pid in $(pgrep -f '[G]radleDaemon'); do
+		tr '\0' ' ' <"/proc/${pid}/cmdline" 2>/dev/null |
+			command grep -qF -- "${dir}/.gradle/" && printf '%s\n' "${pid}"
+	done
+}
+
+# Stop the Gradle daemons of the checkout $1 before it moves or goes; $2 names the
+# caller in the messages. A daemon keeps its registry in <checkout>/.gradle/daemon and
+# writes it again when it exits. If it exits after the folder moved or went, the old
+# folder comes back with only .gradle/daemon in it. gradlew --stop returns about a second
+# before the daemon exits, so this also waits, up to 15 seconds, for the processes to end.
+# The daemons of other checkouts are not touched, since each one has its own
+# gradle.user.home.
+_lfrWorktreeStopGradleDaemons() {
+	local dir="${1%/}" caller="${2}" i
+
+	[ -x "${dir}/gradlew" ] && [ -d "${dir}/.gradle/daemon" ] || return 0
+
+	if ! (cd "${dir}" && ./gradlew --stop --quiet) >/dev/null 2>&1; then
+		echo "${caller}: could not stop the Gradle daemons of ${dir}; if ${dir} comes back with only .gradle/daemon, delete it" >&2
+
+		return 0
+	fi
+
+	for i in $(seq 1 30); do
+		if [ -z "$(_lfrWorktreeGradleDaemonPids "${dir}")" ]; then
+			echo "${caller}: stopped the Gradle daemons of ${dir}" >&2
+
+			return 0
+		fi
+
+		sleep 0.5
+	done
+
+	echo "${caller}: a Gradle daemon of ${dir} still runs; if ${dir} comes back with only .gradle/daemon, delete it" >&2
+}
+
 # Remove the home folder $1 of a nested worktree once its checkout and bundle are gone:
 # the marker goes, then the folder, but only when nothing else is left in it. A kept
 # bundle (--keep-bundle) or a file put there by hand keeps the folder and the marker,
@@ -1801,6 +1845,8 @@ lfrWorktreeRemove() {
 	if _lfrWorktreeIdeaCloseOrRefuse lfrWorktreeRemove; then
 		idea_clear=yes
 	fi
+
+	_lfrWorktreeStopGradleDaemons "${dir}" lfrWorktreeRemove
 
 	if [ "${force}" = "--force" ]; then
 		_lfrStep "Remove the worktree ${dir}" git worktree remove --force "${dir}" || return 1
@@ -2263,17 +2309,8 @@ lfrWorktreeRename() {
 		fi
 	fi
 
-	# gradlew sets gradle.user.home to <checkout>/.gradle, so a daemon of this checkout
-	# keeps its registry there. When the folder moves, the daemon exits and writes that
-	# registry back at the old path, and the old folder comes back with only
-	# .gradle/daemon in it. Stop the daemons of this checkout first; others are not
-	# touched, since each checkout has its own gradle.user.home.
-	if [ "${new_dir}" != "${dir}" ] && [ -x "${dir}/gradlew" ] && [ -d "${dir}/.gradle/daemon" ]; then
-		if (cd "${dir}" && ./gradlew --stop --quiet) >/dev/null 2>&1; then
-			echo "lfrWorktreeRename: stopped the Gradle daemons of ${dir}" >&2
-		else
-			echo "lfrWorktreeRename: could not stop the Gradle daemons of ${dir}; if ${dir} comes back with only .gradle/daemon, delete it" >&2
-		fi
+	if [ "${new_dir}" != "${dir}" ]; then
+		_lfrWorktreeStopGradleDaemons "${dir}" lfrWorktreeRename
 	fi
 
 	if [ "${new_dir}" != "${dir}" ] && [ -n "${home}" ]; then
