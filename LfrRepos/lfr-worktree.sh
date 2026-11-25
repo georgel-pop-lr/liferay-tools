@@ -2263,6 +2263,19 @@ lfrWorktreeRename() {
 		fi
 	fi
 
+	# gradlew sets gradle.user.home to <checkout>/.gradle, so a daemon of this checkout
+	# keeps its registry there. When the folder moves, the daemon exits and writes that
+	# registry back at the old path, and the old folder comes back with only
+	# .gradle/daemon in it. Stop the daemons of this checkout first; others are not
+	# touched, since each checkout has its own gradle.user.home.
+	if [ "${new_dir}" != "${dir}" ] && [ -x "${dir}/gradlew" ] && [ -d "${dir}/.gradle/daemon" ]; then
+		if (cd "${dir}" && ./gradlew --stop --quiet) >/dev/null 2>&1; then
+			echo "lfrWorktreeRename: stopped the Gradle daemons of ${dir}" >&2
+		else
+			echo "lfrWorktreeRename: could not stop the Gradle daemons of ${dir}; if ${dir} comes back with only .gradle/daemon, delete it" >&2
+		fi
+	fi
+
 	if [ "${new_dir}" != "${dir}" ] && [ -n "${home}" ]; then
 		# The home folder moves as one, the checkout and the bundle with it, and git is
 		# told where its worktree went. Both its links name the old path until then.
