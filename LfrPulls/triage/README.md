@@ -175,7 +175,8 @@ Apply mode does these steps for each assignment in the plan:
 
 1. It reads the pull again. It skips the pull if the pull is closed, if the head
    commit changed, or if a reviewer outside the plan is assigned now.
-2. It assigns the reviewer, adds the planned label, and posts the comment.
+2. It assigns the reviewer, adds the planned label, and posts the comment. If
+   the reviewer is the GitHub user who runs the script, it posts no comment.
 3. For each Jira key in the title, it assigns the ticket to the reviewer, but
    only if the status is In Review. It does not change the status.
 

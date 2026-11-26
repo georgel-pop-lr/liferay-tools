@@ -1366,6 +1366,8 @@ def apply(args):
 
 	override(plan_data, args, repo)
 
+	me = gh_get("user")["login"]
+
 	for item in plan_data["assigned"]:
 		number = item["number"]
 		pull = gh_get(f"repos/{repo}/pulls/{number}")
@@ -1406,7 +1408,8 @@ def apply(args):
 					(["-X", "POST", f"repos/{repo}/issues/{number}/labels",
 						"-f", f"labels[]={label}"], None))
 
-		if item["comment"]:
+		# If you assign a pull to yourself, the pull needs no message.
+		if item["comment"] and item["reviewer"] != me:
 			actions.append(
 				(["-X", "POST", f"repos/{repo}/issues/{number}/comments",
 					"-F", "body=@-"], item["comment"]))
