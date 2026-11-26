@@ -193,6 +193,18 @@ shows you as the assignee, because the apply can skip a pull. A `y` runs
 local branch with the name of the pull branch, checks the head SHA, and runs
 `lfrWorktree` (see `../../LfrRepos/README.md`).
 
+`LFR_PULLS_TRIAGE_WORKTREE` in `../lfr-pulls.local.conf` changes this step:
+
+| Value | Step |
+|---|---|
+| `ask` (the default) | It asks for each pull. |
+| `on` | It creates the worktree, and does not ask. |
+| `off` | It does not create a worktree. |
+
+Run `lfrPullsTriageWorktree ask|on|off` (alias `lfrptrw`) to set it, or with no
+value to print it. The step needs `lfrWorktreePull` from `LfrRepos`. If it is
+not loaded, the step does not show.
+
 ## The report
 
 The report has these sections:

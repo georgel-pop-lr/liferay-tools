@@ -5,6 +5,8 @@
 #     lfrPullsTriage     plan the reviewers, let you keep, change, or skip each
 #                        one, then apply after a y
 #     lfrptr             short alias of lfrPullsTriage
+#     lfrPullsTriageWorktree  show or set the worktree offer: ask, on, or off
+#     lfrptrw            short alias of lfrPullsTriageWorktree
 #
 # triage/triage.py does the work. Its README.md tells how it selects a
 # reviewer. The reviewers and their Jira accounts are in
@@ -13,6 +15,7 @@
 # people. Copy each .example to start.
 
 _lfrPullsTriageDir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/triage"
+_lfrPullsTriageConf="$(dirname "${_lfrPullsTriageDir}")/lfr-pulls.local.conf"
 
 _lfrPullsTriageHelp() {
 	cat <<-'EOF'
@@ -39,7 +42,11 @@ _lfrPullsTriageHelp() {
 
 		For each pull that you assign to yourself, it then asks "Create a
 		worktree with its branch? [y/N]". A y runs lfrWorktreePull on the
-		pull (see lfrWorktreePull -h).
+		pull (see lfrWorktreePull -h). LFR_PULLS_TRIAGE_WORKTREE in
+		lfr-pulls.local.conf changes this: ask (the default), on (create it
+		and do not ask), or off (do not create it). Set it with
+		lfrPullsTriageWorktree ask|on|off. The offer needs lfrWorktreePull
+		(LfrRepos). If it is not loaded, the offer does not show.
 
 		If the shell is not interactive, it stops after the plan.
 
@@ -149,16 +156,39 @@ _lfrPullsTriage() {
 	*) echo "Nothing was written."; return 0 ;;
 	esac
 
+	_lfrPullsTriageOfferWorktrees "$(jq -r '.repo' "${plan}")" "${me}" "${mine[@]}"
+}
+
+# Offer a worktree for each pull that you took: _lfrPullsTriageOfferWorktrees
+# <repo> <your login> <pull>...
+_lfrPullsTriageOfferWorktrees() {
+	local repo="${1}" me="${2}" number answer
+	shift 2
+
 	# Offer a worktree for each pull that you took. The apply can skip a pull
 	# (a new push, or another reviewer), so check the assignee on GitHub first.
-	local repo
-	repo="$(jq -r '.repo' "${plan}")"
+	[ -r "${_lfrPullsTriageConf}" ] && . "${_lfrPullsTriageConf}"
+	local worktree="${LFR_PULLS_TRIAGE_WORKTREE:-ask}"
 
-	for number in "${mine[@]}"; do
+	if [ "${worktree}" = "off" ] || [ "$#" -eq 0 ]; then
+		return 0
+	fi
+
+	if ! declare -F lfrWorktreePull > /dev/null; then
+		echo "lfrWorktreePull is not loaded (LfrRepos), so no worktree is offered."
+		return 0
+	fi
+
+	for number in "$@"; do
 		_lfrStep "Read the assignees of #${number}" gh pr view "${number}" --repo "${repo}" --json assignees \
 			--jq '.assignees[].login' 2>/dev/null | grep -qx "${me}" || continue
 		echo
-		read -r -p "You review #${number}. Create a worktree with its branch? [y/N] " answer < /dev/tty
+
+		if [ "${worktree}" = "on" ]; then
+			answer="y"
+		else
+			read -r -p "You review #${number}. Create a worktree with its branch? [y/N] " answer < /dev/tty
+		fi
 
 		case "${answer}" in
 		y | Y) (lfrWorktreePull "https://github.com/${repo}/pull/${number}") ;;
@@ -168,5 +198,40 @@ _lfrPullsTriage() {
 
 lfrPullsTriage() { _lfrPullsTriage "$@"; }
 
+# Show or set LFR_PULLS_TRIAGE_WORKTREE in lfr-pulls.local.conf.
+lfrPullsTriageWorktree() {
+	local value="${1:-}"
+
+	case "${value}" in
+	"")
+		[ -r "${_lfrPullsTriageConf}" ] && . "${_lfrPullsTriageConf}"
+		echo "LFR_PULLS_TRIAGE_WORKTREE=${LFR_PULLS_TRIAGE_WORKTREE:-ask}"
+		return 0
+		;;
+	-h | --help)
+		echo "Usage: lfrPullsTriageWorktree [ask|on|off]"
+		echo "  ask  ask for a worktree for each pull that you take (the default)"
+		echo "  on   create the worktree and do not ask"
+		echo "  off  do not create a worktree"
+		echo "  With no value, it prints the current value."
+		return 0
+		;;
+	ask | on | off) ;;
+	*) echo "lfrPullsTriageWorktree: use ask, on, or off." >&2; return 1 ;;
+	esac
+
+	touch "${_lfrPullsTriageConf}" || return 1
+
+	if grep -q '^LFR_PULLS_TRIAGE_WORKTREE=' "${_lfrPullsTriageConf}"; then
+		sed -i "s/^LFR_PULLS_TRIAGE_WORKTREE=.*/LFR_PULLS_TRIAGE_WORKTREE=\"${value}\"/" "${_lfrPullsTriageConf}"
+	else
+		echo "LFR_PULLS_TRIAGE_WORKTREE=\"${value}\"" >> "${_lfrPullsTriageConf}"
+	fi
+
+	LFR_PULLS_TRIAGE_WORKTREE="${value}"
+	echo "LFR_PULLS_TRIAGE_WORKTREE=${value} (${_lfrPullsTriageConf})"
+}
+
 # Short alias.
 lfrptr() { lfrPullsTriage "$@"; }
+lfrptrw() { lfrPullsTriageWorktree "$@"; }

@@ -213,7 +213,8 @@ skipped and the command is named instead.
 ### `lfrWorktreePull`: make a worktree with the branch of a pull
 
 Makes a worktree that holds the head of a pull, so you can review it. Alias
-`lfrwp`. `lfrPullsTriage` uses it for each pull that you assign to yourself, and
+`lfrwp`. `lfrPullsTriage` uses it for each pull that you assign to yourself
+(`lfrPullsTriageWorktree` turns that on or off), and
 the `worktree-create` skill uses it for a pull link.
 
 | Invocation | Pull |

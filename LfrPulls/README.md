@@ -65,7 +65,9 @@ and their mirror pulls come from `lfrPulls stats <login>`.
   `y`), select another candidate by its number, skip the pull (`s`), or type a
   login. Only a `y` at "Apply?" writes. Then, for each pull that you assigned
   to yourself, it offers a worktree with the branch of the pull
-  (`lfrWorktreePull`). The FIT column of `lfrPulls` uses the same rules, but
+  (`lfrWorktreePull`). `lfrPullsTriageWorktree ask|on|off` (alias `lfrptrw`)
+  sets this offer in `lfr-pulls.local.conf`: ask, create with no question, or
+  never. The FIT column of `lfrPulls` uses the same rules, but
   assigns nothing. See [triage/README.md](triage/README.md).
 - `lfrPullsBump <pull> [-y]` (alias `lfrpb`) - resend an open
   pull of yours on the mirror as a new pull, so it goes back to the top of the

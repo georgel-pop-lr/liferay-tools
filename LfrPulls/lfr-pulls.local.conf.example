@@ -51,3 +51,9 @@ LFR_PULLS_USER="your-github-login"
 # lfrPulls with it. Every closed pull in the window is read with its comments, so a long
 # window is slow.
 #LFR_PULLS_REJECTED_DAYS="30"
+
+# What lfrPullsTriage does after the apply, for each pull that you assign to
+# yourself: ask (the default) asks "Create a worktree with its branch?", on
+# creates the worktree and does not ask, and off does nothing. The worktree
+# needs lfrWorktreePull (LfrRepos). Set it with lfrPullsTriageWorktree.
+#LFR_PULLS_TRIAGE_WORKTREE="ask"
