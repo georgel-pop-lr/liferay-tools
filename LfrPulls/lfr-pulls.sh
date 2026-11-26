@@ -372,8 +372,8 @@ _lfrPullsStatsTable() {
 _lfrPullsStatsMine() {
 	local months="${1}" person="${2}" dir
 	dir="$(_lfrPullsMasterDir)" || return 1
-	git -C "${dir}" fetch --no-tags -q "${LFR_PULLS_MASTER_REF%%/*}" "${LFR_PULLS_MASTER_REF#*/}" 2>/dev/null ||
-		echo "lfrPulls stats: could not fetch ${LFR_PULLS_MASTER_REF}; counting off it as it is." >&2
+	_lfrMasterFetch "${dir}" ||
+		echo "lfrPulls stats: counting off ${LFR_PULLS_MASTER_REF} as it is." >&2
 
 	local windowStart sinceDate json
 	windowStart="$(date -d "$(date +%Y-%m-01) -$((months - 1)) month" +%Y-%m)"
@@ -787,8 +787,8 @@ _lfrPullsRejectedSection() {
 	local me="${LFR_PULLS_USER:-$(_lfrStep "Read your GitHub user" gh api user --jq '.login' 2>/dev/null)}" senderMe
 	senderMe="$(_lfrPullsSenderOwner "${me}" "${me}")"
 
-	printf '\n%s rejected pulls (%s, last %s day(s), still not landed on %s)\n' \
-		"${LFR_PULLS_REPO}" "${person}" "${days}" "${LFR_PULLS_UPSTREAM_REPO}"
+	printf '\n%s rejected pulls (%s, last %s day(s), still not landed on master)\n' \
+		"${LFR_PULLS_REPO}" "${person}" "${days}"
 
 	local since sinceTs json
 	since="$(date -u -d "${days} days ago" +%Y-%m-%d)"
@@ -815,9 +815,12 @@ _lfrPullsRejectedSection() {
 		return 0
 	fi
 
-	# The landing check is what "still not landed" means, so a failed search
-	# falls back to the local ref, and a missing clone or ref widens the section
-	# rather than failing it, saying so either way.
+	# The landing check is what "still not landed" means. It reads the local
+	# master ref after a fetch, because the GitHub search covers
+	# LFR_PULLS_UPSTREAM_REPO only, and a pull Brian merged is on brian/master
+	# hours before upstream (LPD-115706, 2026-11-26). With no clone, or a failed
+	# fetch, it asks the GitHub search. If both fail, the section widens rather
+	# than failing, saying so either way.
 	#
 	# Asked from the oldest rejection in hand, not from the start of the window,
 	# because the question is whether anything landed AFTER the rejection: a
@@ -828,14 +831,18 @@ _lfrPullsRejectedSection() {
 		jq -r 'map(.closedAt) | min | .[:10]')"
 	keys="$(printf '%s' "${candidates}" | jq -r '.[].key' | sort -u)"
 	local -A landed=()
-	if ! _lfrPullsLoadUpstreamTickets "${landedSince:-${since}}" landed "${keys}"; then
+	if dir="$(_lfrPullsMasterDir rejected 2>/dev/null)" && _lfrMasterFetch "${dir}" 2>/dev/null; then
+		_lfrPullsLoadMasterTickets "${dir}" "${landedSince:-${since}}" landed "${keys}"
+	elif ! _lfrPullsLoadUpstreamTickets "${landedSince:-${since}}" landed "${keys}"; then
 		landed=()
-		if dir="$(_lfrPullsMasterDir rejected 2>/dev/null)"; then
+		if [ -n "${dir}" ]; then
 			_lfrPullsLoadMasterTickets "${dir}" "${landedSince:-${since}}" landed "${keys}"
-			landedNote="  (GitHub commit search failed: checked against the local ${LFR_PULLS_MASTER_REF}, as fresh as its last fetch)"
+			landedNote="  (fetch and GitHub commit search failed: checked against the local ${LFR_PULLS_MASTER_REF}, as fresh as its last fetch)"
 		else
 			landedNote="  (GitHub commit search failed and no ${LFR_PULLS_MASTER_REF} to check against: every rejection is listed, landed or not)"
 		fi
+	else
+		landedNote="  (checked on ${LFR_PULLS_UPSTREAM_REPO}: a pull that Brian merged in the last hours can still show)"
 	fi
 
 	# An object, not an array: a lookup has to read its key off the candidate,
@@ -967,14 +974,24 @@ _lfrPullsTicket() {
 	# GitHub's title search tokenizes, so it also finds a pull titled "LCD 52771"
 	# for LCD-52771. Match the same variants here, or the footer would miss the
 	# commits of exactly those pulls.
-	local landed count where="${LFR_PULLS_UPSTREAM_REPO}" tip="" dir
-	if landed="$(_lfrPullsSearchCommits "${ticket}" 2000-01-01 "$(date -u +%Y-%m-%d)")"; then
+	#
+	# The local master ref, fetched first, answers before the GitHub search: the
+	# search covers LFR_PULLS_UPSTREAM_REPO only, and a pull Brian merged is on
+	# brian/master hours before upstream (LPD-115706, 2026-11-26).
+	local landed count where="" tip="" dir
+	if dir="$(_lfrPullsMasterDir ticket 2>/dev/null)" && _lfrMasterFetch "${dir}" 2>/dev/null; then
+		where="${LFR_PULLS_MASTER_REF} (fetched)"
+	elif landed="$(_lfrPullsSearchCommits "${ticket}" 2000-01-01 "$(date -u +%Y-%m-%d)")"; then
+		where="${LFR_PULLS_UPSTREAM_REPO} (fetch failed, so a merge of the last hours can be missing)"
 		landed="$(printf '%s\n' "${landed}" | grep -iE "${ticket/-/[- ]}" |
 			awk -F'\t' -v OFS='\t' '{ print substr($1, 1, 13), $2, $3 }')"
-	else
-		dir="$(_lfrPullsMasterDir ticket)" || return 0
-		where="the local ${LFR_PULLS_MASTER_REF} (GitHub commit search failed)"
+	elif [ -n "${dir}" ]; then
+		where="the local ${LFR_PULLS_MASTER_REF} (fetch and GitHub commit search failed)"
 		tip="$(git -C "${dir}" log -1 --format='%cd' --date=format:'%Y-%m-%d %H:%M' "${LFR_PULLS_MASTER_REF}")"
+	else
+		return 0
+	fi
+	if [ -z "${where##*fetched*}" ] || [ -n "${tip}" ]; then
 		landed="$(git -C "${dir}" log "${LFR_PULLS_MASTER_REF}" --grep="${ticket/-/[- ]}" \
 			--regexp-ignore-case --format='%h	%cd	%s' --date=format:'%Y-%m-%d' 2>/dev/null)"
 	fi
