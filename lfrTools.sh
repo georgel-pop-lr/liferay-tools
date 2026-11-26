@@ -83,6 +83,8 @@ lfrTools() {
 		                     the pull below it
 		  lfrGitUpdateMaster  refresh master mirrors, optionally rebase your branch
 		                      (-r) or the branch of every worktree (-a)
+		  lfrGitMerged        say for each ticket key if it is in master (fetches
+		                      upstream and brian first)
 		  lfrGitUpdateBranch  update one branch (release-2026.q1) from upstream
 		                      and push it to your fork
 		  lfrGitCheckoutTag   check out a tag (2026.q1.8) on a local branch
