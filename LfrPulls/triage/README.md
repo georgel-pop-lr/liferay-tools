@@ -113,7 +113,11 @@ wins.
 **Load.** The script calculates the load over the last 7 days:
 
 - Each pull that the reviewer reviewed in the window counts with its weight.
-  A review is a GitHub review that the reviewer submitted in the window. A
+  A review is a GitHub review that the reviewer submitted in the window, or a
+  plain comment of the reviewer in the window: feedback, "LGTM", or
+  `ci:forward` (the reviewer checked the pull and forwards it). These comments
+  are not a review: the other `ci:` commands, "Superseded by", and the
+  assignment message of this script. A
   closed pull counts too, because no pull of the team fork is merged there: it
   closes after `ci:forward`, or when a new pull replaces it.
 - A pull that the reviewer superseded counts as a review too. The reviewer made

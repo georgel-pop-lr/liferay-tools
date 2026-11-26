@@ -82,6 +82,12 @@ SUPERSEDE_VERBS = (
 	r"(?:supersedes?|supersede of|replaces|continuation of|follow[- ]up to|"
 	r"previous pull:?)")
 
+# A pull comment that is not a review: a CI command other than ci:forward, the
+# note on a superseded pull, and the assignment message of this script.
+NOT_REVIEW_COMMENT = re.compile(
+	r"^\s*(?:ci:(?!forward\b)|superseded by\b)|"
+	r"I assigned this review to you because", re.I)
+
 NOW = datetime.datetime.now(datetime.timezone.utc)
 
 notes = []
@@ -451,15 +457,32 @@ def compute_loads(
 			f"repos/{repo}/pulls/{pull['number']}/reviews?per_page=100",
 			paginate=True)
 
+	def comments_of(pull):
+		return gh_get(
+			f"repos/{repo}/issues/{pull['number']}/comments?per_page=100",
+			paginate=True)
+
 	completed = {login: [] for login in reviewers}
 
-	for pull, reviews in zip(updated, parallel(reviews_of, updated)):
+	for pull, reviews, comments in zip(
+			updated, parallel(reviews_of, updated),
+			parallel(comments_of, updated)):
 		author = pull["user"]["login"]
 
-		for login in {
-				review["user"]["login"] for review in reviews
-				if review.get("user") and review.get("submitted_at") and
-					parse_time(review["submitted_at"]) >= start}:
+		# A plain comment is a review too, for example "LGTM" or feedback
+		# without a GitHub review. "ci:forward" is a review that needs no
+		# changes. The other comments are not a review.
+		logins = {
+			review["user"]["login"] for review in reviews
+			if review.get("user") and review.get("submitted_at") and
+				parse_time(review["submitted_at"]) >= start}
+		logins |= {
+			comment["user"]["login"] for comment in comments
+			if comment.get("user") and
+				parse_time(comment["created_at"]) >= start and
+				not NOT_REVIEW_COMMENT.search(comment.get("body") or "")}
+
+		for login in logins:
 			if login in reviewers and login != author:
 				completed[login].append(pull)
 
