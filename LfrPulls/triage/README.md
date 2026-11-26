@@ -116,6 +116,10 @@ wins.
   A review is a GitHub review that the reviewer submitted in the window. A
   closed pull counts too, because no pull of the team fork is merged there: it
   closes after `ci:forward`, or when a new pull replaces it.
+- A pull that the reviewer superseded counts as a review too. The reviewer made
+  the small changes in a new pull instead of review comments. The new pull is
+  created in the window, and its title or body says "Supersedes #N" (or a verb
+  of `SUPERSEDE_VERBS`) for a pull of another author.
 - The weight of one pull in the load is `--weight-cap` (default 1000) or less.
   Without the cap, one review of a very big pull made almost all the load of a
   reviewer: #19267 had a weight of 4255.

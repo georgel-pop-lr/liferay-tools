@@ -463,6 +463,37 @@ def compute_loads(
 			if login in reviewers and login != author:
 				completed[login].append(pull)
 
+	# A reviewer who supersedes a pull makes the small changes in a new pull
+	# instead of review comments. That is a review of the superseded pull.
+	owner, name = repo.split("/")
+	supersede_pattern = re.compile(
+		SUPERSEDE_VERBS + r"\s*(?:#(\d+)|https://github\.com/" +
+		re.escape(owner) + "/" + re.escape(name) + r"/pull/(\d+))", re.I)
+	updated_pulls = {pull["number"]: pull for pull in updated}
+
+	for pull in updated:
+		login = pull["user"]["login"]
+
+		if (login not in reviewers or
+				parse_time(pull["created_at"]) < start):
+			continue
+
+		text = (pull.get("title") or "") + "\n" + (pull.get("body") or "")
+
+		for match in supersede_pattern.finditer(text):
+			number = int(match.group(1) or match.group(2))
+
+			if number == pull["number"] or number in {
+					completed_pull["number"]
+					for completed_pull in completed[login]}:
+				continue
+
+			superseded = updated_pulls.get(number) or gh_get(
+				f"repos/{repo}/pulls/{number}")
+
+			if superseded["user"]["login"] != login:
+				completed[login].append(superseded)
+
 	open_assigned = {login: [] for login in reviewers}
 
 	for pull in open_pulls:
