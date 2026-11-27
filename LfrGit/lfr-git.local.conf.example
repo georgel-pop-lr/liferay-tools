@@ -16,6 +16,14 @@ LFR_GIT_UPSTREAM_REMOTE="upstream"
 # + on your fork) if it does not exist. Defaults to ("master:upstream").
 LFR_GIT_MASTER_MIRRORS=("master:upstream" "masterBrian:brian")
 
+# The master mirror branches of a liferay-portal-ee checkout. Defaults to
+# ("master:upstream").
+LFR_GIT_MASTER_MIRRORS_EE=("master:upstream")
+
+# The other repos that lfrGitUpdateMaster also updates, from any repo where you
+# run it. Each repo uses its own mirrors and syncs its own fork.
+LFR_GIT_UPDATE_REPOS=("${HOME}/liferay/repos/liferay-portal" "${HOME}/liferay/repos/liferay-portal-ee")
+
 # Branches lfrGitUpdateMaster -a leaves alone, as glob patterns. Defaults to
 # ("KEEP-*").
 LFR_GIT_REBASE_ALL_EXCLUDE=("KEEP-*")

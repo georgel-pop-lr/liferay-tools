@@ -28,6 +28,9 @@ _LFR_GIT_LOG_DIR="${_lfrGitDir}/logs"
 # Branches lfrGitUpdateMaster -a leaves alone, as glob patterns.
 declare -p LFR_GIT_REBASE_ALL_EXCLUDE >/dev/null 2>&1 || LFR_GIT_REBASE_ALL_EXCLUDE=("KEEP-*")
 
+# The other repos whose mirrors lfrGitUpdateMaster also updates, as paths.
+declare -p LFR_GIT_UPDATE_REPOS >/dev/null 2>&1 || LFR_GIT_UPDATE_REPOS=()
+
 # Files kept during a clean: IDE project files and per-developer properties.
 _lfrGitCleanExcludes=(
 	-e '**/*.iml'
@@ -73,7 +76,10 @@ _lfrGitHelp() {
 		                       remotes and sync your fork, from any worktree: a
 		                       mirror checked out elsewhere is fast-forwarded
 		                       inside that worktree, so it lands wherever it
-		                       lives; with -r also rebase the current branch onto
+		                       lives. It does the same for each other repo of
+		                       LFR_GIT_UPDATE_REPOS (for example the
+		                       liferay-portal-ee checkout, with the mirrors of
+		                       LFR_GIT_MASTER_MIRRORS_EE); with -r also rebase the current branch onto
 		                       <target> (default upstream/master), -a rebases
 		                       the branch of every worktree instead (skipping
 		                       mirrors, detached, dirty or busy worktrees and
@@ -257,10 +263,25 @@ _lfrGitUpdateLocalMirror() {
 	fi
 }
 
-# The mirrors to maintain, as "branch:remote" pairs one per line: whatever
+# Whether the repo of the current directory is a liferay-portal-ee checkout
+# (detected by its remotes, not by the folder name).
+_lfrGitIsEE() {
+	git remote -v 2>/dev/null | grep -q 'liferay-portal-ee'
+}
+
+# The mirrors to maintain, as "branch:remote" pairs one per line. In a
+# liferay-portal-ee checkout: whatever LFR_GIT_MASTER_MIRRORS_EE holds, else just
+# the upstream master mirror, since the masterBrian of LFR_GIT_MASTER_MIRRORS
+# tracks a liferay-portal remote. In the other repos: whatever
 # LFR_GIT_MASTER_MIRRORS holds, else just the upstream master mirror.
 _lfrGitMirrors() {
-	if [ "${LFR_GIT_MASTER_MIRRORS+x}" = x ] && [ "${#LFR_GIT_MASTER_MIRRORS[@]}" -gt 0 ]; then
+	if _lfrGitIsEE; then
+		if [ "${LFR_GIT_MASTER_MIRRORS_EE+x}" = x ] && [ "${#LFR_GIT_MASTER_MIRRORS_EE[@]}" -gt 0 ]; then
+			printf '%s\n' "${LFR_GIT_MASTER_MIRRORS_EE[@]}"
+		else
+			printf '%s\n' "master:upstream"
+		fi
+	elif [ "${LFR_GIT_MASTER_MIRRORS+x}" = x ] && [ "${#LFR_GIT_MASTER_MIRRORS[@]}" -gt 0 ]; then
 		printf '%s\n' "${LFR_GIT_MASTER_MIRRORS[@]}"
 	else
 		printf '%s\n' "master:upstream"
@@ -694,6 +715,43 @@ lfrGitRebaseStack() {
 	fi
 }
 
+# Update each mirror of the repo of the current directory (see _lfrGitMirrors),
+# then sync the team fork. For each "branch:remote" pair: fetch <remote>/master,
+# push it to the fork under <branch>, and update the local <branch> to it.
+_lfrGitUpdateMirrors() {
+	local -a mirrors=()
+	local mirror
+	while read -r mirror; do
+		[ -n "${mirror}" ] && mirrors+=("${mirror}")
+	done < <(_lfrGitMirrors)
+
+	local pair branch remote up
+	for pair in "${mirrors[@]}"; do
+		branch="${pair%%:*}"
+		remote="${pair##*:}"
+		if [ -z "${branch}" ] || [ -z "${remote}" ] || [ "${branch}" = "${pair}" ]; then
+			echo "lfrGitUpdateMaster: bad mirror spec '${pair}' (want branch:remote); skipping." >&2
+			continue
+		fi
+		up="${remote}/master"
+		echo "Updating ${branch} from ${up} (no tags)..."
+		if ! _lfrStep "Fetch master from ${remote}" git fetch --no-tags "${remote}" master; then
+			echo "  fetch from ${remote} failed; skipping ${branch}." >&2
+			continue
+		fi
+		_lfrStep "Push ${up} to the ${branch} of the fork" _lfrGitPushMirror "${branch}" "${up}" "${remote}"
+		_lfrStep "Update the local ${branch}" _lfrGitUpdateLocalMirror "${branch}" "${up}"
+	done
+
+	if _lfrGitIsEE; then
+		echo "Syncing EE fork..."
+		lfrGitSyncEE
+	else
+		echo "Syncing fork..."
+		lfrGitSync
+	fi
+}
+
 # Keep your master mirrors current in one run. The mirrors to maintain are a list
 # of "branch:remote" pairs in LFR_GIT_MASTER_MIRRORS (lfr-git.local.conf),
 # defaulting to "master:upstream". For each pair: fetch <remote>/master, push it
@@ -702,7 +760,9 @@ lfrGitRebaseStack() {
 # update the local <branch> to it (a mirror checked out in a worktree is
 # fast-forwarded inside that worktree; see _lfrGitUpdateLocalMirror). So
 # "master:upstream" "masterBrian:brian" keeps master and masterBrian current
-# together. Then sync the team fork.
+# together. Then sync the team fork. Then do the same for each other repo of
+# LFR_GIT_UPDATE_REPOS. A liferay-portal-ee checkout uses the mirrors of
+# LFR_GIT_MASTER_MIRRORS_EE (see _lfrGitMirrors).
 #
 # With -r, rebase the current branch onto a target once the mirrors are fresh
 # (skipped when you are on a master* mirror). With -a, rebase the branch of every
@@ -748,43 +808,22 @@ lfrGitUpdateMaster() {
 	fi
 	cur="$(git rev-parse --abbrev-ref HEAD)"
 
-	# Which mirrors to maintain, as "branch:remote" pairs, each updated from
-	# <remote>/master and created if missing. Set LFR_GIT_MASTER_MIRRORS in
-	# lfr-git.local.conf (e.g. "master:upstream" "masterBrian:brian"); defaults to
-	# just the upstream master mirror.
-	local -a mirrors=()
-	local mirror
-	while read -r mirror; do
-		[ -n "${mirror}" ] && mirrors+=("${mirror}")
-	done < <(_lfrGitMirrors)
+	_lfrGitUpdateMirrors
 
-	local pair branch remote up
-	for pair in "${mirrors[@]}"; do
-		branch="${pair%%:*}"
-		remote="${pair##*:}"
-		if [ -z "${branch}" ] || [ -z "${remote}" ] || [ "${branch}" = "${pair}" ]; then
-			echo "lfrGitUpdateMaster: bad mirror spec '${pair}' (want branch:remote); skipping." >&2
+	# Then the other repos of LFR_GIT_UPDATE_REPOS (e.g. the liferay-portal-ee
+	# checkout), each in a subshell so that the cd does not leak. A repo that
+	# shares the git directory of this one is this repo, so it is skipped.
+	local common repo
+	common="$(cd "$(git rev-parse --git-common-dir)" && pwd -P)"
+	for repo in "${LFR_GIT_UPDATE_REPOS[@]}"; do
+		if ! git -C "${repo}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+			echo "lfrGitUpdateMaster: '${repo}' of LFR_GIT_UPDATE_REPOS is not a git repo; skipping." >&2
 			continue
 		fi
-		up="${remote}/master"
-		echo "Updating ${branch} from ${up} (no tags)..."
-		if ! _lfrStep "Fetch master from ${remote}" git fetch --no-tags "${remote}" master; then
-			echo "  fetch from ${remote} failed; skipping ${branch}." >&2
-			continue
-		fi
-		_lfrStep "Push ${up} to the ${branch} of the fork" _lfrGitPushMirror "${branch}" "${up}" "${remote}"
-		_lfrStep "Update the local ${branch}" _lfrGitUpdateLocalMirror "${branch}" "${up}"
+		[ "$(cd "${repo}" && cd "$(git rev-parse --git-common-dir)" && pwd -P)" = "${common}" ] && continue
+		echo "Updating the mirrors of ${repo}..."
+		(cd "${repo}" && _lfrGitUpdateMirrors)
 	done
-
-	# Sync the team fork; liferay-portal-ee checkouts use lfrGitSyncEE (detected by
-	# the repo's remotes, not the folder name).
-	if git remote -v 2>/dev/null | grep -q 'liferay-portal-ee'; then
-		echo "Syncing EE fork..."
-		lfrGitSyncEE
-	else
-		echo "Syncing fork..."
-		lfrGitSync
-	fi
 
 	local target
 
