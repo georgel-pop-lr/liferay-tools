@@ -209,6 +209,8 @@ lfrAntAll() {
 			lfrAntAll - run `ant all` in this repo, with safety guards.
 
 			Refuses when:
+			  - lfrAntAllNeeded says that no build is needed (the bundle, or a source
+			    clone, already holds a build that this branch can use),
 			  - this repo's Liferay server is running (a full build can corrupt it),
 			  - the target bundle is shared via lfrShare (ant all would overwrite the
 			    shared bundle), or
@@ -224,6 +226,8 @@ lfrAntAll() {
 			  lfrAntAll -np         skip the precheck (--no-precheck); by default the
 			                        modules the branch changes are built first, so a
 			                        compile error stops the run in a minute or two
+			  lfrAntAll -rb         build even when lfrAntAllNeeded says that no
+			                        build is needed (--rebuild)
 
 			After a good build, it writes .lfr-build-head in the bundle with the commit
 			(clean=1 when the tree had no local change). lfrWorktree reads it to copy
@@ -233,16 +237,28 @@ lfrAntAll() {
 		;;
 	esac
 
-	local force=0 clear=1 precheck="${LFR_ANT_PRECHECK:-1}" a
+	local force=0 clear=1 precheck="${LFR_ANT_PRECHECK:-1}" rebuild=0 a
 	local -a antargs=()
 	for a in "$@"; do
 		case "${a}" in
 		-f | --force) force=1 ;;
 		-nc | --no-clear) clear=0 ;;
 		-np | --no-precheck) precheck=0 ;;
+		-rb | --rebuild) rebuild=1 ;;
 		*) antargs+=("${a}") ;;
 		esac
 	done
+
+	# Guard 0: refuse when a build that this branch can use already exists.
+	if [ "${rebuild}" != 1 ]; then
+		local needed
+		needed="$(lfrAntAllNeeded 2>&1)"
+		if [ $? = 0 ]; then
+			echo "lfrAntAll: no build is needed. Pass --rebuild to build anyway:" >&2
+			printf '%s\n' "${needed}" | sed 's/^/  /' >&2
+			return 5
+		fi
+	fi
 
 	local mine
 	mine="$(_lfrRepoBundleDir)" || mine=""
@@ -340,6 +356,167 @@ lfrAntAll() {
 		[ "${rc}" != 0 ] && _lfrAntFailureSummary "${log}"
 		exit "${rc}"
 	)
+}
+
+lfrAntAllNeeded() {
+	case "${1-}" in
+	-h | --help)
+		cat <<-'EOF'
+			lfrAntAllNeeded - say whether this repo needs `ant all`, and what to do.
+
+			It reads the build stamp (.lfr-build-head) of the bundle of this repo and
+			of each source clone in LFR_WORKTREE_SOURCES. A build counts only when it
+			is valid: clean=1, and nothing was deployed into the bundle after it.
+
+			  - A source clone needs no `ant all` when a valid build of its HEAD
+			    exists: in its own bundle, or in another source clone (copy it).
+			  - A worktree needs no `ant all` when a valid build at the base of the
+			    branch, or newer, exists: in its own bundle, or in a source clone
+			    (copy it, or rebase onto it first).
+			  - Otherwise it prints what changed since the newest build, and where
+			    to run lfrAntAll.
+
+			Exit code: 0 no build needed, 1 build needed, 2 state unknown.
+			lfrAntAll runs this check first, and refuses on 0.
+		EOF
+		return 0
+		;;
+	esac
+
+	local head root
+
+	root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
+		echo "lfrAntAllNeeded: not in a git repo" >&2
+		return 2
+	}
+
+	if ! declare -F _lfrWorktreeSourceCommit >/dev/null 2>&1; then
+		echo "lfrAntAllNeeded: lfr-worktree.sh is not loaded; source lfrTools.sh" >&2
+		return 2
+	fi
+
+	head="$(git rev-parse HEAD)"
+
+	# A source clone needs a build of its HEAD. A worktree needs a build of the base of
+	# its branch: it deploys its own changes on top of the copy.
+	local is_source=0 real_root src target
+
+	real_root="$(cd "${root}" && pwd -P)"
+
+	for src in "${LFR_WORKTREE_SOURCES[@]}"; do
+		[ "$(cd "${src}" 2>/dev/null && pwd -P)" = "${real_root}" ] && is_source=1
+	done
+
+	target="${head}"
+
+	if [ "${is_source}" = 0 ]; then
+		target="$(_lfrAntPrecheckBase)" || target="${head}"
+	fi
+
+	# The own bundle first, then each other source clone.
+	local commit label out stale="" stale_count="" stale_label=""
+	local -a candidates=("${root}")
+
+	for src in "${LFR_WORKTREE_SOURCES[@]}"; do
+		[ -d "${src}" ] || continue
+		[ "$(cd "${src}" && pwd -P)" = "${real_root}" ] && continue
+		candidates+=("${src}")
+	done
+
+	for src in "${candidates[@]}"; do
+		label="${src}"
+		[ "${src}" = "${root}" ] && label="this bundle"
+
+		if ! out="$(_lfrWorktreeSourceCommit "${src}" 2>&1)"; then
+			echo "Skip ${label}: ${out#lfrWorktree: }" >&2
+			continue
+		fi
+
+		commit="${out}"
+
+		git cat-file -e "${commit}^{commit}" 2>/dev/null || continue
+
+		if [ "${commit}" = "${target}" ] ||
+				{ git merge-base --is-ancestor "${target}" "${commit}" && git merge-base --is-ancestor "${commit}" "${head}"; }; then
+			if [ "${src}" = "${root}" ]; then
+				echo "Not needed: this bundle holds the build ${commit:0:13}."
+				_lfrAntAllNeededBranchChanges "${commit}"
+			else
+				echo "Not needed: ${src} holds the build ${commit:0:13}."
+				echo "Next: stop this bundle, then run lfrWorktreeCopyBundle -y."
+				_lfrAntAllNeededBranchChanges "${commit}"
+			fi
+
+			return 0
+		fi
+
+		if [ "${is_source}" = 0 ] && git merge-base --is-ancestor "${target}" "${commit}"; then
+			echo "Not needed: ${label} holds the build ${commit:0:13}, which is newer than the base ${target:0:13} of this branch."
+			echo "Next: run lfrGitRebaseOnto ${commit:0:13}, then stop this bundle and run lfrWorktreeCopyBundle -y."
+
+			return 0
+		fi
+
+		git merge-base --is-ancestor "${commit}" "${target}" || continue
+
+		local count
+		count="$(git rev-list --count "${commit}..${target}")"
+
+		if [ -z "${stale}" ] || [ "${count}" -lt "${stale_count}" ]; then
+			stale="${commit}" stale_count="${count}" stale_label="${src}"
+		fi
+	done
+
+	if [ -z "${stale}" ]; then
+		echo "Needed: no valid build is in the history of ${target:0:13}."
+	else
+		echo "Needed: the newest usable build is ${stale:0:13} in ${stale_label}, ${stale_count} commits behind ${target:0:13}."
+		_lfrAntAllNeededChanges "${stale}" "${target}"
+	fi
+
+	if [ "${is_source}" = 1 ]; then
+		echo "Next: stop this bundle, then run lfrAntAll here."
+	elif [ -n "${stale}" ] && [ "${stale_label}" != "${root}" ] &&
+			git -C "${stale_label}" merge-base --is-ancestor "${target}" HEAD 2>/dev/null; then
+		echo "Next: stop the bundle of ${stale_label}, run lfrAntAll there, then lfrWorktreeCopyBundle -y here."
+	elif [ -n "${stale}" ] && [ "${stale_label}" != "${root}" ]; then
+		echo "Next: run lfrGitUpdateMaster, then lfrAntAll in ${stale_label}, then lfrWorktreeCopyBundle -y here."
+	else
+		echo "Next: run lfrAntAll here, or refresh and build a source clone and copy its build."
+	fi
+
+	return 1
+}
+
+# Print the commits of the branch after the build $1, which the bundle does not hold
+# and which a deploy must add, with the core and API counts of _lfrAntAllNeededChanges.
+_lfrAntAllNeededBranchChanges() {
+	local build="${1}"
+
+	if [ "$(git rev-parse HEAD)" != "${build}" ]; then
+		echo "Deploy the changes of the branch after the build:"
+		_lfrAntAllNeededChanges "${build}" HEAD
+	fi
+
+	if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+		echo "Deploy the uncommitted changes too."
+	fi
+}
+
+# Print the number of commits from $1 to $2, and the counts of the changed files that a
+# module deploy does not cover: the portal core, the API versions, and service.xml.
+_lfrAntAllNeededChanges() {
+	local files
+	files="$(git diff --name-only "${1}" "${2}")"
+
+	printf '  %s commits, %s files\n' "$(git rev-list --count "${1}..${2}")" \
+		"$(printf '%s' "${files}" | command grep -c .)"
+	printf '  portal core (ant deploy, restart): %s files\n' \
+		"$(printf '%s' "${files}" | command grep -cE '^(portal-(impl|kernel|test|web)|util-[a-z]+)/')"
+	printf '  API versions (packageinfo, bnd.bnd): %s files\n' \
+		"$(printf '%s' "${files}" | command grep -cE '(/packageinfo|/bnd\.bnd)$')"
+	printf '  service.xml: %s files\n' \
+		"$(printf '%s' "${files}" | command grep -cE '/service\.xml$')"
 }
 
 # The folder of the lfrAntAll logs, next to this script, with one subfolder for

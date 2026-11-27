@@ -68,6 +68,7 @@ lfrTools() {
 		Build
 		  lfrAntAll     run `ant all`, guarded (running server, shared bundle, one at a time,
 		                changed modules built first)
+		  lfrAntAllNeeded    say whether this repo needs `ant all`, and what to do
 		  lfrAntAllPrecheck  build only the modules the branch changes
 		  lfrCache      share one Gradle build cache across repos/worktrees
 
