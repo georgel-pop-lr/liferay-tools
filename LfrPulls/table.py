@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """The one table build of lfrPulls and lfrPullsTriage.
 
-Each table is a box: " | " between the columns, a border on each side, a line
-of _ on top, and a line of _ under each row. A column with only numbers aligns
-to the right.
+Each table has " | " between the columns, a border on each side, and one line
+of - under the header. The rows have no line between them, so the table is
+short and easy to read. A column with only numbers aligns to the right.
 
 Python code imports render(). Shell code pipes tab-separated lines to this file:
 the first line is the header. With --marked, the first field of each line is
@@ -51,23 +51,13 @@ def render(headers, rows, markers=None):
 			else value + " " * (size - width(value))
 			for value, size, right in zip(values, widths, numeric)) + " |"
 
-	rule = "|" + "|".join("_" * (size + 2) for size in widths) + "|"
-	top = " " + "_" * (len(rule) - 2)
+	rule = "|" + "|".join("-" * (size + 2) for size in widths) + "|"
 
 	if markers is None:
-		lines = [top, line(headers), rule]
+		return [line(headers), rule] + [line(row) for row in cells]
 
-		for row in cells:
-			lines += [line(row), rule]
-
-		return lines
-
-	lines = ["R " + top, "H " + line(headers), "R " + rule]
-
-	for marker, row in zip(markers, cells):
-		lines += [f"{marker} " + line(row), "R " + rule]
-
-	return lines
+	return ["H " + line(headers), "R " + rule] + [
+		f"{marker} " + line(row) for marker, row in zip(markers, cells)]
 
 
 def main():
