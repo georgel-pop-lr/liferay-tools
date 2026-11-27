@@ -10,7 +10,13 @@
 #                               clone has the remote; 1 if a fetch failed
 #     _lfrMasterRefs <dir>      echo the master refs to read (upstream/master and
 #                               brian/master, else origin/master)
+#     _lfrMasterDir <dir>       echo the clone to read master from: <dir>, or the
+#                               full clone if <dir> is shallow
+#     _lfrBranchBase [branch]   echo the base ref of a backport or patch branch
 #     lfrGitMerged KEY...       one line for each key: merged or NOT merged
+#
+# The branch model (where each kind of branch lands) is in
+# ~/.claude/references/branch-model.md.
 #
 # The same check for the Claude skills is ~/.claude/references/merges.py.
 
@@ -46,6 +52,63 @@ _lfrMasterRefs() {
 	if [ "${found}" = 0 ] && git -C "${dir}" rev-parse --verify -q origin/master >/dev/null 2>&1; then
 		printf '%s\n' origin/master
 	fi
+}
+
+# Echo the clone to read master from. The EE clone is shallow (its master starts
+# on 2026-08-24), so a key merged before that shows as NOT merged there. The
+# master hashes are the same in the two clones, so read the main clone instead.
+# Both clones have a shallow file, so the test is the same upstream/master, not
+# --is-shallow-repository of the main clone.
+_lfrMasterDir() {
+	local dir="${1:?_lfrMasterDir: no dir}" full head
+
+	if [ "$(git -C "${dir}" rev-parse --is-shallow-repository 2>/dev/null)" != true ]; then
+		printf '%s\n' "${dir}"
+		return 0
+	fi
+
+	full="${LFR_REPO_ROOTS[0]:-${HOME}/liferay/repos}/${LFR_REPO_PRIORITY[0]:-liferay-portal}"
+	head="$(git -C "${dir}" rev-parse -q --verify upstream/master 2>/dev/null)"
+
+	if [ -n "${head}" ] &&
+		[ "$(git -C "${full}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" != \
+			"$(git -C "${dir}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" ] &&
+		[ "$(git -C "${full}" rev-parse -q --verify upstream/master 2>/dev/null)" = "${head}" ]; then
+		echo "${dir} is a shallow clone: master is read from ${full}." >&2
+		printf '%s\n' "${full}"
+	else
+		printf '%s\n' "${dir}"
+	fi
+}
+
+# Echo the base ref of a backport or a patch branch, from its name (the current
+# branch if none is given). A patch branch (LPD-1-2025.q1.22) starts from the
+# tag 2025.q1.22, and a backport (LPD-1-release-2026.q1) lands on
+# release-2026.q1. Returns 1 for any other branch: its base is master. Compared
+# with master, LPD-115706-release-2026.q1 showed 0 commits and 1 file, not 6
+# commits and 10 files.
+_lfrBranchBase() {
+	local branch="${1:-$(git branch --show-current 2>/dev/null)}" patch release ref
+
+	patch="$(grep -oE '[0-9]{4}\.q[1-4]\.[0-9]+' <<<"${branch}" | head -n 1)"
+
+	if [ -n "${patch}" ] && git rev-parse --verify -q "refs/tags/${patch}" >/dev/null 2>&1; then
+		printf '%s\n' "${patch}"
+		return 0
+	fi
+
+	release="$(grep -oE '[0-9]{4}\.q[1-4]' <<<"${branch}" | head -n 1)"
+
+	[ -n "${release}" ] || return 1
+
+	for ref in "upstream/release-${release}" "origin/release-${release}" "release-${release}"; do
+		if git rev-parse --verify -q "${ref}" >/dev/null 2>&1; then
+			printf '%s\n' "${ref}"
+			return 0
+		fi
+	done
+
+	return 1
 }
 
 # lfrGitMerged - say for each ticket key if a commit of it is in master.
@@ -101,6 +164,8 @@ lfrGitMerged() {
 		echo "lfrGitMerged: ${dir} is not a git repo; pass -C <clone>." >&2
 		return 1
 	fi
+
+	dir="$(_lfrMasterDir "${dir}")"
 
 	[ "${fetch}" = 1 ] && _lfrMasterFetch "${dir}"
 

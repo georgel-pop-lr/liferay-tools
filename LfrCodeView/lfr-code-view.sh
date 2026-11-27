@@ -52,7 +52,8 @@ _lfrCodeViewHelp() {
 		the base is the change. The ticket only matters for -a.
 
 		LFR_CODE_VIEW_BASE overrides the ref the branch is compared against
-		(default: LFR_WORKTREE_BASE, then upstream/master, origin/master, master,
+		(default: the release branch or the patch tag that the branch name
+		carries, then LFR_WORKTREE_BASE, upstream/master, origin/master, master,
 		origin/main, main). Keep it fetched, e.g. with lfrGitUpdateMaster.
 	EOF
 }
@@ -61,7 +62,8 @@ _lfrCodeViewHelp() {
 _lfrCodeViewBase() {
 	local ref
 
-	for ref in "${LFR_CODE_VIEW_BASE:-}" "${LFR_WORKTREE_BASE:-}" upstream/master \
+	for ref in "${LFR_CODE_VIEW_BASE:-}" "$(_lfrBranchBase 2>/dev/null)" \
+		"${LFR_WORKTREE_BASE:-}" upstream/master \
 		origin/master master origin/main main; do
 		[ -n "${ref}" ] || continue
 		git rev-parse --verify -q "${ref}" >/dev/null 2>&1 && { printf '%s\n' "${ref}"; return 0; }

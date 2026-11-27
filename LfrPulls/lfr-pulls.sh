@@ -338,6 +338,7 @@ _lfrPullsMasterDir() {
 		echo "lfrPulls ${command}: run from a liferay-portal clone, or set LFR_PULLS_MASTER_REPO." >&2
 		return 1
 	fi
+	dir="$(_lfrMasterDir "${dir}")"
 	if ! git -C "${dir}" rev-parse --verify -q "${LFR_PULLS_MASTER_REF}" >/dev/null 2>&1; then
 		echo "lfrPulls ${command}: ref ${LFR_PULLS_MASTER_REF} not found in ${dir}; set LFR_PULLS_MASTER_REF/REPO." >&2
 		return 1

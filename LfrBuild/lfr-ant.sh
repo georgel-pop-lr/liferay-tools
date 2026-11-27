@@ -55,10 +55,12 @@ _lfrRepoBundleDir() {
 }
 
 # Echo the base commit for the changed-module check: the merge base of HEAD with
-# the first master ref that exists. Echoes nothing (rc 1) when none resolves.
+# the release or the patch tag of a backport branch, else with the first master
+# ref that exists. Echoes nothing (rc 1) when none resolves.
 _lfrAntPrecheckBase() {
 	local ref
-	for ref in upstream/master origin/master master; do
+	for ref in "$(_lfrBranchBase 2>/dev/null)" upstream/master origin/master master; do
+		[ -n "${ref}" ] || continue
 		git rev-parse --verify --quiet "${ref}" >/dev/null || continue
 		git merge-base HEAD "${ref}" 2>/dev/null && return 0
 	done
